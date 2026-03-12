@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "aegis": {
+      "command": "npx",
+      "args": ["tsx", "src/main.ts", "--surface", "agent"]
+    }
+  }
+}

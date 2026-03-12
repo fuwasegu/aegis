@@ -1,0 +1,405 @@
+/**
+ * MCP Service Facade
+ * Thin layer between MCP tool handlers and core logic.
+ * Enforces INV-6: Agent Surface cannot modify Canonical.
+ *
+ * No business logic lives here — only delegation and surface authorization.
+ */
+
+import { v4 as uuidv4 } from 'uuid';
+import type { Repository } from '../core/store/repository.js';
+import { AlreadyInitializedError } from '../core/store/repository.js';
+import { ContextCompiler } from '../core/read/compiler.js';
+import { initDetect as coreInitDetect, initConfirm as coreInitConfirm, PreviewHashMismatchError } from '../core/init/engine.js';
+import { detectUpgrade, generateUpgradeProposals, type UpgradePreview } from '../core/init/upgrade.js';
+import type { InitPreview } from '../core/init/engine.js';
+import type {
+  CompileRequest, CompiledContext, ObserveEvent, CanonicalVersion,
+  AnalysisContext, AnalysisResult,
+} from '../core/types.js';
+import type { ObservationAnalyzer } from '../core/automation/analyzer.js';
+import { ProposeService, type ProposeResult } from '../core/automation/propose.js';
+import type { IntentTagger } from '../core/tagging/tagger.js';
+import { deployCursorAdapter } from '../adapters/cursor/generate.js';
+import { deployClaudeAdapter } from '../adapters/claude/generate.js';
+import type { AdapterConfig, AdapterResult } from '../adapters/types.js';
+
+export type Surface = 'agent' | 'admin';
+
+export class SurfaceViolationError extends Error {
+  constructor(tool: string, surface: Surface) {
+    super(`Tool '${tool}' is not available on the '${surface}' surface`);
+    this.name = 'SurfaceViolationError';
+  }
+}
+
+export class ObserveValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ObserveValidationError';
+  }
+}
+
+/**
+ * Aegis MCP Service — the single entry point for all MCP tool handlers.
+ */
+export class AegisService {
+  private compiler: ContextCompiler;
+  // In-memory preview cache: preview_hash → { preview, projectRoot }
+  private previewCache = new Map<string, { preview: InitPreview; projectRoot: string }>();
+
+  constructor(
+    private repo: Repository,
+    private templatesRoot: string,
+    tagger: IntentTagger | null = null,
+  ) {
+    this.compiler = new ContextCompiler(repo, tagger);
+  }
+
+  // ============================================================
+  // Agent Surface
+  // ============================================================
+
+  async compileContext(request: CompileRequest, surface: Surface): Promise<CompiledContext> {
+    // Agent surface: allowed
+    return this.compiler.compile(request);
+  }
+
+  observe(event: ObserveEvent, surface: Surface): { observation_id: string } {
+    // Agent surface: allowed (writes to Observation only, not Canonical)
+
+    // Enforce discriminated-union contract at service boundary
+    this.validateObserveEvent(event);
+
+    const observationId = uuidv4();
+    this.repo.insertObservation({
+      observation_id: observationId,
+      event_type: event.event_type,
+      payload: JSON.stringify(event.payload),
+      related_compile_id: 'related_compile_id' in event ? event.related_compile_id : null,
+      related_snapshot_id: 'related_snapshot_id' in event ? (event.related_snapshot_id ?? null) : null,
+    });
+    return { observation_id: observationId };
+  }
+
+  private validateObserveEvent(event: ObserveEvent): void {
+    const p = event.payload as Record<string, unknown>;
+
+    switch (event.event_type) {
+      case 'compile_miss':
+        if (!('related_compile_id' in event) || !event.related_compile_id) {
+          throw new ObserveValidationError('compile_miss requires related_compile_id');
+        }
+        if (!('related_snapshot_id' in event) || !event.related_snapshot_id) {
+          throw new ObserveValidationError('compile_miss requires related_snapshot_id');
+        }
+        if (!Array.isArray(p.target_files) || p.target_files.length === 0) {
+          throw new ObserveValidationError('compile_miss payload requires non-empty target_files');
+        }
+        if (typeof p.review_comment !== 'string' || !p.review_comment) {
+          throw new ObserveValidationError('compile_miss payload requires review_comment');
+        }
+        break;
+      case 'review_correction':
+        if (typeof p.file_path !== 'string' || !p.file_path) {
+          throw new ObserveValidationError('review_correction payload requires file_path');
+        }
+        if (typeof p.correction !== 'string' || !p.correction) {
+          throw new ObserveValidationError('review_correction payload requires correction');
+        }
+        // If either target_doc_id or proposed_content is present, require both
+        {
+          const hasDocId = 'target_doc_id' in p && p.target_doc_id !== undefined;
+          const hasContent = 'proposed_content' in p && p.proposed_content !== undefined;
+          if (hasDocId || hasContent) {
+            if (!hasDocId || typeof p.target_doc_id !== 'string' || !p.target_doc_id) {
+              throw new ObserveValidationError('review_correction: target_doc_id required when proposed_content is provided');
+            }
+            if (!hasContent || typeof p.proposed_content !== 'string' || !p.proposed_content) {
+              throw new ObserveValidationError('review_correction: proposed_content required when target_doc_id is provided');
+            }
+          }
+        }
+        break;
+      case 'pr_merged':
+        if (typeof p.pr_id !== 'string' || !p.pr_id) {
+          throw new ObserveValidationError('pr_merged payload requires pr_id');
+        }
+        if (typeof p.summary !== 'string' || !p.summary) {
+          throw new ObserveValidationError('pr_merged payload requires summary');
+        }
+        if (!Array.isArray(p.files_changed) || p.files_changed.length === 0) {
+          throw new ObserveValidationError('pr_merged payload requires non-empty files_changed');
+        }
+        break;
+      case 'manual_note':
+        if (typeof p.content !== 'string' || !p.content) {
+          throw new ObserveValidationError('manual_note payload requires content');
+        }
+        {
+          const hasDocId = 'target_doc_id' in p && p.target_doc_id !== undefined;
+          const hasContent = 'proposed_content' in p && p.proposed_content !== undefined;
+          if (hasDocId || hasContent) {
+            if (!hasDocId || typeof p.target_doc_id !== 'string' || !p.target_doc_id) {
+              throw new ObserveValidationError('manual_note: target_doc_id required when proposed_content is provided');
+            }
+            if (!hasContent || typeof p.proposed_content !== 'string' || !p.proposed_content) {
+              throw new ObserveValidationError('manual_note: proposed_content required when target_doc_id is provided');
+            }
+          }
+          if ('new_doc_hint' in p && p.new_doc_hint !== undefined) {
+            const hint = p.new_doc_hint as Record<string, unknown>;
+            if (typeof hint.doc_id !== 'string' || !hint.doc_id) {
+              throw new ObserveValidationError('manual_note: new_doc_hint.doc_id is required');
+            }
+            if (typeof hint.title !== 'string' || !hint.title) {
+              throw new ObserveValidationError('manual_note: new_doc_hint.title is required');
+            }
+          }
+        }
+        break;
+    }
+  }
+
+  getCompileAudit(compileId: string, surface: Surface): {
+    compile_id: string;
+    snapshot_id: string;
+    knowledge_version: number;
+    request: object;
+    base_doc_ids: string[];
+    expanded_doc_ids: string[] | null;
+    created_at: string;
+  } | undefined {
+    // Agent surface: allowed (read-only audit)
+    return this.compiler.getCompileAudit(compileId);
+  }
+
+  initDetect(projectRoot: string, surface: Surface): InitPreview {
+    // init_detect is allowed on both surfaces (read-only preview, no Canonical mutation)
+    const preview = coreInitDetect(projectRoot, this.templatesRoot);
+    if (preview.preview_hash) {
+      this.previewCache.set(preview.preview_hash, { preview, projectRoot });
+    }
+    return preview;
+  }
+
+  // ============================================================
+  // Admin Surface
+  // ============================================================
+
+  listProposals(
+    params: { status?: string; limit?: number; offset?: number },
+    surface: Surface,
+  ): { proposals: object[]; total: number } {
+    this.assertAdmin('aegis_list_proposals', surface);
+    const { proposals, total } = this.repo.listProposals(
+      params.status as any,
+      params.limit ?? 20,
+      params.offset ?? 0,
+    );
+    return {
+      proposals: proposals.map(p => ({
+        proposal_id: p.proposal_id,
+        proposal_type: p.proposal_type,
+        status: p.status,
+        created_at: p.created_at,
+        summary: this.summarizePayload(p.proposal_type, p.payload),
+      })),
+      total,
+    };
+  }
+
+  getProposal(proposalId: string, surface: Surface): object | undefined {
+    this.assertAdmin('aegis_get_proposal', surface);
+    const proposal = this.repo.getProposal(proposalId);
+    if (!proposal) return undefined;
+
+    const evidence = this.repo.getProposalEvidence(proposalId);
+    return {
+      proposal_id: proposal.proposal_id,
+      proposal_type: proposal.proposal_type,
+      payload: JSON.parse(proposal.payload),
+      status: proposal.status,
+      review_comment: proposal.review_comment,
+      created_at: proposal.created_at,
+      resolved_at: proposal.resolved_at,
+      evidence: evidence.map(e => ({
+        observation_id: e.observation_id,
+        event_type: e.event_type,
+        payload: JSON.parse(e.payload),
+        created_at: e.created_at,
+      })),
+    };
+  }
+
+  approveProposal(
+    proposalId: string,
+    modifications: Record<string, unknown> | undefined,
+    surface: Surface,
+  ): CanonicalVersion {
+    this.assertAdmin('aegis_approve_proposal', surface);
+    return this.repo.approveProposal(proposalId, modifications);
+  }
+
+  rejectProposal(
+    proposalId: string,
+    reason: string,
+    surface: Surface,
+  ): { proposal_id: string; status: 'rejected' } {
+    this.assertAdmin('aegis_reject_proposal', surface);
+    this.repo.rejectProposal(proposalId, reason);
+    return { proposal_id: proposalId, status: 'rejected' };
+  }
+
+  /**
+   * Internal automation pipeline — NOT exposed via MCP.
+   * Fetches unanalyzed observations, runs analyzer, persists proposals.
+   *
+   * Concurrency safety: observations are claimed (marked analyzed) BEFORE
+   * the async analyzer runs, preventing a concurrent call from picking up
+   * the same observations. On failure, the claim is rolled back.
+   */
+  async analyzeAndPropose(
+    analyzer: ObservationAnalyzer,
+    eventType: 'compile_miss' | 'review_correction' | 'pr_merged' | 'manual_note',
+    surface: Surface,
+  ): Promise<{ analysis: AnalysisResult; proposals: ProposeResult }> {
+    this.assertAdmin('analyzeAndPropose', surface);
+
+    const observations = this.repo.getUnanalyzedObservations(eventType);
+    const claimedIds = observations.map(o => o.observation_id);
+
+    // Pessimistic claim: mark as analyzed before yielding to async analyzer
+    this.repo.markObservationsAnalyzed(claimedIds);
+
+    const contexts: AnalysisContext[] = observations.map(obs => {
+      const audit = obs.related_compile_id
+        ? this.compiler.getCompileAudit(obs.related_compile_id)
+        : null;
+
+      return {
+        observation: obs,
+        compile_audit: audit
+          ? {
+              compile_id: audit.compile_id,
+              snapshot_id: audit.snapshot_id,
+              knowledge_version: audit.knowledge_version,
+              request: audit.request as CompileRequest,
+              base_doc_ids: audit.base_doc_ids,
+            }
+          : null,
+      };
+    });
+
+    try {
+      const analysis = await analyzer.analyze(contexts);
+      const proposeService = new ProposeService(this.repo);
+      const proposals = proposeService.propose(analysis.drafts);
+      return { analysis, proposals };
+    } catch (err) {
+      // Rollback claim so observations are available for retry
+      this.repo.resetObservationsAnalyzed(claimedIds);
+      throw err;
+    }
+  }
+
+  initConfirm(
+    previewHash: string,
+    surface: Surface,
+  ): CanonicalVersion & { adapters?: AdapterResult[] } {
+    this.assertAdmin('aegis_init_confirm', surface);
+
+    const cached = this.previewCache.get(previewHash);
+    if (!cached) {
+      throw new Error(`No cached preview found for hash '${previewHash.slice(0, 12)}...'. Run init_detect first.`);
+    }
+
+    const { preview, projectRoot } = cached;
+    const result = coreInitConfirm(this.repo, preview, previewHash);
+
+    this.previewCache.delete(previewHash);
+
+    const adapters = this.deployAdapters(projectRoot, preview.template_id);
+    return { ...result, adapters };
+  }
+
+  checkUpgrade(surface: Surface): UpgradePreview | null {
+    this.assertAdmin('aegis_check_upgrade', surface);
+    return detectUpgrade(this.repo, this.templatesRoot);
+  }
+
+  applyUpgrade(surface: Surface): { proposal_ids: string[] } {
+    this.assertAdmin('aegis_apply_upgrade', surface);
+    const preview = detectUpgrade(this.repo, this.templatesRoot);
+    if (!preview || !preview.has_changes) {
+      return { proposal_ids: [] };
+    }
+
+    const drafts = generateUpgradeProposals(preview, this.repo, this.templatesRoot);
+    const proposeService = new ProposeService(this.repo);
+    const result = proposeService.propose(drafts);
+    return { proposal_ids: result.created_proposal_ids };
+  }
+
+  archiveObservations(
+    days: number,
+    surface: Surface,
+  ): { archived_count: number } {
+    this.assertAdmin('aegis_archive_observations', surface);
+    const archived_count = this.repo.archiveOldObservations(days);
+    return { archived_count };
+  }
+
+  private deployAdapters(projectRoot: string, templateId: string): AdapterResult[] {
+    const config: AdapterConfig = {
+      projectRoot,
+      templateId,
+      toolNames: {
+        compileContext: 'aegis_compile_context',
+        observe: 'aegis_observe',
+        getCompileAudit: 'aegis_get_compile_audit',
+      },
+    };
+
+    const results: AdapterResult[] = [];
+    try {
+      results.push(deployCursorAdapter(config));
+    } catch { /* non-fatal */ }
+    try {
+      results.push(deployClaudeAdapter(config));
+    } catch { /* non-fatal */ }
+    return results;
+  }
+
+  // ============================================================
+  // Private
+  // ============================================================
+
+  private assertAdmin(tool: string, surface: Surface): void {
+    if (surface !== 'admin') {
+      throw new SurfaceViolationError(tool, surface);
+    }
+  }
+
+  private summarizePayload(proposalType: string, payloadJson: string): string {
+    try {
+      const payload = JSON.parse(payloadJson);
+      switch (proposalType) {
+        case 'bootstrap':
+          return `Bootstrap: ${payload.documents?.length ?? 0} docs, ${payload.edges?.length ?? 0} edges, ${payload.layer_rules?.length ?? 0} rules`;
+        case 'new_doc':
+          return `New doc: ${payload.title ?? payload.doc_id}`;
+        case 'update_doc':
+          return `Update doc: ${payload.doc_id}`;
+        case 'add_edge':
+          return `Add edge: ${payload.source_value} → ${payload.target_doc_id}`;
+        case 'deprecate':
+          return `Deprecate: ${payload.entity_type} ${payload.entity_id}`;
+        default:
+          return proposalType;
+      }
+    } catch {
+      return proposalType;
+    }
+  }
+}

@@ -1,0 +1,60 @@
+template_id: generic-layered
+version: "0.1.0"
+display_name: "Generic Layered Architecture"
+description: "Language-agnostic layered architecture with presentation, application, domain, and infrastructure layers"
+
+# ======== detect_signals ========
+detect_signals:
+  required: []
+
+  boosters:
+    - type: dir_exists
+      path: src
+      weight: 10
+    - type: dir_structure
+      pattern: "src/domain"
+      weight: 20
+    - type: dir_structure
+      pattern: "src/application"
+      weight: 20
+    - type: dir_structure
+      pattern: "src/infrastructure"
+      weight: 15
+    - type: dir_structure
+      pattern: "src/presentation"
+      weight: 15
+
+  confidence_thresholds:
+    high: 50
+    medium: 20
+
+# ======== placeholders ========
+placeholders:
+  src_root:
+    description: "Source root directory"
+    required: true
+    detect_strategy: first_match
+    candidates:
+      - src
+      - lib
+      - app
+    ambiguity_policy: first
+    default: src
+
+# ======== seed_documents ========
+seed_documents:
+  - doc_id: generic-layered-root
+    title: "Architecture Root: Layered Architecture"
+    kind: guideline
+    file: architecture_root.md
+
+# ======== seed_edges ========
+seed_edges:
+  - source_type: path
+    source_value: "{{src_root}}/**"
+    target_doc_id: generic-layered-root
+    edge_type: path_requires
+    priority: 100
+
+# ======== seed_layer_rules ========
+seed_layer_rules: []

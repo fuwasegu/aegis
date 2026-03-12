@@ -1,0 +1,341 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { createInMemoryDatabase, Repository, CycleDetectedError, AlreadyInitializedError } from './index.js';
+import { createHash } from 'node:crypto';
+import type Database from 'better-sqlite3';
+
+function hash(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+describe('Repository', () => {
+  let db: Database.Database;
+  let repo: Repository;
+
+  beforeEach(() => {
+    db = createInMemoryDatabase();
+    repo = new Repository(db);
+  });
+
+  describe('KnowledgeMeta', () => {
+    it('initializes with version 0', () => {
+      const meta = repo.getKnowledgeMeta();
+      expect(meta.current_version).toBe(0);
+    });
+
+    it('reports not initialized when version is 0', () => {
+      expect(repo.isInitialized()).toBe(false);
+    });
+  });
+
+  describe('INV-1: Canonical consistency', () => {
+    it('getApprovedDocuments returns only approved docs', () => {
+      repo.insertDocument({ doc_id: 'doc1', title: 'T1', kind: 'guideline', content: 'c1', content_hash: hash('c1'), status: 'approved' });
+      repo.insertDocument({ doc_id: 'doc2', title: 'T2', kind: 'guideline', content: 'c2', content_hash: hash('c2'), status: 'draft' });
+      repo.insertDocument({ doc_id: 'doc3', title: 'T3', kind: 'guideline', content: 'c3', content_hash: hash('c3'), status: 'proposed' });
+
+      const docs = repo.getApprovedDocuments();
+      expect(docs).toHaveLength(1);
+      expect(docs[0].doc_id).toBe('doc1');
+    });
+  });
+
+  describe('INV-2: DAG constraint (cycle detection)', () => {
+    beforeEach(() => {
+      repo.insertDocument({ doc_id: 'a', title: 'A', kind: 'guideline', content: 'a', content_hash: hash('a'), status: 'approved' });
+      repo.insertDocument({ doc_id: 'b', title: 'B', kind: 'guideline', content: 'b', content_hash: hash('b'), status: 'approved' });
+      repo.insertDocument({ doc_id: 'c', title: 'C', kind: 'guideline', content: 'c', content_hash: hash('c'), status: 'approved' });
+    });
+
+    it('detects direct cycle', () => {
+      repo.insertEdge({ edge_id: 'e1', source_type: 'doc', source_value: 'a', target_doc_id: 'b', edge_type: 'doc_depends_on', priority: 100, specificity: 0, status: 'approved' });
+      expect(repo.wouldCreateCycle('b', 'a')).toBe(true);
+    });
+
+    it('detects transitive cycle', () => {
+      repo.insertEdge({ edge_id: 'e1', source_type: 'doc', source_value: 'a', target_doc_id: 'b', edge_type: 'doc_depends_on', priority: 100, specificity: 0, status: 'approved' });
+      repo.insertEdge({ edge_id: 'e2', source_type: 'doc', source_value: 'b', target_doc_id: 'c', edge_type: 'doc_depends_on', priority: 100, specificity: 0, status: 'approved' });
+      expect(repo.wouldCreateCycle('c', 'a')).toBe(true);
+    });
+
+    it('allows valid DAG edge', () => {
+      repo.insertEdge({ edge_id: 'e1', source_type: 'doc', source_value: 'a', target_doc_id: 'b', edge_type: 'doc_depends_on', priority: 100, specificity: 0, status: 'approved' });
+      expect(repo.wouldCreateCycle('a', 'c')).toBe(false);
+    });
+  });
+
+  describe('INV-3 & INV-4: Snapshot immutability and version monotonicity', () => {
+    it('creates snapshot and increments version on approve', () => {
+      const proposalId = 'prop1';
+      repo.insertProposal({
+        proposal_id: proposalId,
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      const result = repo.approveProposal(proposalId);
+      expect(result.knowledge_version).toBe(1);
+      expect(result.snapshot_id).toBeTruthy();
+
+      const meta = repo.getKnowledgeMeta();
+      expect(meta.current_version).toBe(1);
+    });
+
+    it('each approve creates a distinct snapshot with matching knowledge_version', () => {
+      // Bootstrap to version 1
+      repo.insertProposal({
+        proposal_id: 'p-boot',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc1', title: 'T', kind: 'guideline', content: 'c1', content_hash: hash('c1') }],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      const v1 = repo.approveProposal('p-boot');
+
+      // Update doc to version 2
+      repo.insertProposal({
+        proposal_id: 'p-upd',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({ doc_id: 'doc1', content: 'c2', content_hash: hash('c2') }),
+        status: 'pending',
+        review_comment: null,
+      });
+      const v2 = repo.approveProposal('p-upd');
+
+      expect(v1.knowledge_version).toBe(1);
+      expect(v2.knowledge_version).toBe(2);
+      expect(v1.snapshot_id).not.toBe(v2.snapshot_id);
+    });
+
+    it('getCurrentSnapshot returns the snapshot for current version', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      const result = repo.approveProposal('p-boot');
+
+      const snap = repo.getCurrentSnapshot();
+      expect(snap).toBeDefined();
+      expect(snap!.snapshot_id).toBe(result.snapshot_id);
+      expect(snap!.knowledge_version).toBe(1);
+    });
+
+    it('getCurrentSnapshot returns undefined when not initialized', () => {
+      expect(repo.getCurrentSnapshot()).toBeUndefined();
+    });
+  });
+
+  describe('Transitive dependencies', () => {
+    beforeEach(() => {
+      repo.insertDocument({ doc_id: 'root', title: 'Root', kind: 'guideline', content: 'r', content_hash: hash('r'), status: 'approved' });
+      repo.insertDocument({ doc_id: 'mid', title: 'Mid', kind: 'guideline', content: 'm', content_hash: hash('m'), status: 'approved' });
+      repo.insertDocument({ doc_id: 'leaf', title: 'Leaf', kind: 'pattern', content: 'l', content_hash: hash('l'), status: 'approved' });
+
+      // root -> mid -> leaf
+      repo.insertEdge({ edge_id: 'e1', source_type: 'doc', source_value: 'root', target_doc_id: 'mid', edge_type: 'doc_depends_on', priority: 100, specificity: 0, status: 'approved' });
+      repo.insertEdge({ edge_id: 'e2', source_type: 'doc', source_value: 'mid', target_doc_id: 'leaf', edge_type: 'doc_depends_on', priority: 100, specificity: 0, status: 'approved' });
+    });
+
+    it('resolves full dependency chain', () => {
+      const deps = repo.getTransitiveDependencies(['root']);
+      const ids = deps.map(d => d.doc_id);
+      expect(ids).toContain('root');
+      expect(ids).toContain('mid');
+      expect(ids).toContain('leaf');
+    });
+
+    it('includes start nodes at depth 0', () => {
+      const deps = repo.getTransitiveDependencies(['root']);
+      const rootDep = deps.find(d => d.doc_id === 'root');
+      expect(rootDep?.depth).toBe(0);
+    });
+  });
+
+  describe('Approve transaction', () => {
+    it('rejects approving a non-pending proposal', () => {
+      repo.insertProposal({
+        proposal_id: 'p1',
+        proposal_type: 'new_doc',
+        payload: JSON.stringify({ doc_id: 'd1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p1');
+
+      // Try to approve again
+      expect(() => repo.approveProposal('p1')).toThrow('not pending');
+    });
+
+    it('rejects bootstrap with cycle in doc_depends_on', () => {
+      repo.insertProposal({
+        proposal_id: 'p1',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [
+            { doc_id: 'a', title: 'A', kind: 'guideline', content: 'a', content_hash: hash('a') },
+            { doc_id: 'b', title: 'B', kind: 'guideline', content: 'b', content_hash: hash('b') },
+          ],
+          edges: [
+            { edge_id: 'e1', source_type: 'doc', source_value: 'a', target_doc_id: 'b', edge_type: 'doc_depends_on', priority: 100, specificity: 0 },
+            { edge_id: 'e2', source_type: 'doc', source_value: 'b', target_doc_id: 'a', edge_type: 'doc_depends_on', priority: 100, specificity: 0 },
+          ],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      expect(() => repo.approveProposal('p1')).toThrow(CycleDetectedError);
+    });
+
+    it('reject proposal records reason', () => {
+      repo.insertProposal({
+        proposal_id: 'p1',
+        proposal_type: 'new_doc',
+        payload: JSON.stringify({ doc_id: 'd1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      repo.rejectProposal('p1', 'Not needed');
+      const p = repo.getProposal('p1');
+      expect(p?.status).toBe('rejected');
+      expect(p?.review_comment).toBe('Not needed');
+    });
+
+    it('bootstrap on initialized project throws AlreadyInitializedError', () => {
+      // First bootstrap succeeds
+      repo.insertProposal({
+        proposal_id: 'p-boot1',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot1');
+      expect(repo.isInitialized()).toBe(true);
+
+      // Second bootstrap must fail
+      repo.insertProposal({
+        proposal_id: 'p-boot2',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc2', title: 'T2', kind: 'guideline', content: 'c2', content_hash: hash('c2') }],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      expect(() => repo.approveProposal('p-boot2')).toThrow(AlreadyInitializedError);
+    });
+
+    it('update_doc on non-existent document throws error', () => {
+      // Bootstrap first to get initialized
+      repo.insertProposal({
+        proposal_id: 'p-boot',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot');
+
+      // Try to update a doc that doesn't exist
+      repo.insertProposal({
+        proposal_id: 'p-upd',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({ doc_id: 'nonexistent', content: 'new', content_hash: hash('new') }),
+        status: 'pending',
+        review_comment: null,
+      });
+      expect(() => repo.approveProposal('p-upd')).toThrow('not found or not approved');
+    });
+
+    it('deprecate on non-existent entity throws error', () => {
+      // Bootstrap first
+      repo.insertProposal({
+        proposal_id: 'p-boot',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot');
+
+      // Try to deprecate a doc that doesn't exist
+      repo.insertProposal({
+        proposal_id: 'p-dep',
+        proposal_type: 'deprecate',
+        payload: JSON.stringify({ entity_type: 'document', entity_id: 'nonexistent' }),
+        status: 'pending',
+        review_comment: null,
+      });
+      expect(() => repo.approveProposal('p-dep')).toThrow('not found or not approved');
+    });
+
+    it('deprecate on already-deprecated entity throws error', () => {
+      // Bootstrap
+      repo.insertProposal({
+        proposal_id: 'p-boot',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot');
+
+      // Deprecate doc1
+      repo.insertProposal({
+        proposal_id: 'p-dep1',
+        proposal_type: 'deprecate',
+        payload: JSON.stringify({ entity_type: 'document', entity_id: 'doc1' }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-dep1');
+
+      // Try to deprecate again - should fail because status is no longer 'approved'
+      repo.insertProposal({
+        proposal_id: 'p-dep2',
+        proposal_type: 'deprecate',
+        payload: JSON.stringify({ entity_type: 'document', entity_id: 'doc1' }),
+        status: 'pending',
+        review_comment: null,
+      });
+      expect(() => repo.approveProposal('p-dep2')).toThrow('not found or not approved');
+    });
+  });
+});

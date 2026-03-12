@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.db
+*.db-wal
+*.db-shm
+.aegis/
+.tmp-test/
+docs/会話履歴*

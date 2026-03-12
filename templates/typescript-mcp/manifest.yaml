@@ -1,0 +1,202 @@
+template_id: typescript-mcp
+version: "0.1.0"
+display_name: "TypeScript MCP Server"
+description: "TypeScript project structured as an MCP server with layered architecture (core/mcp/adapters)"
+
+# ======== detect_signals ========
+detect_signals:
+  required:
+    - type: file_exists
+      path: package.json
+    - type: file_exists
+      path: tsconfig.json
+
+  boosters:
+    - type: package_dependency
+      file: package.json
+      key: dependencies
+      pattern: "@modelcontextprotocol/sdk"
+      weight: 40
+    - type: dir_exists
+      path: src
+      weight: 10
+    - type: dir_exists
+      path: src/core
+      weight: 20
+    - type: dir_exists
+      path: src/mcp
+      weight: 20
+    - type: dir_structure
+      pattern: "src/core/store"
+      weight: 10
+    - type: dir_structure
+      pattern: "src/core/read"
+      weight: 10
+    - type: dir_structure
+      pattern: "src/adapters"
+      weight: 5
+
+  confidence_thresholds:
+    high: 60
+    medium: 30
+
+# ======== placeholders ========
+placeholders:
+  src_root:
+    description: "Source root directory"
+    required: true
+    detect_strategy: first_match
+    candidates:
+      - src
+      - lib
+    ambiguity_policy: first
+    default: src
+
+  core_root:
+    description: "Core business logic directory"
+    required: false
+    detect_strategy: first_match
+    candidates:
+      - src/core
+      - src/lib
+      - src/domain
+    ambiguity_policy: first
+    default: null
+
+  mcp_root:
+    description: "MCP server layer directory"
+    required: false
+    detect_strategy: first_match
+    candidates:
+      - src/mcp
+      - src/server
+    ambiguity_policy: first
+    default: null
+
+# ======== seed_documents ========
+seed_documents:
+  - doc_id: ts-mcp-root
+    title: "Architecture Root: TypeScript MCP Server"
+    kind: guideline
+    file: architecture_root.md
+
+  - doc_id: ts-mcp-server-guidelines
+    title: "MCP Server & Tool Guidelines"
+    kind: guideline
+    file: mcp_server_guidelines.md
+
+  - doc_id: ts-mcp-repository-guidelines
+    title: "Repository & Data Store Guidelines"
+    kind: pattern
+    file: repository_guidelines.md
+
+  - doc_id: ts-mcp-testing-guidelines
+    title: "Testing Guidelines"
+    kind: guideline
+    file: testing_guidelines.md
+
+# ======== seed_edges ========
+seed_edges:
+  # path_requires: any source file → architecture root
+  - source_type: path
+    source_value: "{{src_root}}/**"
+    target_doc_id: ts-mcp-root
+    edge_type: path_requires
+    priority: 200
+
+  # path_requires: MCP layer files → server guidelines
+  - source_type: path
+    source_value: "{{mcp_root}}/**"
+    target_doc_id: ts-mcp-server-guidelines
+    edge_type: path_requires
+    priority: 50
+    when:
+      placeholder: mcp_root
+      operator: is_not_null
+
+  # path_requires: store/repository files → repository guidelines
+  - source_type: path
+    source_value: "{{core_root}}/store/**"
+    target_doc_id: ts-mcp-repository-guidelines
+    edge_type: path_requires
+    priority: 50
+    when:
+      placeholder: core_root
+      operator: is_not_null
+
+  # path_requires: test files → testing guidelines
+  - source_type: path
+    source_value: "{{src_root}}/**/*.test.ts"
+    target_doc_id: ts-mcp-testing-guidelines
+    edge_type: path_requires
+    priority: 80
+
+  # layer_requires
+  - source_type: layer
+    source_value: MCP
+    target_doc_id: ts-mcp-server-guidelines
+    edge_type: layer_requires
+    priority: 100
+
+  - source_type: layer
+    source_value: Store
+    target_doc_id: ts-mcp-repository-guidelines
+    edge_type: layer_requires
+    priority: 100
+
+  - source_type: layer
+    source_value: Core
+    target_doc_id: ts-mcp-root
+    edge_type: layer_requires
+    priority: 100
+
+  # command_requires
+  - source_type: command
+    source_value: review
+    target_doc_id: ts-mcp-testing-guidelines
+    edge_type: command_requires
+    priority: 100
+
+  # doc_depends_on: server guidelines depend on architecture root
+  - source_type: doc
+    source_value: ts-mcp-server-guidelines
+    target_doc_id: ts-mcp-root
+    edge_type: doc_depends_on
+    priority: 100
+
+  # doc_depends_on: repository guidelines depend on architecture root
+  - source_type: doc
+    source_value: ts-mcp-repository-guidelines
+    target_doc_id: ts-mcp-root
+    edge_type: doc_depends_on
+    priority: 100
+
+  # doc_depends_on: testing guidelines depend on architecture root
+  - source_type: doc
+    source_value: ts-mcp-testing-guidelines
+    target_doc_id: ts-mcp-root
+    edge_type: doc_depends_on
+    priority: 100
+
+# ======== seed_layer_rules ========
+seed_layer_rules:
+  - path_pattern: "{{mcp_root}}/**"
+    layer_name: MCP
+    priority: 100
+    when:
+      placeholder: mcp_root
+      operator: is_not_null
+
+  - path_pattern: "{{core_root}}/store/**"
+    layer_name: Store
+    priority: 50
+    when:
+      placeholder: core_root
+      operator: is_not_null
+
+  - path_pattern: "{{core_root}}/**"
+    layer_name: Core
+    priority: 100
+    when:
+      placeholder: core_root
+      operator: is_not_null

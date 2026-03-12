@@ -1,0 +1,50 @@
+{
+  "name": "@fuwasegu/aegis",
+  "version": "0.1.0",
+  "description": "DAG-based deterministic context compiler for AI coding agents",
+  "type": "module",
+  "main": "dist/main.js",
+  "bin": {
+    "aegis": "dist/main.js"
+  },
+  "files": [
+    "dist/",
+    "templates/",
+    "README.md",
+    "README.ja.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "start": "node dist/main.js",
+    "start:agent": "node dist/main.js --surface agent",
+    "start:admin": "node dist/main.js --surface admin",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": ["mcp", "ai-agent", "architecture", "context-compiler", "dag"],
+  "author": "",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourname/aegis"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "better-sqlite3": "^12.6.2",
+    "js-yaml": "^4.1.1",
+    "picomatch": "^4.0.3",
+    "typescript": "^5.9.3",
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^25.4.0",
+    "@types/picomatch": "^4.0.2",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.21.0",
+    "vitest": "^4.0.18"
+  }
+}

@@ -1,0 +1,136 @@
+template_id: laravel-ddd
+version: "0.1.0"
+display_name: "Laravel DDD / Clean Architecture"
+description: "Laravel project with Domain-Driven Design and Clean Architecture patterns"
+
+# ======== detect_signals ========
+detect_signals:
+  required:
+    - type: file_exists
+      path: composer.json
+    - type: package_dependency
+      file: composer.json
+      key: require
+      pattern: "laravel/framework"
+
+  boosters:
+    - type: dir_exists
+      path: app/Domain
+      weight: 30
+    - type: dir_exists
+      path: app/UseCases
+      weight: 25
+    - type: dir_exists
+      path: app/Infrastructure
+      weight: 15
+    - type: dir_structure
+      pattern: "app/Domain/*/Entities"
+      weight: 20
+    - type: dir_structure
+      pattern: "app/Domain/*/ValueObjects"
+      weight: 10
+
+  confidence_thresholds:
+    high: 50
+    medium: 25
+
+# ======== placeholders ========
+placeholders:
+  domain_root:
+    description: "Root directory for domain layer"
+    required: true
+    detect_strategy: first_match
+    candidates:
+      - app/Domain
+      - app/Domains
+      - src/Domain
+    ambiguity_policy: first
+    default: app/Domain
+
+  usecase_root:
+    description: "Root directory for use case layer"
+    required: false
+    detect_strategy: first_match
+    candidates:
+      - app/UseCases
+      - app/UseCase
+      - app/Application
+    ambiguity_policy: first
+    default: null
+
+# ======== seed_documents ========
+seed_documents:
+  - doc_id: laravel-ddd-root
+    title: "Architecture Root: Laravel DDD"
+    kind: guideline
+    file: architecture_root.md
+
+  - doc_id: laravel-ddd-entity
+    title: "Entity Guidelines"
+    kind: pattern
+    file: entity_guidelines.md
+
+  - doc_id: laravel-ddd-usecase
+    title: "UseCase Guidelines"
+    kind: guideline
+    file: usecase_guidelines.md
+
+# ======== seed_edges ========
+seed_edges:
+  - source_type: path
+    source_value: "{{domain_root}}/**"
+    target_doc_id: laravel-ddd-root
+    edge_type: path_requires
+    priority: 100
+
+  - source_type: path
+    source_value: "{{domain_root}}/**/Entities/**"
+    target_doc_id: laravel-ddd-entity
+    edge_type: path_requires
+    priority: 50
+
+  - source_type: path
+    source_value: "{{usecase_root}}/**"
+    target_doc_id: laravel-ddd-usecase
+    edge_type: path_requires
+    priority: 100
+    when:
+      placeholder: usecase_root
+      operator: is_not_null
+
+  - source_type: layer
+    source_value: Domain
+    target_doc_id: laravel-ddd-root
+    edge_type: layer_requires
+    priority: 100
+
+  - source_type: layer
+    source_value: UseCase
+    target_doc_id: laravel-ddd-usecase
+    edge_type: layer_requires
+    priority: 100
+
+  - source_type: doc
+    source_value: laravel-ddd-root
+    target_doc_id: laravel-ddd-entity
+    edge_type: doc_depends_on
+    priority: 100
+
+  - source_type: doc
+    source_value: laravel-ddd-usecase
+    target_doc_id: laravel-ddd-root
+    edge_type: doc_depends_on
+    priority: 100
+
+# ======== seed_layer_rules ========
+seed_layer_rules:
+  - path_pattern: "{{domain_root}}/**"
+    layer_name: Domain
+    priority: 100
+
+  - path_pattern: "{{usecase_root}}/**"
+    layer_name: UseCase
+    priority: 100
+    when:
+      placeholder: usecase_root
+      operator: is_not_null
