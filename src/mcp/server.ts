@@ -212,6 +212,29 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
         return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       },
     );
+
+    server.tool(
+      'aegis_import_doc',
+      'Import an existing Markdown file into Canonical Knowledge as a new_doc proposal. Parses YAML frontmatter for metadata.',
+      {
+        file_path: z.string().describe('Absolute path to the Markdown file to import'),
+        doc_id: z.string().optional().describe('Override document ID (default: derived from filename)'),
+        title: z.string().optional().describe('Override title (default: from frontmatter or filename)'),
+        kind: z.enum(['guideline', 'pattern', 'constraint', 'template', 'reference']).optional().describe('Override document kind (default: from frontmatter or "reference")'),
+      },
+      async (params) => {
+        try {
+          const result = service.importDoc(
+            params.file_path,
+            { doc_id: params.doc_id, title: params.title, kind: params.kind },
+            surface,
+          );
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        } catch (e: any) {
+          return { content: [{ type: 'text', text: `Import failed: ${e.message}` }], isError: true };
+        }
+      },
+    );
   }
 
   return server;

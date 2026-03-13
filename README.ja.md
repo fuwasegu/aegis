@@ -23,7 +23,7 @@ Aegis は、AIコーディングエージェントにアーキテクチャガイ
 }
 ```
 
-データベースはプロジェクトルートの `.aegis/aegis.db` に保存されます（`.gitignore` に `.aegis/` を追加してください）。
+データベースはプロジェクトルートの `.aegis/aegis.db` に保存されます。`.aegis/` ディレクトリは自身の `.gitignore` を含むため、手動設定は不要です。
 
 ### ソースからビルド
 
@@ -113,22 +113,33 @@ Canonical Knowledge を変更する操作（init、propose の approve/reject）
 
 > **Surface 分離 (INV-6):** Agent Surface は読み取り専用の 4 ツール。Admin Surface は全 13 ツール（Canonical 変更操作を含む）。AIエージェントが人間の承認なしにアーキテクチャルールを変更することを防ぎます。
 
-### オプション: Ollama で拡張コンテキスト
+### SLM 拡張コンテキスト（Intent Tagging）
 
-[Ollama](https://ollama.ai) がローカルで動いていれば、Aegis が自動検出して SLM ベースの拡張コンテキスト（DAG ルーティングに加えて、タグベースのドキュメント発見）を有効化します。
+Aegis は llama.cpp エンジンを内蔵しています。初回起動時に小型モデル（~1 GB）を `~/.aegis/models/` に自動ダウンロードします（全プロジェクトで共有）。
 
 ```json
 {
   "mcpServers": {
     "aegis": {
       "command": "npx",
-      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent", "--ollama-model", "qwen3:1.7b"]
+      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent", "--model", "qwen3.5-4b"]
     }
   }
 }
 ```
 
-無効化するには args に `"--no-ollama"` を追加。Base コンテキスト（決定的 DAG）は Ollama なしでも常に動作します。
+利用可能なモデル（`--list-models` で一覧表示）:
+
+| 名前 | サイズ | 説明 |
+|------|--------|------|
+| `qwen3.5-4b` | ~2.5 GB | 推奨デフォルト — 高速・軽量 |
+| `qwen3.5-9b` | ~5.5 GB | 高品質 — ベンチマークトップ |
+
+HuggingFace URI を直接指定することも可能: `--model hf:user/repo:file.gguf`
+
+SLM を無効化するには args に `"--no-slm"` を追加。Base コンテキスト（決定的 DAG）は SLM なしでも常に動作します。
+
+> **レガシー:** Ollama ベースの推論を使いたい場合は `--ollama` フラグが利用可能です。
 
 ## 使い方
 
@@ -189,7 +200,7 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `aegis_get_compile_audit` | 過去のコンパイルの監査ログを取得 |
 | `aegis_init_detect` | プロジェクト分析と初期化プレビュー生成 |
 
-### Admin Surface（追加9ツール）
+### Admin Surface（追加10ツール）
 
 | ツール | 説明 |
 |--------|------|
@@ -201,6 +212,7 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `aegis_check_upgrade` | テンプレートバージョンのアップグレード確認 |
 | `aegis_apply_upgrade` | テンプレートアップグレードのプロポーザル生成 |
 | `aegis_archive_observations` | 古いオブザベーションをアーカイブ |
+| `aegis_import_doc` | 既存の Markdown ファイルを new_doc プロポーザルとしてインポート |
 
 ## CLI フラグ
 
@@ -209,9 +221,11 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `--surface` | `agent` | `agent` または `admin` |
 | `--db` | `.aegis/aegis.db` | SQLite データベースパス |
 | `--templates` | `./templates` | テンプレートディレクトリ |
-| `--ollama-url` | `http://localhost:11434` | Ollama API URL |
-| `--ollama-model` | `qwen3:1.7b` | Ollama モデル名 |
-| `--no-ollama` | false | Ollama 連携を無効化 |
+| `--model` | `qwen3.5-4b` | SLM モデル名または HuggingFace URI |
+| `--no-slm` | false | SLM を無効化（拡張コンテキストなし） |
+| `--list-models` | | 利用可能なモデルを表示して終了 |
+| `--ollama` | false | 内蔵 llama.cpp の代わりに Ollama を使用 |
+| `--ollama-url` | `http://localhost:11434` | Ollama API URL（`--ollama` 使用時） |
 
 ## テンプレート
 
@@ -252,7 +266,7 @@ npm run test:watch
 └──────────────┬──────────────────────────┘
                │
 ┌─ Expansion (src/expansion/) ────────────┐
-│ Ollama クライアント, IntentTagger        │
+│ llama.cpp エンジン, IntentTagger          │
 └─────────────────────────────────────────┘
 ```
 

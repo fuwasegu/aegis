@@ -22,7 +22,13 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "keywords": ["mcp", "ai-agent", "architecture", "context-compiler", "dag"],
+  "keywords": [
+    "mcp",
+    "ai-agent",
+    "architecture",
+    "context-compiler",
+    "dag"
+  ],
   "author": "",
   "license": "ISC",
   "repository": {
@@ -33,6 +39,7 @@
     "@modelcontextprotocol/sdk": "^1.27.1",
     "better-sqlite3": "^12.6.2",
     "js-yaml": "^4.1.1",
+    "node-llama-cpp": "^3.17.1",
     "picomatch": "^4.0.3",
     "typescript": "^5.9.3",
     "uuid": "^13.0.0",

@@ -23,6 +23,7 @@ import type { IntentTagger } from '../core/tagging/tagger.js';
 import { deployCursorAdapter } from '../adapters/cursor/generate.js';
 import { deployClaudeAdapter } from '../adapters/claude/generate.js';
 import type { AdapterConfig, AdapterResult } from '../adapters/types.js';
+import { importDocument, type ImportResult } from '../core/import/importer.js';
 
 export type Surface = 'agent' | 'admin';
 
@@ -348,6 +349,26 @@ export class AegisService {
     this.assertAdmin('aegis_archive_observations', surface);
     const archived_count = this.repo.archiveOldObservations(days);
     return { archived_count };
+  }
+
+  importDoc(
+    filePath: string,
+    overrides: { doc_id?: string; title?: string; kind?: string } | undefined,
+    surface: Surface,
+  ): { proposal_ids: string[]; doc_id: string; title: string; kind: string; requires: string[] } {
+    this.assertAdmin('aegis_import_doc', surface);
+
+    const result: ImportResult = importDocument(filePath, overrides as any);
+    const proposeService = new ProposeService(this.repo);
+    const proposeResult = proposeService.propose(result.drafts);
+
+    return {
+      proposal_ids: proposeResult.created_proposal_ids,
+      doc_id: result.doc.doc_id,
+      title: result.doc.title,
+      kind: result.doc.kind,
+      requires: result.doc.requires,
+    };
   }
 
   private deployAdapters(projectRoot: string, templateId: string): AdapterResult[] {

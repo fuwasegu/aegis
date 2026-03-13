@@ -23,7 +23,7 @@ No cloning or building needed. Just add Aegis to your MCP config:
 }
 ```
 
-The database is stored at `.aegis/aegis.db` in the project root (add `.aegis/` to `.gitignore`).
+The database is stored at `.aegis/aegis.db` in the project root. The `.aegis/` directory includes its own `.gitignore` — no manual configuration needed.
 
 ### From source
 
@@ -113,22 +113,33 @@ For operations that modify Canonical Knowledge (init, approve/reject proposals),
 
 > **Surface separation (INV-6):** The agent surface provides 4 read-only tools. The admin surface provides all 13 tools including Canonical-mutating operations. AI agents cannot modify architecture rules without human approval.
 
-### Optional: Ollama for Expanded Context
+### SLM for Expanded Context (Intent Tagging)
 
-If [Ollama](https://ollama.ai) is running locally, Aegis auto-detects it and enables SLM-powered expanded context (tag-based document discovery beyond deterministic DAG routing).
+Aegis includes a built-in llama.cpp engine for SLM inference. On first startup, it automatically downloads a small model (~1 GB) to `~/.aegis/models/` (shared across all projects).
 
 ```json
 {
   "mcpServers": {
     "aegis": {
       "command": "npx",
-      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent", "--ollama-model", "qwen3:1.7b"]
+      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent", "--model", "qwen3.5-4b"]
     }
   }
 }
 ```
 
-To disable: add `"--no-ollama"` to args. Base context (deterministic DAG) always works without Ollama.
+Available models (`--list-models` to see all):
+
+| Name | Size | Description |
+|------|------|-------------|
+| `qwen3.5-4b` | ~2.5 GB | Recommended default — fast and lightweight |
+| `qwen3.5-9b` | ~5.5 GB | Higher quality — benchmark-topping |
+
+You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
+
+To disable SLM: add `"--no-slm"` to args. Base context (deterministic DAG) always works without SLM.
+
+> **Legacy:** `--ollama` flag is available for Ollama-based inference if preferred.
 
 ## Usage
 
@@ -189,7 +200,7 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `aegis_get_compile_audit` | Retrieve audit log of a past compile |
 | `aegis_init_detect` | Analyze a project to generate initialization preview |
 
-### Admin Surface (additional 9 tools)
+### Admin Surface (additional 10 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -201,6 +212,7 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `aegis_check_upgrade` | Check for template version upgrades |
 | `aegis_apply_upgrade` | Generate proposals for template upgrades |
 | `aegis_archive_observations` | Archive old observations |
+| `aegis_import_doc` | Import existing Markdown file as a new_doc proposal |
 
 ## CLI Flags
 
@@ -209,9 +221,11 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `--surface` | `agent` | `agent` or `admin` |
 | `--db` | `.aegis/aegis.db` | SQLite database path |
 | `--templates` | `./templates` | Templates directory |
-| `--ollama-url` | `http://localhost:11434` | Ollama API URL |
-| `--ollama-model` | `qwen3:1.7b` | Ollama model name |
-| `--no-ollama` | false | Disable Ollama integration |
+| `--model` | `qwen3.5-4b` | SLM model name or HuggingFace URI |
+| `--no-slm` | false | Disable SLM (no expanded context) |
+| `--list-models` | | Show available models and exit |
+| `--ollama` | false | Use Ollama instead of built-in llama.cpp |
+| `--ollama-url` | `http://localhost:11434` | Ollama API URL (with `--ollama`) |
 
 ## Templates
 
@@ -252,7 +266,7 @@ npm run test:watch
 └──────────────┬──────────────────────────┘
                │
 ┌─ Expansion (src/expansion/) ────────────┐
-│ Ollama client, IntentTagger             │
+│ llama.cpp engine, IntentTagger          │
 └─────────────────────────────────────────┘
 ```
 
