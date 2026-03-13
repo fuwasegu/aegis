@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/logo.png" alt="Aegis" width="500" />
+  <img src="docs/assets/logo.png#gh-light-mode-only" alt="Aegis" width="500" />
   <img src="docs/assets/logo-dark.png#gh-dark-mode-only" alt="Aegis" width="500" />
 </div>
 
