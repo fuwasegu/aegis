@@ -10,14 +10,11 @@
 
 import { DEFAULT_MODEL, getModelsDirectory, resolveModelUri } from './models.js';
 
-type NodeLlamaCpp = typeof import('node-llama-cpp');
-type Llama = import('node-llama-cpp').Llama;
-type LlamaModel = import('node-llama-cpp').LlamaModel;
-type LlamaContext = import('node-llama-cpp').LlamaContext;
+// node-llama-cpp types are not available when the optional dep is absent.
+// We use `any` for cached module/instance refs and rely on the dynamic import at runtime.
+let _nodeLlamaCpp: any = null;
 
-let _nodeLlamaCpp: NodeLlamaCpp | null = null;
-
-async function loadNodeLlamaCpp(): Promise<NodeLlamaCpp> {
+async function loadNodeLlamaCpp(): Promise<any> {
   if (_nodeLlamaCpp) return _nodeLlamaCpp;
   try {
     _nodeLlamaCpp = await import('node-llama-cpp');
@@ -39,9 +36,9 @@ export interface LlamaEngineConfig {
 
 export class LlamaEngine {
   private config: Required<LlamaEngineConfig>;
-  private llama: Llama | null = null;
-  private model: LlamaModel | null = null;
-  private context: LlamaContext | null = null;
+  private llama: any = null;
+  private model: any = null;
+  private context: any = null;
 
   constructor(config?: Partial<LlamaEngineConfig>) {
     this.config = {
