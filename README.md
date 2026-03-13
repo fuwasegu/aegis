@@ -1,12 +1,13 @@
 <div align="center">
-  <img src="docs/assets/logo.png" alt="Aegis" width="200" />
+  <img src="docs/assets/logo.png" alt="Aegis" width="500" />
+  <img src="docs/assets/logo-dark.png#gh-dark-mode-only" alt="Aegis" width="500" />
 </div>
 
 # Aegis
 
 **DAG-based Deterministic Context Compiler for AI Coding Agents**
 
-[日本語版 README](README.ja.md)
+[日本語版 README](README.ja.md) | [Technical Guide](docs/technical-guide.md)
 
 Aegis is an MCP server that enforces architecture guidelines on AI coding agents. Instead of RAG, it uses a DAG of dependency edges to deterministically compile exactly which documents an agent needs for a given set of target files. No search. No ranking. Deterministic.
 

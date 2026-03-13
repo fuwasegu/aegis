@@ -1,154 +1,156 @@
 # Aegis Technical Guide
 
-Aegis の内部で使われている決定論的アルゴリズムとアーキテクチャの設計判断を解説するドキュメント。
+[日本語版](technical-guide.ja.md)
 
-## 目次
+A deep dive into the deterministic algorithms and architectural design decisions inside Aegis.
 
-1. [コンテキストコンパイルの4ステップルーティング](#1-コンテキストコンパイルの4ステップルーティング)
-2. [Specificity と Priority による決定論的ソート](#2-specificity-と-priority-による決定論的ソート)
-3. [レイヤ解決アルゴリズム](#3-レイヤ解決アルゴリズム)
-4. [Init プロファイルスコアリング](#4-init-プロファイルスコアリング)
-5. [Snapshot とコンテンツアドレス可能バージョニング](#5-snapshot-とコンテンツアドレス可能バージョニング)
-6. [Pessimistic Claim パターン（同時実行安全性）](#6-pessimistic-claim-パターン同時実行安全性)
-7. [Proposal 重複排除（Semantic Key）](#7-proposal-重複排除semantic-key)
-8. [Preview Hash による TOCTOU 防止](#8-preview-hash-による-toctou-防止)
-9. [SLM Intent Tagging と Grammar-Constrained Generation](#9-slm-intent-tagging-と-grammar-constrained-generation)
-10. [不変条件（Invariants）](#10-不変条件invariants)
+## Table of Contents
+
+1. [4-Step Context Compilation Routing](#1-4-step-context-compilation-routing)
+2. [Deterministic Sorting by Specificity and Priority](#2-deterministic-sorting-by-specificity-and-priority)
+3. [Layer Resolution Algorithm](#3-layer-resolution-algorithm)
+4. [Init Profile Scoring](#4-init-profile-scoring)
+5. [Snapshots and Content-Addressable Versioning](#5-snapshots-and-content-addressable-versioning)
+6. [Pessimistic Claim Pattern (Concurrency Safety)](#6-pessimistic-claim-pattern-concurrency-safety)
+7. [Proposal Deduplication (Semantic Key)](#7-proposal-deduplication-semantic-key)
+8. [Preview Hash for TOCTOU Prevention](#8-preview-hash-for-toctou-prevention)
+9. [SLM Intent Tagging and Grammar-Constrained Generation](#9-slm-intent-tagging-and-grammar-constrained-generation)
+10. [Invariants](#10-invariants)
 
 ---
 
-## 1. コンテキストコンパイルの4ステップルーティング
+## 1. 4-Step Context Compilation Routing
 
-Aegis のコア機能。`compile_context` はファイルパスから必要なドキュメントを **検索ではなくグラフ走査** で決定的に解決する。
+The core feature of Aegis. `compile_context` deterministically resolves which documents are needed for given file paths — **via graph traversal, not search**.
 
-### アルゴリズム
+### Algorithm
 
 ```
-入力: target_files, target_layers?, command?, plan?
+Input: target_files, target_layers?, command?, plan?
 
 Step 1: path_requires
-  ├─ 全 path_requires エッジを取得
-  ├─ 各エッジの source_value (glob) を target_files に対してマッチング (picomatch)
-  └─ マッチしたエッジ → ソート → 対象 doc_id を収集
+  ├─ Fetch all path_requires edges
+  ├─ Match each edge's source_value (glob) against target_files (picomatch)
+  └─ Matched edges → sort → collect target doc_ids
 
 Step 2: layer_requires
-  ├─ レイヤ解決（→ §3）で対象レイヤ名を決定
-  ├─ 全 layer_requires エッジの source_value とレイヤ名をマッチング
-  └─ マッチしたエッジ → ソート → 対象 doc_id を収集
+  ├─ Resolve target layer names (→ §3)
+  ├─ Match all layer_requires edge source_values against layer names
+  └─ Matched edges → sort → collect target doc_ids
 
 Step 3: command_requires
-  ├─ request.command が存在する場合のみ
-  ├─ 全 command_requires エッジの source_value と完全一致
-  └─ マッチしたエッジ → ソート → 対象 doc_id を収集
+  ├─ Only if request.command is present
+  ├─ Exact-match all command_requires edge source_values
+  └─ Matched edges → sort → collect target doc_ids
 
-Step 4: doc_depends_on 推移閉包
-  ├─ Step 1-3 で収集した doc_id 群を起点に
-  ├─ doc_depends_on エッジを再帰的に辿る（BFS/推移閉包）
-  └─ 到達可能な全 doc_id を収集
+Step 4: doc_depends_on transitive closure
+  ├─ Starting from doc_ids collected in Steps 1-3
+  ├─ Recursively traverse doc_depends_on edges (BFS / transitive closure)
+  └─ Collect all reachable doc_ids
 
-出力: documents[] + resolution_path[] + templates[]
+Output: documents[] + resolution_path[] + templates[]
 ```
 
-### 決定論性の保証
+### Determinism Guarantee
 
-同じ入力に対して **常に同じ出力** を返す。これが RAG との根本的な違い。
+Given the same input, **always returns the same output**. This is the fundamental difference from RAG.
 
-- エッジのソートが決定的（→ §2）
-- ドキュメントの表示順も決定的
-- UUID（compile_id）以外のすべてのフィールドが再現可能
+- Edge sorting is deterministic (→ §2)
+- Document display order is deterministic
+- Every field except UUID (compile_id) is reproducible
 
-### 計算量
+### Complexity
 
-- Step 1: O(E_path × F) — E_path: path_requires エッジ数, F: target_files 数
-- Step 2: O(R × F + E_layer × L) — R: layer_rules 数, L: 解決レイヤ数
-- Step 3: O(E_cmd) — E_cmd: command_requires エッジ数
-- Step 4: O(V + E_dep) — 標準的なグラフ走査
+- Step 1: O(E_path × F) — E_path: number of path_requires edges, F: number of target_files
+- Step 2: O(R × F + E_layer × L) — R: number of layer_rules, L: number of resolved layers
+- Step 3: O(E_cmd) — E_cmd: number of command_requires edges
+- Step 4: O(V + E_dep) — standard graph traversal
 
-通常のプロジェクトでは全ステップ合計 O(数百) 程度で十分高速。
+For typical projects, all steps combined run in O(hundreds) — more than fast enough.
 
 ---
 
-## 2. Specificity と Priority による決定論的ソート
+## 2. Deterministic Sorting by Specificity and Priority
 
-複数のエッジが同じドキュメントを指す場合、表示順序を一意に決定する必要がある。
+When multiple edges point to the same document, a unique display order must be determined.
 
-### ソートキー（3段階）
-
-```
-1. specificity DESC  — より具体的なパターンが優先
-2. priority ASC      — 小さい数値が高優先度
-3. edge_id ASC       — 最終タイブレーカ（UUID の辞書順）
-```
-
-### Specificity の計算
-
-glob パターンの「具体性」をスコア化する:
+### Sort Keys (3 levels)
 
 ```
-src/**              → specificity 低（広範囲にマッチ）
-src/core/**         → specificity 中
-src/core/store/*.ts → specificity 高（狭い範囲にマッチ）
+1. specificity DESC  — more specific patterns take priority
+2. priority ASC      — lower numbers = higher priority
+3. edge_id ASC       — final tiebreaker (UUID lexicographic order)
 ```
 
-具体的な計算ロジック:
-- パスの `/` セパレータ数をベースにする
-- `**` は汎用的なので重みが低い
-- リテラルのディレクトリ名は重みが高い
+### Specificity Calculation
 
-### edge_id タイブレーカの重要性
+Scores the "specificity" of a glob pattern:
 
-specificity と priority が完全に同じエッジが存在しうる。edge_id（UUID）の辞書順で最終的なタイブレーカとする。これは **テンプレートの seed_edges が生成順に決定的な ID を持つ** ため、実質的にテンプレート定義順を反映する。
+```
+src/**              → low specificity (matches broadly)
+src/core/**         → medium specificity
+src/core/store/*.ts → high specificity (matches narrowly)
+```
+
+Calculation logic:
+- Based on the number of `/` path separators
+- `**` is generic, so it carries less weight
+- Literal directory names carry more weight
+
+### Importance of the edge_id Tiebreaker
+
+Edges with identical specificity and priority can exist. The edge_id (UUID) lexicographic order serves as the final tiebreaker. Since **template seed_edges have deterministic IDs generated in order**, this effectively reflects the template definition order.
 
 ---
 
-## 3. レイヤ解決アルゴリズム
+## 3. Layer Resolution Algorithm
 
-ファイルパスからアーキテクチャレイヤを推定する。
+Infers the architecture layer from file paths.
 
-### アルゴリズム
+### Algorithm
 
 ```
-入力: target_files[], layer_rules[]
+Input: target_files[], layer_rules[]
 
-1. layer_rules をソート:
+1. Sort layer_rules:
    specificity DESC → priority ASC → rule_id ASC
 
-2. 各 target_file について:
-   a. ソート済みルールを上から順にマッチング
-   b. 最初にマッチしたルールの layer_name を採用
-   c. マッチしなければスキップ
+2. For each target_file:
+   a. Match against sorted rules top-down
+   b. Adopt the layer_name of the first matching rule
+   c. Skip if no match
 
-3. 結果: 重複排除されたレイヤ名の集合
+3. Result: deduplicated set of layer names
 ```
 
-### First-match wins の設計理由
+### Design Rationale for First-Match Wins
 
-最も具体的なルールが先にマッチするようソートされているため、`src/core/store/*.ts` → `infrastructure` と `src/**` → `application` が共存しても、前者が優先される。
+Rules are sorted so the most specific rule matches first. Even if `src/core/store/*.ts` → `infrastructure` and `src/**` → `application` coexist, the former takes precedence.
 
-### 明示的指定
+### Explicit Override
 
-`target_layers` が明示的に渡された場合、推論はスキップされる（ユーザーの明示的な意図を尊重）。
+If `target_layers` is explicitly provided, inference is skipped entirely (respecting the user's explicit intent).
 
 ---
 
-## 4. Init プロファイルスコアリング
+## 4. Init Profile Scoring
 
-プロジェクトのスタックを検出し、最適なテンプレートを選択する。
+Detects the project's stack and selects the optimal template.
 
-### スタック検出
+### Stack Detection
 
 ```
 detectStack(projectRoot):
-  ├─ package.json 存在？ → has_npm = true
-  ├─ tsconfig.json 存在？ → has_typescript = true
-  ├─ composer.json 存在？ → has_composer = true
-  ├─ requirements.txt / pyproject.toml 存在？ → has_python = true
-  └─ src/ 存在？ → has_src = true
+  ├─ package.json exists? → has_npm = true
+  ├─ tsconfig.json exists? → has_typescript = true
+  ├─ composer.json exists? → has_composer = true
+  ├─ requirements.txt / pyproject.toml exists? → has_python = true
+  └─ src/ exists? → has_src = true
 ```
 
-### プロファイルスコアリング
+### Profile Scoring
 
-各テンプレートは `manifest.yaml` に `detection_rules` を持つ:
+Each template has `detection_rules` in its `manifest.yaml`:
 
 ```yaml
 detection_rules:
@@ -161,28 +163,28 @@ detection_rules:
     weight: 5
 ```
 
-スコア = Σ(マッチしたルールの weight)
+Score = Σ(weight of matched rules)
 
-### プロファイル選択の決定論性
+### Determinism in Profile Selection
 
 ```
-1. score DESC でソート
-2. score が同じ場合 → profile_id ASC でソート（辞書順タイブレーカ）
-3. トップの confidence が 'high' かつ同スコアが複数 → block（曖昧）
-4. トップの confidence が 'low' → warn（進行可能だが注意喚起）
-5. タイ（非 high）→ warn して辞書順で最初のものを auto-select
+1. Sort by score DESC
+2. If scores are tied → sort by profile_id ASC (lexicographic tiebreaker)
+3. If top confidence is 'high' and multiple ties → block (ambiguous)
+4. If top confidence is 'low' → warn (proceed with caution)
+5. If tied (non-high) → warn and auto-select the first lexicographically
 ```
 
 ---
 
-## 5. Snapshot とコンテンツアドレス可能バージョニング
+## 5. Snapshots and Content-Addressable Versioning
 
-### 設計
+### Design
 
-Canonical Knowledge のバージョンは **イミュータブルな Snapshot** として管理される。
+Canonical Knowledge versions are managed as **immutable Snapshots**.
 
 ```
-knowledge_meta.current_version = 1, 2, 3, ...  (単調増加)
+knowledge_meta.current_version = 1, 2, 3, ...  (monotonically increasing)
 
 Snapshot #3:
   ├─ snapshot_docs: [{doc_id, content_hash}, ...]
@@ -190,142 +192,142 @@ Snapshot #3:
   └─ snapshot_layer_rules: [{rule_id, path_pattern, ...}, ...]
 ```
 
-### 単調増加バージョン (INV-4)
+### Monotonically Increasing Version (INV-4)
 
 ```
 approveProposal():
-  1. current_version を読む
+  1. Read current_version
   2. new_version = current_version + 1
-  3. Snapshot を new_version で作成
-  4. knowledge_meta.current_version を更新
-  → SQLite トランザクション内で原子的に実行
+  3. Create Snapshot with new_version
+  4. Update knowledge_meta.current_version
+  → Executed atomically within a SQLite transaction
 ```
 
-ロールバックは不可。バージョンは絶対に減らない。
+Rollback is not possible. The version never decreases.
 
 ### Content Hash
 
-ドキュメントの `content_hash` は SHA-256。同じ内容 → 同じハッシュ → 変更検出が可能。
+Document `content_hash` is SHA-256. Same content → same hash → change detection is possible.
 
-### 監査性 (INV-5)
+### Auditability (INV-5)
 
-`compile_log` テーブルが全コンパイルを記録:
-- どの Snapshot を使ったか
-- どのドキュメントが返されたか（base + expanded）
-- リクエスト内容
+The `compile_log` table records every compilation:
+- Which Snapshot was used
+- Which documents were returned (base + expanded)
+- The request contents
 
-→ 「なぜこのドキュメントが返されたのか」を事後的に追跡可能。
+→ "Why was this document returned?" can be traced after the fact.
 
 ---
 
-## 6. Pessimistic Claim パターン（同時実行安全性）
+## 6. Pessimistic Claim Pattern (Concurrency Safety)
 
-### 問題
+### Problem
 
-`analyzeAndPropose` は非同期。複数の MCP クライアントが同時に呼び出すと、同じ Observation を二重処理するリスクがある。
+`analyzeAndPropose` is asynchronous. If multiple MCP clients call it simultaneously, the same Observation risks being processed twice.
 
-### 解決策: Pessimistic Claim
+### Solution: Pessimistic Claim
 
 ```
 analyzeAndPropose():
-  1. 未分析 Observation を取得
-  2. 即座に analyzed_at を SET（= claim を取る）
-  3. 非同期で analyzer.analyze() を実行
-  4. 成功 → proposals を作成
-  5. 失敗 → analyzed_at を NULL に戻す（= claim をリリース）
+  1. Fetch unanalyzed Observations
+  2. Immediately SET analyzed_at (= take the claim)
+  3. Run analyzer.analyze() asynchronously
+  4. Success → create proposals
+  5. Failure → reset analyzed_at to NULL (= release the claim)
 ```
 
 ```
-時間軸 →
+Timeline →
 ────────────────────────────────────────────
 Call A: [claim] ─── [analyze] ─── [propose] ✓
-Call B:         [claim: 空] → 即完了（何もない）
+Call B:         [claim: empty] → done immediately (nothing to process)
 ────────────────────────────────────────────
 ```
 
-### リカバリ
+### Recovery
 
-analyze() だけでなく propose() の失敗も catch して claim をリリース。これにより、一時的なエラーで Observation が永久にスタックすることを防ぐ。
+Both analyze() and propose() failures are caught, releasing the claim. This prevents Observations from being permanently stuck due to transient errors.
 
 ---
 
-## 7. Proposal 重複排除（Semantic Key）
+## 7. Proposal Deduplication (Semantic Key)
 
-### 問題
+### Problem
 
-同じ意味の Proposal が複数作られると、管理者に二重レビューを強いる。
+If semantically identical Proposals are created multiple times, administrators are forced into redundant reviews.
 
 ### Semantic Key
 
-各 proposal_type ごとに「意味的に同一」を判定するキーを抽出:
+For each proposal_type, a key is extracted to determine "semantic identity":
 
 ```
-add_edge:  → "{source_type}:{source_value}:{target_doc_id}:{edge_type}"
-new_doc:   → "{doc_id}"
+add_edge:   → "{source_type}:{source_value}:{target_doc_id}:{edge_type}"
+new_doc:    → "{doc_id}"
 update_doc: → "{doc_id}"
-deprecate: → "{entity_type}:{entity_id}"
-bootstrap: → "bootstrap"
+deprecate:  → "{entity_type}:{entity_id}"
+bootstrap:  → "bootstrap"
 ```
 
-### グローバルスコープ
+### Global Scope
 
-重複チェックは **全 pending proposal** に対して行われる（Observation スコープではない）。これにより:
+Deduplication checks run against **all pending proposals** (not scoped to a single Observation). This means:
 
-- 異なる Observation から同じ `update_doc` が提案されても1つだけ作られる
-- 管理者は1回のレビューで済む
+- Even if different Observations propose the same `update_doc`, only one proposal is created
+- Administrators only need to review once
 
 ---
 
-## 8. Preview Hash による TOCTOU 防止
+## 8. Preview Hash for TOCTOU Prevention
 
-### 問題
+### Problem
 
-`init_detect` と `init_confirm` は別々の呼び出し。間にテンプレートファイルが変更されたら、ユーザーが確認したプレビューと実際にマテリアライズされるデータが異なる可能性がある。
+`init_detect` and `init_confirm` are separate calls. If template files change between them, the preview the user confirmed and the data actually materialized could differ.
 
-### 解決策
+### Solution
 
 ```
 init_detect():
-  1. テンプレートを解決
-  2. 全生成データ（docs, edges, layer_rules）をJSON化
-  3. SHA-256 ハッシュを計算 = preview_hash
-  4. preview_hash とデータをインメモリキャッシュに保存
+  1. Resolve templates
+  2. Serialize all generated data (docs, edges, layer_rules) to JSON
+  3. Compute SHA-256 hash = preview_hash
+  4. Store preview_hash and data in an in-memory cache
 
 init_confirm(preview_hash):
-  1. キャッシュから preview_hash でルックアップ
-  2. マッチしなければ → エラー（TOCTOU 検出）
-  3. マッチすれば → キャッシュのデータをそのまま使用
+  1. Look up by preview_hash in cache
+  2. No match → error (TOCTOU detected)
+  3. Match → use the cached data as-is
 ```
 
-preview_hash はドキュメント内容のハッシュ、エッジ構造、プレースホルダ値をすべて含む。1ビットでも変われば異なるハッシュになる。
+The preview_hash encompasses document contents, edge structure, and placeholder values. If even a single bit changes, the hash differs.
 
 ---
 
-## 9. SLM Intent Tagging と Grammar-Constrained Generation
+## 9. SLM Intent Tagging and Grammar-Constrained Generation
 
-### 目的
+### Purpose
 
-`compile_context` の `plan` パラメータからユーザーの意図を抽出し、DAG ルーティングでは到達しないドキュメントを「拡張コンテキスト」として返す。
+Extract user intent from the `plan` parameter of `compile_context` and return documents unreachable via DAG routing as "expanded context."
 
-### 前提: SLM はオプトイン
+### Prerequisite: SLM is Opt-in
 
-SLM は `--slm` フラグで明示的に有効化される。デフォルトでは無効であり、Base Context（決定的 DAG）のみで動作する。これはコア機能が外部依存なしに動作することを保証するための設計判断（ADR-004）。
+SLM is explicitly enabled via the `--slm` flag. It is disabled by default — Base Context (deterministic DAG) operates without it. This design decision (ADR-004) ensures core functionality works with zero external dependencies.
 
-### アルゴリズム
+### Algorithm
 
 ```
-1. plan テキストを SLM に入力
-2. tag_mappings テーブルから動的に取得したタグリストから
-   関連するタグを JSON 形式で出力させる
-3. タグ → tag_mappings テーブルでドキュメントにマッピング
-4. base context に含まれないドキュメントのみを expanded として返す
+1. Feed the plan text to the SLM
+2. From a tag list dynamically fetched from the tag_mappings table,
+   have the SLM output relevant tags in JSON format
+3. Map tags → documents via the tag_mappings table
+4. Return only documents not already in the base context as expanded
 ```
 
-タグリストはハードコードされた定数ではなく、`tag_mappings` テーブルから動的に取得される。テンプレートブートストラップ時や Proposal 承認時にタグが登録され、プロジェクトの成長とともにタグ語彙が拡張される。
+The tag list is not a hardcoded constant — it is dynamically fetched from the `tag_mappings` table. Tags are registered during template bootstrap and proposal approval, growing the tag vocabulary as the project evolves.
 
 ### Grammar-Constrained Generation (llama.cpp)
 
-node-llama-cpp の Grammar 機能を使い、SLM の出力を **トークン生成レベルで** JSON スキーマに制約する:
+Using node-llama-cpp's Grammar feature, the SLM output is constrained **at the token generation level** to a JSON schema:
 
 ```typescript
 const grammar = await llama.createGrammarForJsonSchema({
@@ -336,52 +338,52 @@ const grammar = await llama.createGrammarForJsonSchema({
 });
 ```
 
-これにより:
-- JSON パース失敗が原理的に起こらない
-- 「JSONっぽいが壊れた出力」の対処が不要
-- 小型モデルでも高い成功率
+This ensures:
+- JSON parse failures are structurally impossible
+- No need to handle "almost-JSON but broken" output
+- High success rate even with small models
 
-### モデル管理
+### Model Management
 
 ```
-~/.aegis/models/             ← 全プロジェクト共有
+~/.aegis/models/             ← shared across all projects
   ├─ qwen3.5-4b-instruct-q4_k_m.gguf
   └─ ...
 
---slm 有効時の初回起動で HuggingFace からダウンロード（resolveModelFile）
-SLM 無効時（デフォルト）はモデルのダウンロードも初期化も一切行われない
+Downloaded from HuggingFace on first SLM-enabled startup (resolveModelFile)
+No download or initialization occurs when SLM is disabled (default)
 ```
 
 ---
 
-## 10. 不変条件（Invariants）
+## 10. Invariants
 
-Aegis が維持する6つの不変条件:
+The six invariants Aegis maintains:
 
-### INV-1: データ整合性
-- 全エッジの `target_doc_id` が既存ドキュメントを参照
-- `doc_depends_on` が DAG を形成（循環なし）
-- FK 制約 + アプリケーションレベルのバリデーション
+### INV-1: Data Integrity
+- Every edge's `target_doc_id` references an existing document
+- `doc_depends_on` forms a DAG (no cycles)
+- FK constraints + application-level validation
 
-### INV-2: DAG 整合性
-- `doc_depends_on` エッジが閉路を形成しないことをトランザクション時に検証
-- 推移閉包計算が有限回で終了することを保証
+### INV-2: DAG Integrity
+- Verified at transaction time that `doc_depends_on` edges do not form cycles
+- Guarantees that transitive closure computation terminates in finite steps
 
-### INV-3: Snapshot 不変性
-- Snapshot 作成後、その内容は変更不可
-- `snapshot_docs`, `snapshot_edges`, `snapshot_layer_rules` は INSERT-only
+### INV-3: Snapshot Immutability
+- Once created, Snapshot contents cannot be modified
+- `snapshot_docs`, `snapshot_edges`, `snapshot_layer_rules` are INSERT-only
 
-### INV-4: 単調増加バージョン
-- `knowledge_meta.current_version` は常に +1
-- 減少やスキップは起きない
-- SQLite トランザクションで原子性を保証
+### INV-4: Monotonically Increasing Version
+- `knowledge_meta.current_version` always increments by +1
+- Never decreases or skips
+- Atomicity guaranteed by SQLite transactions
 
-### INV-5: 監査可能性
-- 全 `compile_context` 呼び出しが `compile_log` に記録される
-- 全 Proposal が作成〜解決まで追跡可能
-- Observation → Proposal の証拠チェーン（`proposal_evidence`）
+### INV-5: Auditability
+- Every `compile_context` call is recorded in `compile_log`
+- Every Proposal is traceable from creation to resolution
+- Evidence chain from Observation → Proposal (`proposal_evidence`)
 
-### INV-6: 権限分離
-- Agent Surface: 読み取りと Observation 書き込みのみ（4ツール）
-- Admin Surface: Canonical 変更を含む全操作（15ツール: 共通4 + Admin専用11）
-- AI エージェントが直接アーキテクチャを変更することを構造的に防止
+### INV-6: Privilege Separation
+- Agent Surface: read and Observation writes only (4 tools)
+- Admin Surface: all operations including Canonical mutations (15 tools: 4 shared + 11 admin-only)
+- Structurally prevents AI agents from directly modifying architecture rules

@@ -1,12 +1,13 @@
 <div align="center">
-  <img src="docs/assets/logo.png" alt="Aegis" width="200" />
+  <img src="docs/assets/logo.png" alt="Aegis" width="500" />
+  <img src="docs/assets/logo-dark.png#gh-dark-mode-only" alt="Aegis" width="500" />
 </div>
 
 # Aegis
 
 **AIコーディングエージェント向け DAGベース決定的コンテキストコンパイラ**
 
-[English README](README.md)
+[English README](README.md) | [技術解説ガイド](docs/technical-guide.ja.md)
 
 Aegis は、AIコーディングエージェントにアーキテクチャガイドラインを強制する MCP サーバーです。RAG の代わりに、依存関係の DAG を使って対象ファイルに必要なドキュメントを決定的にコンパイルします。検索なし。ランキングなし。決定的。
 
