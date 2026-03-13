@@ -33,7 +33,7 @@ The database is stored at `.aegis/aegis.db` in the project root. The `.aegis/` d
 ### From source
 
 ```bash
-git clone https://github.com/yourname/aegis.git
+git clone https://github.com/fuwasegu/aegis.git
 cd aegis
 npm install && npm run build
 ```
@@ -53,7 +53,7 @@ Add to your project's `.cursor/mcp.json`:
 }
 ```
 
-After initialization, run `aegis_deploy_adapters` to generate `.cursor/rules/aegis-process.mdc` — a Cursor rule that instructs the agent to consult Aegis before writing code and report violations afterward.
+After initialization, run `npx @fuwasegu/aegis deploy-adapters` to generate `.cursor/rules/aegis-process.mdc` — a Cursor rule that instructs the agent to consult Aegis before writing code and report violations afterward.
 
 ### Add to Claude Code
 
@@ -74,32 +74,30 @@ Or add to your project's `.mcp.json`:
 }
 ```
 
-After initialization, run `aegis_deploy_adapters` to append an `<!-- aegis:start -->` section to your `CLAUDE.md` that instructs Claude Code to follow the Aegis workflow. If `CLAUDE.md` doesn't exist, it creates one.
+After initialization, run `npx @fuwasegu/aegis deploy-adapters` to append an `<!-- aegis:start -->` section to your `CLAUDE.md` that instructs Claude Code to follow the Aegis workflow. If `CLAUDE.md` doesn't exist, it creates one.
 
 ### Add to Codex
-
-OpenAI Codex CLI reads instructions from `AGENTS.md`. After `aegis_init_confirm`, you can manually add the Aegis workflow to your `AGENTS.md`:
-
-```markdown
-## Aegis Process Enforcement
-
-Before writing code:
-1. Create a plan describing what you intend to do.
-2. Call `aegis_compile_context` with target_files and your plan.
-3. Read and follow the returned architecture guidelines.
-
-After writing code:
-4. Self-review against the returned guidelines.
-5. Report compile misses via `aegis_observe` if guidelines were missing.
-```
-
-If Codex supports MCP, configure it the same way:
 
 ```bash
 codex mcp add aegis -- npx -y @fuwasegu/aegis --surface agent
 ```
 
-> **Note:** Codex MCP support depends on the CLI version. If MCP is not available, agents can still follow Aegis guidelines via `AGENTS.md` instructions, though without direct tool access.
+Or add to your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "aegis": {
+      "command": "npx",
+      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent"]
+    }
+  }
+}
+```
+
+After initialization, run `npx @fuwasegu/aegis deploy-adapters` to append an `<!-- aegis:start -->` section to your `AGENTS.md` that instructs Codex to follow the Aegis workflow. If `AGENTS.md` doesn't exist, it creates one.
+
+> **Note:** Codex MCP support depends on the CLI version. If MCP is not available, agents can still follow Aegis guidelines via the generated `AGENTS.md` instructions.
 
 ### Admin Surface (for initialization & approval)
 
@@ -116,7 +114,7 @@ For operations that modify Canonical Knowledge (init, approve/reject proposals),
 }
 ```
 
-> **Surface separation (INV-6):** The agent surface provides 4 read-only tools. The admin surface provides all 15 tools (4 shared + 11 admin-only) including Canonical-mutating operations. AI agents cannot modify architecture rules without human approval.
+> **Surface separation (INV-6):** The agent surface provides 4 read-only tools. The admin surface provides all 14 tools (4 shared + 10 admin-only) including Canonical-mutating operations. AI agents cannot modify architecture rules without human approval.
 
 ### SLM for Expanded Context (Intent Tagging) — Opt-in
 
@@ -159,13 +157,13 @@ aegis_init_confirm({ preview_hash: "<hash from detect>" })
 
 This creates seed documents, DAG edges, and layer rules based on your project structure.
 
-Then deploy adapter rules for your AI coding tool:
+Then deploy adapter rules for your AI coding tool via CLI:
 
-```
-aegis_deploy_adapters({ project_root: "/path/to/your/project" })
+```bash
+npx @fuwasegu/aegis deploy-adapters
 ```
 
-This generates `.cursor/rules/aegis-process.mdc` and/or a `CLAUDE.md` section to enforce the Aegis workflow.
+This generates `.cursor/rules/aegis-process.mdc`, `CLAUDE.md`, and/or `AGENTS.md` sections to enforce the Aegis workflow. You can target specific adapters with `--targets cursor,claude,codex`.
 
 ### 2. Use during development
 
@@ -213,7 +211,7 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `aegis_get_compile_audit` | Retrieve audit log of a past compile |
 | `aegis_init_detect` | Analyze a project to generate initialization preview |
 
-### Admin Surface (additional 11 tools)
+### Admin Surface (additional 10 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -227,9 +225,23 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `aegis_archive_observations` | Archive old observations |
 | `aegis_import_doc` | Import existing document content as a new_doc proposal (content-based, no file path) |
 | `aegis_process_observations` | Trigger observation analysis pipeline for pending observations |
-| `aegis_deploy_adapters` | Deploy adapter rules (Cursor .mdc, CLAUDE.md, etc.) to the project |
 
-## CLI Flags
+## CLI Subcommands
+
+Aegis provides CLI subcommands for setup tasks that don't belong in the MCP tool surface (per [ADR-007](docs/adr/007-adapter-deployment-via-cli-not-mcp-tool.md)):
+
+```bash
+npx @fuwasegu/aegis deploy-adapters                         # Deploy all adapters
+npx @fuwasegu/aegis deploy-adapters --targets cursor,codex  # Deploy specific adapters
+npx @fuwasegu/aegis deploy-adapters --project-root /path    # Specify project root
+npx @fuwasegu/aegis --list-models                           # List available SLM models
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `deploy-adapters` | Deploy IDE adapter configurations (Cursor rules, CLAUDE.md, AGENTS.md) |
+
+## CLI Flags (MCP server mode)
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -261,7 +273,7 @@ Aegis ships with pre-built architecture templates:
 
 ```bash
 npm run build    # Compile TypeScript
-npm test         # Run all tests (227+)
+npm test         # Run all tests (230+)
 npm run test:watch
 ```
 

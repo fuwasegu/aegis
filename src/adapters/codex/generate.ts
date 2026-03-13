@@ -5,7 +5,7 @@ import type { AdapterConfig, AdapterResult } from '../types.js';
 const AEGIS_START = '<!-- aegis:start -->';
 const AEGIS_END = '<!-- aegis:end -->';
 
-function generateClaudeSection(config: AdapterConfig): string {
+function generateCodexSection(config: AdapterConfig): string {
   return `${AEGIS_START}
 ## Aegis Process Enforcement
 
@@ -44,12 +44,12 @@ You MUST follow this process for every coding task. No exceptions.
 ${AEGIS_END}`;
 }
 
-export function deployClaudeAdapter(config: AdapterConfig): AdapterResult {
-  const filePath = join(config.projectRoot, 'CLAUDE.md');
-  const section = generateClaudeSection(config);
+export function deployCodexAdapter(config: AdapterConfig): AdapterResult {
+  const filePath = join(config.projectRoot, 'AGENTS.md');
+  const section = generateCodexSection(config);
 
   if (!existsSync(filePath)) {
-    const content = `# CLAUDE.md\n\n${section}\n`;
+    const content = `# AGENTS.md\n\n${section}\n`;
     writeFileSync(filePath, content, 'utf-8');
     return { filePath, status: 'created', content };
   }

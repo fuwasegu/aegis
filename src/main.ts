@@ -2,7 +2,7 @@
 /**
  * Aegis MCP Server Entry Point
  *
- * Usage:
+ * MCP server mode:
  *   npx aegis --surface agent                    # Agent surface (default)
  *   npx aegis --surface admin                    # Admin surface
  *   npx aegis --slm                              # Enable SLM for expanded context (opt-in)
@@ -10,13 +10,19 @@
  *   npx aegis --slm --model hf:user/repo:f.gguf  # Custom HuggingFace model
  *   npx aegis --slm --ollama                      # Use Ollama instead of llama.cpp
  *
+ * CLI subcommands:
+ *   npx aegis deploy-adapters                    # Deploy all IDE adapters
+ *   npx aegis deploy-adapters --targets cursor,codex
+ *   npx aegis deploy-adapters --project-root /path/to/project
+ *   npx aegis --list-models                      # List available SLM models
+ *
  * SLM is disabled by default (ADR-004). Enable with --slm for expanded context.
  * Models are stored in ~/.aegis/models/ (shared across projects).
  * DB defaults to .aegis/aegis.db (per project).
  */
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { createDatabase } from './core/store/database.js';
 import { Repository } from './core/store/repository.js';
@@ -123,8 +129,13 @@ async function createLlamaTagger(cliArgs: CliArgs): Promise<IntentTagger | null>
     console.error(`[aegis] llama.cpp engine ready`);
     return new LlamaIntentTagger(engine);
   } catch (err) {
-    console.error(`[aegis] llama.cpp initialization failed: ${err instanceof Error ? err.message : err}`);
-    console.error('[aegis] Expanded context disabled.');
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[aegis] llama.cpp initialization failed: ${message}`);
+    if (message.includes('node-llama-cpp is not installed')) {
+      console.error('[aegis] SLM requested but node-llama-cpp is not available.');
+      console.error('[aegis] Install it with: npm install node-llama-cpp');
+    }
+    console.error('[aegis] Expanded context disabled, continuing with base DAG context only.');
     return null;
   }
 }
@@ -157,7 +168,58 @@ function printModels(): void {
   console.error('  --model hf:user/repo:filename.gguf\n');
 }
 
+function handleDeployAdapters(): void {
+  const args = process.argv.slice(3);
+  let projectRoot = process.cwd();
+  let targets: string[] | undefined;
+
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case '--project-root':
+        projectRoot = resolve(args[++i]);
+        break;
+      case '--targets':
+        targets = args[++i].split(',').map(t => t.trim());
+        break;
+    }
+  }
+
+  const dbPath = join(projectRoot, DEFAULT_DB_PATH);
+  if (!existsSync(dbPath)) {
+    console.error(`[aegis] Database not found at ${dbPath}`);
+    console.error('[aegis] Run aegis init first, or specify --project-root.');
+    process.exit(1);
+  }
+
+  const db = createDatabase(dbPath);
+  const repo = new Repository(db);
+  const templatesRoot = join(import.meta.dirname, '../templates');
+  const service = new AegisService(repo, templatesRoot, null);
+  const results = service.deployAdapters(projectRoot, targets);
+
+  const statusIcon: Record<string, string> = {
+    created: '+',
+    updated: '~',
+    skipped: '-',
+    conflict: '!',
+    failed: 'x',
+  };
+
+  console.log('\nAdapter deployment results:\n');
+  for (const r of results) {
+    console.log(`  [${statusIcon[r.status] ?? '?'}] ${r.status.padEnd(8)} ${r.filePath}`);
+  }
+  console.log('');
+}
+
 async function main() {
+  const subcommand = process.argv[2];
+
+  if (subcommand === 'deploy-adapters') {
+    handleDeployAdapters();
+    return;
+  }
+
   const cliArgs = parseArgs();
 
   if (cliArgs.listModels) {

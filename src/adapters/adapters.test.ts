@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { deployCursorAdapter } from './cursor/generate.js';
 import { deployClaudeAdapter } from './claude/generate.js';
+import { deployCodexAdapter } from './codex/generate.js';
 import type { AdapterConfig } from './types.js';
 
 function makeTmpDir(): string {
@@ -41,7 +42,7 @@ describe('Cursor adapter', () => {
     const config = makeConfig(tmpDir);
     const result = deployCursorAdapter(config, RULES_DIR);
 
-    expect(result.created).toBe(true);
+    expect(result.status).toBe('created');
     expect(result.filePath).toContain('aegis-process.mdc');
     expect(existsSync(result.filePath)).toBe(true);
 
@@ -56,11 +57,11 @@ describe('Cursor adapter', () => {
     deployCursorAdapter(config, RULES_DIR);
     const result = deployCursorAdapter(config, RULES_DIR);
 
-    expect(result.created).toBe(false);
+    expect(result.status).toBe('updated');
     expect(readFileSync(result.filePath, 'utf-8')).toContain('aegis_compile_context');
   });
 
-  it('does not overwrite non-managed file', () => {
+  it('does not overwrite non-managed file (conflict)', () => {
     const config = makeConfig(tmpDir);
     const rulesDir = join(tmpDir, RULES_DIR);
     mkdirSync(rulesDir, { recursive: true });
@@ -68,7 +69,7 @@ describe('Cursor adapter', () => {
     writeFileSync(filePath, '# Custom rules\nDo not touch', 'utf-8');
 
     const result = deployCursorAdapter(config, RULES_DIR);
-    expect(result.created).toBe(false);
+    expect(result.status).toBe('conflict');
     expect(readFileSync(filePath, 'utf-8')).toBe('# Custom rules\nDo not touch');
   });
 });
@@ -88,7 +89,7 @@ describe('Claude adapter', () => {
     const config = makeConfig(tmpDir);
     const result = deployClaudeAdapter(config);
 
-    expect(result.created).toBe(true);
+    expect(result.status).toBe('created');
     const content = readFileSync(result.filePath, 'utf-8');
     expect(content).toContain('<!-- aegis:start -->');
     expect(content).toContain('<!-- aegis:end -->');
@@ -101,7 +102,7 @@ describe('Claude adapter', () => {
     writeFileSync(filePath, '# My Project\n\nExisting content.', 'utf-8');
 
     const result = deployClaudeAdapter(config);
-    expect(result.created).toBe(false);
+    expect(result.status).toBe('created');
 
     const content = readFileSync(filePath, 'utf-8');
     expect(content).toContain('# My Project');
@@ -116,7 +117,61 @@ describe('Claude adapter', () => {
     writeFileSync(filePath, '# Header\n\n<!-- aegis:start -->\nold content\n<!-- aegis:end -->\n\n# Footer', 'utf-8');
 
     const result = deployClaudeAdapter(config);
-    expect(result.created).toBe(false);
+    expect(result.status).toBe('updated');
+
+    const content = readFileSync(filePath, 'utf-8');
+    expect(content).toContain('# Header');
+    expect(content).toContain('# Footer');
+    expect(content).toContain('aegis_compile_context');
+    expect(content).not.toContain('old content');
+  });
+});
+
+describe('Codex adapter', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('creates AGENTS.md if not present', () => {
+    const config = makeConfig(tmpDir);
+    const result = deployCodexAdapter(config);
+
+    expect(result.status).toBe('created');
+    const content = readFileSync(result.filePath, 'utf-8');
+    expect(content).toContain('<!-- aegis:start -->');
+    expect(content).toContain('<!-- aegis:end -->');
+    expect(content).toContain('aegis_compile_context');
+    expect(content).toContain('AGENTS.md');
+  });
+
+  it('appends section to existing AGENTS.md', () => {
+    const config = makeConfig(tmpDir);
+    const filePath = join(tmpDir, 'AGENTS.md');
+    writeFileSync(filePath, '# My Project Agents\n\nExisting instructions.', 'utf-8');
+
+    const result = deployCodexAdapter(config);
+    expect(result.status).toBe('created');
+
+    const content = readFileSync(filePath, 'utf-8');
+    expect(content).toContain('# My Project Agents');
+    expect(content).toContain('Existing instructions.');
+    expect(content).toContain('<!-- aegis:start -->');
+    expect(content).toContain('aegis_compile_context');
+  });
+
+  it('replaces existing aegis section (idempotent)', () => {
+    const config = makeConfig(tmpDir);
+    const filePath = join(tmpDir, 'AGENTS.md');
+    writeFileSync(filePath, '# Header\n\n<!-- aegis:start -->\nold content\n<!-- aegis:end -->\n\n# Footer', 'utf-8');
+
+    const result = deployCodexAdapter(config);
+    expect(result.status).toBe('updated');
 
     const content = readFileSync(filePath, 'utf-8');
     expect(content).toContain('# Header');

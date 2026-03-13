@@ -29,21 +29,29 @@
     "context-compiler",
     "dag"
   ],
-  "author": "",
+  "author": "fuwasegu",
   "license": "ISC",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourname/aegis"
+    "url": "https://github.com/fuwasegu/aegis.git"
+  },
+  "homepage": "https://github.com/fuwasegu/aegis#readme",
+  "bugs": {
+    "url": "https://github.com/fuwasegu/aegis/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "better-sqlite3": "^12.6.2",
     "js-yaml": "^4.1.1",
-    "node-llama-cpp": "^3.17.1",
     "picomatch": "^4.0.3",
-    "typescript": "^5.9.3",
     "uuid": "^13.0.0",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "node-llama-cpp": "^3.17.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -51,6 +59,7 @@
     "@types/node": "^25.4.0",
     "@types/picomatch": "^4.0.2",
     "@types/uuid": "^10.0.0",
+    "typescript": "^5.9.3",
     "tsx": "^4.21.0",
     "vitest": "^4.0.18"
   }

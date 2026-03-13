@@ -3,11 +3,33 @@
  *
  * Manages model lifecycle: download (via resolveModelFile), load, inference, dispose.
  * Models are stored in ~/.aegis/models/ and shared across all projects.
+ *
+ * node-llama-cpp is loaded via dynamic import so the package remains optional.
+ * If not installed, a clear error message is shown when --slm is used.
  */
 
-import { getLlama, resolveModelFile, LlamaChatSession } from 'node-llama-cpp';
-import type { Llama, LlamaModel, LlamaContext } from 'node-llama-cpp';
 import { getModelsDirectory, resolveModelUri, DEFAULT_MODEL } from './models.js';
+
+type NodeLlamaCpp = typeof import('node-llama-cpp');
+type Llama = import('node-llama-cpp').Llama;
+type LlamaModel = import('node-llama-cpp').LlamaModel;
+type LlamaContext = import('node-llama-cpp').LlamaContext;
+
+let _nodeLlamaCpp: NodeLlamaCpp | null = null;
+
+async function loadNodeLlamaCpp(): Promise<NodeLlamaCpp> {
+  if (_nodeLlamaCpp) return _nodeLlamaCpp;
+  try {
+    _nodeLlamaCpp = await import('node-llama-cpp');
+    return _nodeLlamaCpp;
+  } catch {
+    throw new LlamaEngineError(
+      'node-llama-cpp is not installed. To use SLM features, run:\n' +
+      '  npm install node-llama-cpp\n' +
+      'Or remove the --slm flag to use Aegis without SLM.'
+    );
+  }
+}
 
 export interface LlamaEngineConfig {
   model: string;
@@ -30,15 +52,16 @@ export class LlamaEngine {
   }
 
   async initialize(): Promise<void> {
+    const nlc = await loadNodeLlamaCpp();
     const modelUri = resolveModelUri(this.config.model);
 
     console.error(`[aegis] Resolving model: ${this.config.model} → ${modelUri}`);
     console.error(`[aegis] Models directory: ${this.config.modelsDir}`);
 
-    const modelPath = await resolveModelFile(modelUri, this.config.modelsDir);
+    const modelPath = await nlc.resolveModelFile(modelUri, this.config.modelsDir);
     console.error(`[aegis] Model ready: ${modelPath}`);
 
-    this.llama = await getLlama();
+    this.llama = await nlc.getLlama();
     this.model = await this.llama.loadModel({ modelPath });
     this.context = await this.model.createContext({
       contextSize: this.config.contextSize,
@@ -54,7 +77,8 @@ export class LlamaEngine {
       throw new LlamaEngineError('Engine not initialized. Call initialize() first.');
     }
 
-    const session = new LlamaChatSession({
+    const nlc = await loadNodeLlamaCpp();
+    const session = new nlc.LlamaChatSession({
       contextSequence: this.context.getSequence(),
       systemPrompt: options?.systemPrompt,
     });
@@ -88,7 +112,8 @@ export class LlamaEngine {
       },
     });
 
-    const session = new LlamaChatSession({
+    const nlc = await loadNodeLlamaCpp();
+    const session = new nlc.LlamaChatSession({
       contextSequence: this.context.getSequence(),
       systemPrompt: options?.systemPrompt,
     });
