@@ -30,6 +30,8 @@ Aegis は、AIコーディングエージェントにアーキテクチャガイ
 
 データベースはプロジェクトルートの `.aegis/aegis.db` に保存されます。`.aegis/` ディレクトリは自身の `.gitignore` を含むため、手動設定は不要です。
 
+> **はじめかた:** MCP 設定に Aegis を追加したら、AI エージェントに「Aegis を初期化してアダプタルールをデプロイして」と指示してください。エージェントが `aegis_init_detect` → `aegis_init_confirm` → `npx @fuwasegu/aegis deploy-adapters` を自動で実行します。
+
 ### ソースからビルド
 
 ```bash

@@ -204,7 +204,8 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       },
       async (params) => {
         const result = service.initConfirm(params.preview_hash, surface);
-        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+        const hint = '\n\nNext: run `npx @fuwasegu/aegis deploy-adapters` in the terminal to generate IDE adapter rules (Cursor .mdc, CLAUDE.md, AGENTS.md).';
+        return { content: [{ type: 'text', text: JSON.stringify(result) + hint }] };
       },
     );
 

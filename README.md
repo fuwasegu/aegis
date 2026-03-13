@@ -30,6 +30,8 @@ No cloning or building needed. Just add Aegis to your MCP config:
 
 The database is stored at `.aegis/aegis.db` in the project root. The `.aegis/` directory includes its own `.gitignore` — no manual configuration needed.
 
+> **Getting started:** After adding Aegis to your MCP config, ask your AI agent: *"Initialize Aegis for this project and deploy the adapter rules."* The agent will run `aegis_init_detect` → `aegis_init_confirm` → `npx @fuwasegu/aegis deploy-adapters` automatically.
+
 ### From source
 
 ```bash
