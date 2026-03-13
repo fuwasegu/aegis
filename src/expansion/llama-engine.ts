@@ -8,7 +8,7 @@
  * If not installed, a clear error message is shown when --slm is used.
  */
 
-import { getModelsDirectory, resolveModelUri, DEFAULT_MODEL } from './models.js';
+import { DEFAULT_MODEL, getModelsDirectory, resolveModelUri } from './models.js';
 
 type NodeLlamaCpp = typeof import('node-llama-cpp');
 type Llama = import('node-llama-cpp').Llama;
@@ -25,8 +25,8 @@ async function loadNodeLlamaCpp(): Promise<NodeLlamaCpp> {
   } catch {
     throw new LlamaEngineError(
       'node-llama-cpp is not installed. To use SLM features, run:\n' +
-      '  npm install node-llama-cpp\n' +
-      'Or remove the --slm flag to use Aegis without SLM.'
+        '  npm install node-llama-cpp\n' +
+        'Or remove the --slm flag to use Aegis without SLM.',
     );
   }
 }
@@ -68,11 +68,14 @@ export class LlamaEngine {
     });
   }
 
-  async generate(prompt: string, options?: {
-    systemPrompt?: string;
-    maxTokens?: number;
-    temperature?: number;
-  }): Promise<string> {
+  async generate(
+    prompt: string,
+    options?: {
+      systemPrompt?: string;
+      maxTokens?: number;
+      temperature?: number;
+    },
+  ): Promise<string> {
     if (!this.context) {
       throw new LlamaEngineError('Engine not initialized. Call initialize() first.');
     }
@@ -93,11 +96,14 @@ export class LlamaEngine {
     }
   }
 
-  async generateJson<T = unknown>(prompt: string, options?: {
-    systemPrompt?: string;
-    maxTokens?: number;
-    temperature?: number;
-  }): Promise<T> {
+  async generateJson<T = unknown>(
+    prompt: string,
+    options?: {
+      systemPrompt?: string;
+      maxTokens?: number;
+      temperature?: number;
+    },
+  ): Promise<T> {
     if (!this.llama || !this.context) {
       throw new LlamaEngineError('Engine not initialized. Call initialize() first.');
     }

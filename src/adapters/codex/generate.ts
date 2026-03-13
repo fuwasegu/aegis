@@ -1,4 +1,4 @@
-import { writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AdapterConfig, AdapterResult } from '../types.js';
 
@@ -65,7 +65,7 @@ export function deployCodexAdapter(config: AdapterConfig): AdapterResult {
     return { filePath, status: 'updated', content };
   }
 
-  const content = existing.trimEnd() + '\n\n' + section + '\n';
+  const content = `${existing.trimEnd()}\n\n${section}\n`;
   writeFileSync(filePath, content, 'utf-8');
   return { filePath, status: 'created', content };
 }

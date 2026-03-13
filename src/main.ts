@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * Aegis MCP Server Entry Point
  *
@@ -21,20 +22,20 @@
  * DB defaults to .aegis/aegis.db (per project).
  */
 
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createDatabase } from './core/store/database.js';
 import { Repository } from './core/store/repository.js';
-import { AegisService } from './mcp/services.js';
-import { createAegisServer } from './mcp/server.js';
+import type { IntentTagger } from './core/tagging/tagger.js';
+import { OllamaIntentTagger } from './expansion/intent-tagger.js';
 import { LlamaEngine } from './expansion/llama-engine.js';
 import { LlamaIntentTagger } from './expansion/llama-intent-tagger.js';
+import { DEFAULT_MODEL, MODEL_CATALOG } from './expansion/models.js';
 import { OllamaClient } from './expansion/ollama-client.js';
-import { OllamaIntentTagger } from './expansion/intent-tagger.js';
-import { DEFAULT_MODEL, MODEL_CATALOG, listAvailableModels } from './expansion/models.js';
+import { createAegisServer } from './mcp/server.js';
 import type { Surface } from './mcp/services.js';
-import type { IntentTagger } from './core/tagging/tagger.js';
+import { AegisService } from './mcp/services.js';
 
 const DEFAULT_DB_DIR = '.aegis';
 const DEFAULT_DB_PATH = join(DEFAULT_DB_DIR, 'aegis.db');
@@ -179,7 +180,7 @@ function handleDeployAdapters(): void {
         projectRoot = resolve(args[++i]);
         break;
       case '--targets':
-        targets = args[++i].split(',').map(t => t.trim());
+        targets = args[++i].split(',').map((t) => t.trim());
         break;
     }
   }
@@ -249,7 +250,7 @@ async function main() {
   console.error(`Aegis MCP server started (surface: ${surface})`);
 }
 
-main().catch(error => {
+main().catch((error) => {
   console.error('Fatal error:', error);
   process.exit(1);
 });

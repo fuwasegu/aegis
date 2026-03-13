@@ -39,8 +39,8 @@ export class LlamaIntentTagger implements IntentTagger {
       if (!result || !Array.isArray(result.tags)) return [];
 
       return result.tags
-        .filter(tag => typeof tag === 'string' && knownTags.includes(tag))
-        .map(tag => ({
+        .filter((tag) => typeof tag === 'string' && knownTags.includes(tag))
+        .map((tag) => ({
           tag,
           confidence: 0.8,
           reasoning: `Extracted by ${this.engine.modelName} (llama.cpp)`,

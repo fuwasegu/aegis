@@ -7,29 +7,33 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import type { Repository } from '../core/store/repository.js';
-import { AlreadyInitializedError } from '../core/store/repository.js';
-import { ContextCompiler } from '../core/read/compiler.js';
-import { initDetect as coreInitDetect, initConfirm as coreInitConfirm, PreviewHashMismatchError } from '../core/init/engine.js';
-import { detectUpgrade, generateUpgradeProposals, type UpgradePreview } from '../core/init/upgrade.js';
-import type { InitPreview } from '../core/init/engine.js';
-import type {
-  CompileRequest, CompiledContext, ObserveEvent, CanonicalVersion,
-  AnalysisContext, AnalysisResult,
-} from '../core/types.js';
-import type { ObservationAnalyzer } from '../core/automation/analyzer.js';
-import { ProposeService, type ProposeResult } from '../core/automation/propose.js';
-import type { IntentTagger } from '../core/tagging/tagger.js';
-import { deployCursorAdapter } from '../adapters/cursor/generate.js';
 import { deployClaudeAdapter } from '../adapters/claude/generate.js';
 import { deployCodexAdapter } from '../adapters/codex/generate.js';
+import { deployCursorAdapter } from '../adapters/cursor/generate.js';
 import type { AdapterConfig, AdapterResult } from '../adapters/types.js';
-import { RuleBasedAnalyzer } from '../core/automation/rule-analyzer.js';
-import { ReviewCorrectionAnalyzer } from '../core/automation/review-correction-analyzer.js';
-import { PrMergedAnalyzer } from '../core/automation/pr-merged-analyzer.js';
-import { ManualNoteAnalyzer } from '../core/automation/manual-note-analyzer.js';
+import type { ObservationAnalyzer } from '../core/automation/analyzer.js';
 import { DocumentImportAnalyzer } from '../core/automation/document-import-analyzer.js';
-import type { ObservationEventType, DocumentKind, EdgeSpec } from '../core/types.js';
+import { ManualNoteAnalyzer } from '../core/automation/manual-note-analyzer.js';
+import { PrMergedAnalyzer } from '../core/automation/pr-merged-analyzer.js';
+import { type ProposeResult, ProposeService } from '../core/automation/propose.js';
+import { ReviewCorrectionAnalyzer } from '../core/automation/review-correction-analyzer.js';
+import { RuleBasedAnalyzer } from '../core/automation/rule-analyzer.js';
+import type { InitPreview } from '../core/init/engine.js';
+import { initConfirm as coreInitConfirm, initDetect as coreInitDetect } from '../core/init/engine.js';
+import { detectUpgrade, generateUpgradeProposals, type UpgradePreview } from '../core/init/upgrade.js';
+import { ContextCompiler } from '../core/read/compiler.js';
+import type { Repository } from '../core/store/repository.js';
+import type { IntentTagger } from '../core/tagging/tagger.js';
+import type {
+  AnalysisContext,
+  AnalysisResult,
+  CanonicalVersion,
+  CompiledContext,
+  CompileRequest,
+  EdgeSpec,
+  ObservationEventType,
+  ObserveEvent,
+} from '../core/types.js';
 
 export type Surface = 'agent' | 'admin';
 
@@ -75,12 +79,12 @@ export class AegisService {
   // Agent Surface
   // ============================================================
 
-  async compileContext(request: CompileRequest, surface: Surface): Promise<CompiledContext> {
+  async compileContext(request: CompileRequest, _surface: Surface): Promise<CompiledContext> {
     // Agent surface: allowed
     return this.compiler.compile(request);
   }
 
-  observe(event: ObserveEvent, surface: Surface): { observation_id: string } {
+  observe(event: ObserveEvent, _surface: Surface): { observation_id: string } {
     // Agent surface: allowed (writes to Observation only, not Canonical)
 
     // Enforce discriminated-union contract at service boundary
@@ -128,10 +132,14 @@ export class AegisService {
           const hasContent = 'proposed_content' in p && p.proposed_content !== undefined;
           if (hasDocId || hasContent) {
             if (!hasDocId || typeof p.target_doc_id !== 'string' || !p.target_doc_id) {
-              throw new ObserveValidationError('review_correction: target_doc_id required when proposed_content is provided');
+              throw new ObserveValidationError(
+                'review_correction: target_doc_id required when proposed_content is provided',
+              );
             }
             if (!hasContent || typeof p.proposed_content !== 'string' || !p.proposed_content) {
-              throw new ObserveValidationError('review_correction: proposed_content required when target_doc_id is provided');
+              throw new ObserveValidationError(
+                'review_correction: proposed_content required when target_doc_id is provided',
+              );
             }
           }
         }
@@ -195,20 +203,25 @@ export class AegisService {
     }
   }
 
-  getCompileAudit(compileId: string, surface: Surface): {
-    compile_id: string;
-    snapshot_id: string;
-    knowledge_version: number;
-    request: object;
-    base_doc_ids: string[];
-    expanded_doc_ids: string[] | null;
-    created_at: string;
-  } | undefined {
+  getCompileAudit(
+    compileId: string,
+    _surface: Surface,
+  ):
+    | {
+        compile_id: string;
+        snapshot_id: string;
+        knowledge_version: number;
+        request: object;
+        base_doc_ids: string[];
+        expanded_doc_ids: string[] | null;
+        created_at: string;
+      }
+    | undefined {
     // Agent surface: allowed (read-only audit)
     return this.compiler.getCompileAudit(compileId);
   }
 
-  initDetect(projectRoot: string, surface: Surface): InitPreview {
+  initDetect(projectRoot: string, _surface: Surface): InitPreview {
     const preview = coreInitDetect(projectRoot, this.templatesRoot, this.extraTemplateDirs);
     if (preview.preview_hash) {
       this.previewCache.set(preview.preview_hash, { preview, projectRoot });
@@ -225,13 +238,9 @@ export class AegisService {
     surface: Surface,
   ): { proposals: object[]; total: number } {
     this.assertAdmin('aegis_list_proposals', surface);
-    const { proposals, total } = this.repo.listProposals(
-      params.status as any,
-      params.limit ?? 20,
-      params.offset ?? 0,
-    );
+    const { proposals, total } = this.repo.listProposals(params.status as any, params.limit ?? 20, params.offset ?? 0);
     return {
-      proposals: proposals.map(p => ({
+      proposals: proposals.map((p) => ({
         proposal_id: p.proposal_id,
         proposal_type: p.proposal_type,
         status: p.status,
@@ -256,7 +265,7 @@ export class AegisService {
       review_comment: proposal.review_comment,
       created_at: proposal.created_at,
       resolved_at: proposal.resolved_at,
-      evidence: evidence.map(e => ({
+      evidence: evidence.map((e) => ({
         observation_id: e.observation_id,
         event_type: e.event_type,
         payload: JSON.parse(e.payload),
@@ -274,11 +283,7 @@ export class AegisService {
     return this.repo.approveProposal(proposalId, modifications);
   }
 
-  rejectProposal(
-    proposalId: string,
-    reason: string,
-    surface: Surface,
-  ): { proposal_id: string; status: 'rejected' } {
+  rejectProposal(proposalId: string, reason: string, surface: Surface): { proposal_id: string; status: 'rejected' } {
     this.assertAdmin('aegis_reject_proposal', surface);
     this.repo.rejectProposal(proposalId, reason);
     return { proposal_id: proposalId, status: 'rejected' };
@@ -300,15 +305,13 @@ export class AegisService {
     this.assertAdmin('analyzeAndPropose', surface);
 
     const observations = this.repo.getUnanalyzedObservations(eventType);
-    const claimedIds = observations.map(o => o.observation_id);
+    const claimedIds = observations.map((o) => o.observation_id);
 
     // Pessimistic claim: mark as analyzed before yielding to async analyzer
     this.repo.markObservationsAnalyzed(claimedIds);
 
-    const contexts: AnalysisContext[] = observations.map(obs => {
-      const audit = obs.related_compile_id
-        ? this.compiler.getCompileAudit(obs.related_compile_id)
-        : null;
+    const contexts: AnalysisContext[] = observations.map((obs) => {
+      const audit = obs.related_compile_id ? this.compiler.getCompileAudit(obs.related_compile_id) : null;
 
       return {
         observation: obs,
@@ -336,10 +339,7 @@ export class AegisService {
     }
   }
 
-  initConfirm(
-    previewHash: string,
-    surface: Surface,
-  ): CanonicalVersion {
+  initConfirm(previewHash: string, surface: Surface): CanonicalVersion {
     this.assertAdmin('aegis_init_confirm', surface);
 
     const cached = this.previewCache.get(previewHash);
@@ -373,10 +373,7 @@ export class AegisService {
     return { proposal_ids: result.created_proposal_ids };
   }
 
-  archiveObservations(
-    days: number,
-    surface: Surface,
-  ): { archived_count: number } {
+  archiveObservations(days: number, surface: Surface): { archived_count: number } {
     this.assertAdmin('aegis_archive_observations', surface);
     const archived_count = this.repo.archiveOldObservations(days);
     return { archived_count };
@@ -421,7 +418,9 @@ export class AegisService {
 
     const warnings: string[] = [];
     if (!params.edge_hints?.length && !params.tags?.length) {
-      warnings.push('Imported document has no edge_hints or tags — it will be isolated in the DAG until edges are added.');
+      warnings.push(
+        'Imported document has no edge_hints or tags — it will be isolated in the DAG until edges are added.',
+      );
     }
 
     return {
@@ -445,9 +444,7 @@ export class AegisService {
   }> {
     this.assertAdmin('aegis_process_observations', surface);
 
-    const typesToProcess = eventType
-      ? [eventType]
-      : [...this.analyzerRegistry.keys()];
+    const typesToProcess = eventType ? [eventType] : [...this.analyzerRegistry.keys()];
 
     let totalProcessed = 0;
     let totalCreated = 0;
@@ -483,10 +480,7 @@ export class AegisService {
    * Per ADR-007: adapter deployment is provided via CLI, not MCP tool.
    * Called from the `deploy-adapters` CLI subcommand.
    */
-  deployAdapters(
-    projectRoot: string,
-    targets?: string[],
-  ): AdapterResult[] {
+  deployAdapters(projectRoot: string, targets?: string[]): AdapterResult[] {
     const manifest = this.repo.getInitManifest();
     const templateId = manifest?.template_id ?? 'unknown';
 

@@ -3,14 +3,25 @@
  * Enforces INV-1 through INV-6 from プロジェクト計画v2.md §6.1
  */
 
-import type Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { v4 as uuidv4 } from 'uuid';
+import type Database from 'better-sqlite3';
 import type {
-  Document, Edge, LayerRule, Observation, Proposal, ProposalStatus,
-  Snapshot, CompileLog, KnowledgeMeta, EntityStatus, DocumentKind,
-  EdgeSourceType, EdgeType, ObservationEventType, ProposalType,
-  CanonicalVersion, InitManifest, TagMapping,
+  CanonicalVersion,
+  CompileLog,
+  Document,
+  Edge,
+  EdgeSourceType,
+  EdgeType,
+  EntityStatus,
+  InitManifest,
+  KnowledgeMeta,
+  LayerRule,
+  Observation,
+  Proposal,
+  ProposalStatus,
+  ProposalType,
+  Snapshot,
+  TagMapping,
 } from '../types.js';
 
 export class CycleDetectedError extends Error {
@@ -44,10 +55,10 @@ export class Repository {
 
   private incrementVersion(): number {
     const now = new Date().toISOString();
-    this.db.prepare(
-      'UPDATE knowledge_meta SET current_version = current_version + 1, last_updated_at = ? WHERE id = 1'
-    ).run(now);
-    return (this.getKnowledgeMeta()).current_version;
+    this.db
+      .prepare('UPDATE knowledge_meta SET current_version = current_version + 1, last_updated_at = ? WHERE id = 1')
+      .run(now);
+    return this.getKnowledgeMeta().current_version;
   }
 
   // ============================================================
@@ -55,42 +66,40 @@ export class Repository {
   // ============================================================
 
   getApprovedDocuments(): Document[] {
-    return this.db.prepare(
-      'SELECT * FROM documents WHERE status = ?'
-    ).all('approved') as Document[];
+    return this.db.prepare('SELECT * FROM documents WHERE status = ?').all('approved') as Document[];
   }
 
   getApprovedDocumentsByIds(docIds: string[]): Document[] {
     if (docIds.length === 0) return [];
     const placeholders = docIds.map(() => '?').join(',');
-    return this.db.prepare(
-      `SELECT * FROM documents WHERE doc_id IN (${placeholders}) AND status = 'approved'`
-    ).all(...docIds) as Document[];
+    return this.db
+      .prepare(`SELECT * FROM documents WHERE doc_id IN (${placeholders}) AND status = 'approved'`)
+      .all(...docIds) as Document[];
   }
 
   insertDocument(doc: Omit<Document, 'created_at' | 'updated_at'>): void {
-    this.db.prepare(`
+    this.db
+      .prepare(`
       INSERT INTO documents (doc_id, title, kind, content, content_hash, status, template_origin)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(doc.doc_id, doc.title, doc.kind, doc.content, doc.content_hash, doc.status, doc.template_origin ?? null);
+    `)
+      .run(doc.doc_id, doc.title, doc.kind, doc.content, doc.content_hash, doc.status, doc.template_origin ?? null);
   }
 
   setDocumentTemplateOrigin(docId: string, origin: string): void {
-    this.db.prepare(
-      'UPDATE documents SET template_origin = ? WHERE doc_id = ?'
-    ).run(origin, docId);
+    this.db.prepare('UPDATE documents SET template_origin = ? WHERE doc_id = ?').run(origin, docId);
   }
 
   getDocumentsByTemplateOrigin(templateId: string): Document[] {
-    return this.db.prepare(
-      "SELECT * FROM documents WHERE template_origin LIKE ? AND status = 'approved'"
-    ).all(`${templateId}:%`) as Document[];
+    return this.db
+      .prepare("SELECT * FROM documents WHERE template_origin LIKE ? AND status = 'approved'")
+      .all(`${templateId}:%`) as Document[];
   }
 
   updateDocumentStatus(docId: string, status: EntityStatus): void {
-    this.db.prepare(
-      'UPDATE documents SET status = ?, updated_at = strftime(\'%Y-%m-%dT%H:%M:%fZ\', \'now\') WHERE doc_id = ?'
-    ).run(status, docId);
+    this.db
+      .prepare("UPDATE documents SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE doc_id = ?")
+      .run(status, docId);
   }
 
   // ============================================================
@@ -98,29 +107,37 @@ export class Repository {
   // ============================================================
 
   getApprovedEdges(): Edge[] {
-    return this.db.prepare(
-      'SELECT * FROM edges WHERE status = ?'
-    ).all('approved') as Edge[];
+    return this.db.prepare('SELECT * FROM edges WHERE status = ?').all('approved') as Edge[];
   }
 
   getApprovedEdgesByType(edgeType: EdgeType): Edge[] {
-    return this.db.prepare(
-      'SELECT * FROM edges WHERE edge_type = ? AND status = ?'
-    ).all(edgeType, 'approved') as Edge[];
+    return this.db
+      .prepare('SELECT * FROM edges WHERE edge_type = ? AND status = ?')
+      .all(edgeType, 'approved') as Edge[];
   }
 
   getApprovedEdgesBySourceType(sourceType: EdgeSourceType): Edge[] {
-    return this.db.prepare(
-      'SELECT * FROM edges WHERE source_type = ? AND status = ?'
-    ).all(sourceType, 'approved') as Edge[];
+    return this.db
+      .prepare('SELECT * FROM edges WHERE source_type = ? AND status = ?')
+      .all(sourceType, 'approved') as Edge[];
   }
 
   insertEdge(edge: Omit<Edge, 'created_at'>): void {
-    this.db.prepare(`
+    this.db
+      .prepare(`
       INSERT INTO edges (edge_id, source_type, source_value, target_doc_id, edge_type, priority, specificity, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(edge.edge_id, edge.source_type, edge.source_value, edge.target_doc_id,
-           edge.edge_type, edge.priority, edge.specificity, edge.status);
+    `)
+      .run(
+        edge.edge_id,
+        edge.source_type,
+        edge.source_value,
+        edge.target_doc_id,
+        edge.edge_type,
+        edge.priority,
+        edge.specificity,
+        edge.status,
+      );
   }
 
   // ============================================================
@@ -128,16 +145,16 @@ export class Repository {
   // ============================================================
 
   getApprovedLayerRules(): LayerRule[] {
-    return this.db.prepare(
-      'SELECT * FROM layer_rules WHERE status = ?'
-    ).all('approved') as LayerRule[];
+    return this.db.prepare('SELECT * FROM layer_rules WHERE status = ?').all('approved') as LayerRule[];
   }
 
   insertLayerRule(rule: Omit<LayerRule, 'created_at'>): void {
-    this.db.prepare(`
+    this.db
+      .prepare(`
       INSERT INTO layer_rules (rule_id, path_pattern, layer_name, priority, specificity, status)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(rule.rule_id, rule.path_pattern, rule.layer_name, rule.priority, rule.specificity, rule.status);
+    `)
+      .run(rule.rule_id, rule.path_pattern, rule.layer_name, rule.priority, rule.specificity, rule.status);
   }
 
   // ============================================================
@@ -149,7 +166,8 @@ export class Repository {
    * Uses recursive CTE per §6.4.
    */
   wouldCreateCycle(sourceDocId: string, targetDocId: string): boolean {
-    const result = this.db.prepare(`
+    const result = this.db
+      .prepare(`
       WITH RECURSIVE reachable(doc_id) AS (
         SELECT ?
         UNION
@@ -163,7 +181,8 @@ export class Repository {
       SELECT EXISTS (
         SELECT 1 FROM reachable WHERE doc_id = ?
       ) as has_cycle
-    `).get(targetDocId, sourceDocId) as { has_cycle: number };
+    `)
+      .get(targetDocId, sourceDocId) as { has_cycle: number };
     return result.has_cycle === 1;
   }
 
@@ -183,7 +202,8 @@ export class Repository {
       insertTemp.run(id);
     }
 
-    const results = this.db.prepare(`
+    const results = this.db
+      .prepare(`
       WITH RECURSIVE dep_chain(doc_id, depth) AS (
         SELECT doc_id, 0 FROM temp.${tempTableName}
         UNION
@@ -199,7 +219,8 @@ export class Repository {
       FROM dep_chain
       GROUP BY doc_id
       ORDER BY depth ASC
-    `).all() as { doc_id: string; depth: number }[];
+    `)
+      .all() as { doc_id: string; depth: number }[];
 
     this.db.exec(`DROP TABLE temp.${tempTableName}`);
     return results;
@@ -210,37 +231,38 @@ export class Repository {
   // ============================================================
 
   insertObservation(obs: Omit<Observation, 'created_at' | 'archived_at' | 'analyzed_at'>): string {
-    this.db.prepare(`
+    this.db
+      .prepare(`
       INSERT INTO observations (observation_id, event_type, payload, related_compile_id, related_snapshot_id)
       VALUES (?, ?, ?, ?, ?)
-    `).run(obs.observation_id, obs.event_type, obs.payload,
-           obs.related_compile_id, obs.related_snapshot_id);
+    `)
+      .run(obs.observation_id, obs.event_type, obs.payload, obs.related_compile_id, obs.related_snapshot_id);
     return obs.observation_id;
   }
 
   getObservation(observationId: string): Observation | undefined {
-    return this.db.prepare(
-      'SELECT * FROM observations WHERE observation_id = ?'
-    ).get(observationId) as Observation | undefined;
+    return this.db.prepare('SELECT * FROM observations WHERE observation_id = ?').get(observationId) as
+      | Observation
+      | undefined;
   }
 
   getUnanalyzedObservations(eventType: string, limit = 50): Observation[] {
-    return this.db.prepare(`
+    return this.db
+      .prepare(`
       SELECT o.* FROM observations o
       WHERE o.event_type = ?
         AND o.archived_at IS NULL
         AND o.analyzed_at IS NULL
       ORDER BY o.created_at ASC
       LIMIT ?
-    `).all(eventType, limit) as Observation[];
+    `)
+      .all(eventType, limit) as Observation[];
   }
 
   markObservationsAnalyzed(observationIds: string[]): void {
     if (observationIds.length === 0) return;
     const now = new Date().toISOString();
-    const stmt = this.db.prepare(
-      'UPDATE observations SET analyzed_at = ? WHERE observation_id = ?'
-    );
+    const stmt = this.db.prepare('UPDATE observations SET analyzed_at = ? WHERE observation_id = ?');
     for (const id of observationIds) {
       stmt.run(now, id);
     }
@@ -248,9 +270,7 @@ export class Repository {
 
   resetObservationsAnalyzed(observationIds: string[]): void {
     if (observationIds.length === 0) return;
-    const stmt = this.db.prepare(
-      'UPDATE observations SET analyzed_at = NULL WHERE observation_id = ?'
-    );
+    const stmt = this.db.prepare('UPDATE observations SET analyzed_at = NULL WHERE observation_id = ?');
     for (const id of observationIds) {
       stmt.run(id);
     }
@@ -261,18 +281,21 @@ export class Repository {
   // ============================================================
 
   insertProposal(proposal: Omit<Proposal, 'created_at' | 'resolved_at'>): string {
-    this.db.prepare(`
+    this.db
+      .prepare(`
       INSERT INTO proposals (proposal_id, proposal_type, payload, status, review_comment)
       VALUES (?, ?, ?, ?, ?)
-    `).run(proposal.proposal_id, proposal.proposal_type, proposal.payload,
-           proposal.status, proposal.review_comment);
+    `)
+      .run(proposal.proposal_id, proposal.proposal_type, proposal.payload, proposal.status, proposal.review_comment);
     return proposal.proposal_id;
   }
 
   insertProposalEvidence(proposalId: string, observationId: string): void {
-    this.db.prepare(`
+    this.db
+      .prepare(`
       INSERT INTO proposal_evidence (proposal_id, observation_id) VALUES (?, ?)
-    `).run(proposalId, observationId);
+    `)
+      .run(proposalId, observationId);
   }
 
   getProposal(proposalId: string): Proposal | undefined {
@@ -298,11 +321,13 @@ export class Repository {
   }
 
   getProposalEvidence(proposalId: string): Observation[] {
-    return this.db.prepare(`
+    return this.db
+      .prepare(`
       SELECT o.* FROM observations o
       JOIN proposal_evidence pe ON pe.observation_id = o.observation_id
       WHERE pe.proposal_id = ?
-    `).all(proposalId) as Observation[];
+    `)
+      .all(proposalId) as Observation[];
   }
 
   /**
@@ -310,11 +335,13 @@ export class Repository {
    * Used by ProposeService to check for global semantic duplicates.
    */
   getPendingProposalsByType(proposalType: string): Proposal[] {
-    return this.db.prepare(`
+    return this.db
+      .prepare(`
       SELECT * FROM proposals
       WHERE proposal_type = ?
         AND status = 'pending'
-    `).all(proposalType) as Proposal[];
+    `)
+      .all(proposalType) as Proposal[];
   }
 
   // ============================================================
@@ -338,53 +365,63 @@ export class Repository {
     const content = JSON.stringify({
       knowledge_version: version,
       docs: docs
-        .map(d => ({ doc_id: d.doc_id, title: d.title, kind: d.kind, content_hash: d.content_hash }))
+        .map((d) => ({ doc_id: d.doc_id, title: d.title, kind: d.kind, content_hash: d.content_hash }))
         .sort((a, b) => a.doc_id.localeCompare(b.doc_id)),
       edges: edges
-        .map(e => ({
-          edge_id: e.edge_id, source_type: e.source_type, source_value: e.source_value,
-          target_doc_id: e.target_doc_id, edge_type: e.edge_type,
-          priority: e.priority, specificity: e.specificity,
+        .map((e) => ({
+          edge_id: e.edge_id,
+          source_type: e.source_type,
+          source_value: e.source_value,
+          target_doc_id: e.target_doc_id,
+          edge_type: e.edge_type,
+          priority: e.priority,
+          specificity: e.specificity,
         }))
         .sort((a, b) => a.edge_id.localeCompare(b.edge_id)),
       rules: rules
-        .map(r => ({
-          rule_id: r.rule_id, path_pattern: r.path_pattern, layer_name: r.layer_name,
-          priority: r.priority, specificity: r.specificity,
+        .map((r) => ({
+          rule_id: r.rule_id,
+          path_pattern: r.path_pattern,
+          layer_name: r.layer_name,
+          priority: r.priority,
+          specificity: r.specificity,
         }))
         .sort((a, b) => a.rule_id.localeCompare(b.rule_id)),
     });
     const snapshotId = createHash('sha256').update(content).digest('hex');
 
     // Insert snapshot (knowledge_version in hash guarantees no collision across approves)
-    this.db.prepare(
-      'INSERT INTO snapshots (snapshot_id, knowledge_version) VALUES (?, ?)'
-    ).run(snapshotId, version);
+    this.db.prepare('INSERT INTO snapshots (snapshot_id, knowledge_version) VALUES (?, ?)').run(snapshotId, version);
 
     // Copy docs
-    const insertDoc = this.db.prepare(
-      'INSERT INTO snapshot_docs (snapshot_id, doc_id, content_hash) VALUES (?, ?, ?)'
-    );
+    const insertDoc = this.db.prepare('INSERT INTO snapshot_docs (snapshot_id, doc_id, content_hash) VALUES (?, ?, ?)');
     for (const doc of docs) {
       insertDoc.run(snapshotId, doc.doc_id, doc.content_hash);
     }
 
     // Copy edges
     const insertEdge = this.db.prepare(
-      'INSERT INTO snapshot_edges (snapshot_id, edge_id, source_type, source_value, target_doc_id, edge_type, priority, specificity) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO snapshot_edges (snapshot_id, edge_id, source_type, source_value, target_doc_id, edge_type, priority, specificity) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     );
     for (const edge of edges) {
-      insertEdge.run(snapshotId, edge.edge_id, edge.source_type, edge.source_value,
-                     edge.target_doc_id, edge.edge_type, edge.priority, edge.specificity);
+      insertEdge.run(
+        snapshotId,
+        edge.edge_id,
+        edge.source_type,
+        edge.source_value,
+        edge.target_doc_id,
+        edge.edge_type,
+        edge.priority,
+        edge.specificity,
+      );
     }
 
     // Copy layer rules
     const insertRule = this.db.prepare(
-      'INSERT INTO snapshot_layer_rules (snapshot_id, rule_id, path_pattern, layer_name, priority, specificity) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO snapshot_layer_rules (snapshot_id, rule_id, path_pattern, layer_name, priority, specificity) VALUES (?, ?, ?, ?, ?, ?)',
     );
     for (const rule of rules) {
-      insertRule.run(snapshotId, rule.rule_id, rule.path_pattern, rule.layer_name,
-                     rule.priority, rule.specificity);
+      insertRule.run(snapshotId, rule.rule_id, rule.path_pattern, rule.layer_name, rule.priority, rule.specificity);
     }
 
     return { snapshot_id: snapshotId, knowledge_version: version, created_at: new Date().toISOString() };
@@ -394,15 +431,13 @@ export class Repository {
     const meta = this.getKnowledgeMeta();
     if (meta.current_version === 0) return undefined;
     // Every knowledge_version has exactly one snapshot (guaranteed by approve transaction)
-    return this.db.prepare(
-      'SELECT * FROM snapshots WHERE knowledge_version = ?'
-    ).get(meta.current_version) as Snapshot | undefined;
+    return this.db.prepare('SELECT * FROM snapshots WHERE knowledge_version = ?').get(meta.current_version) as
+      | Snapshot
+      | undefined;
   }
 
   getSnapshotById(snapshotId: string): Snapshot | undefined {
-    return this.db.prepare(
-      'SELECT * FROM snapshots WHERE snapshot_id = ?'
-    ).get(snapshotId) as Snapshot | undefined;
+    return this.db.prepare('SELECT * FROM snapshots WHERE snapshot_id = ?').get(snapshotId) as Snapshot | undefined;
   }
 
   // ============================================================
@@ -410,10 +445,12 @@ export class Repository {
   // ============================================================
 
   insertCompileLog(log: Omit<CompileLog, 'created_at'>): void {
-    this.db.prepare(`
+    this.db
+      .prepare(`
       INSERT INTO compile_log (compile_id, snapshot_id, request, base_doc_ids, expanded_doc_ids)
       VALUES (?, ?, ?, ?, ?)
-    `).run(log.compile_id, log.snapshot_id, log.request, log.base_doc_ids, log.expanded_doc_ids);
+    `)
+      .run(log.compile_id, log.snapshot_id, log.request, log.base_doc_ids, log.expanded_doc_ids);
   }
 
   getCompileLog(compileId: string): CompileLog | undefined {
@@ -433,13 +470,22 @@ export class Repository {
   }
 
   insertInitManifest(manifest: Omit<InitManifest, 'id' | 'created_at'>): void {
-    this.db.prepare(`
+    this.db
+      .prepare(`
       INSERT INTO init_manifest (id, template_id, template_version, preview_hash,
         stack_detection, selected_profile, placeholders, initial_snapshot_id, seed_counts)
       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(manifest.template_id, manifest.template_version, manifest.preview_hash,
-           manifest.stack_detection, manifest.selected_profile, manifest.placeholders,
-           manifest.initial_snapshot_id, manifest.seed_counts);
+    `)
+      .run(
+        manifest.template_id,
+        manifest.template_version,
+        manifest.preview_hash,
+        manifest.stack_detection,
+        manifest.selected_profile,
+        manifest.placeholders,
+        manifest.initial_snapshot_id,
+        manifest.seed_counts,
+      );
   }
 
   // ============================================================
@@ -451,7 +497,8 @@ export class Repository {
     return this.db.transaction(() => {
       const proposal = this.getProposal(proposalId);
       if (!proposal) throw new Error(`Proposal ${proposalId} not found`);
-      if (proposal.status !== 'pending') throw new Error(`Proposal ${proposalId} is not pending (status: ${proposal.status})`);
+      if (proposal.status !== 'pending')
+        throw new Error(`Proposal ${proposalId} is not pending (status: ${proposal.status})`);
 
       const payload = JSON.parse(proposal.payload);
 
@@ -459,9 +506,9 @@ export class Repository {
       if (modifications && Object.keys(modifications).length > 0) {
         this._applyModifications(payload, proposal.proposal_type as ProposalType, modifications);
         // Persist modified payload so get_proposal returns the actually-approved content
-        this.db.prepare(
-          'UPDATE proposals SET payload = ? WHERE proposal_id = ?'
-        ).run(JSON.stringify(payload), proposalId);
+        this.db
+          .prepare('UPDATE proposals SET payload = ? WHERE proposal_id = ?')
+          .run(JSON.stringify(payload), proposalId);
       }
 
       if (proposal.proposal_type === 'bootstrap') {
@@ -487,9 +534,9 @@ export class Repository {
 
       // Update proposal status
       const now = new Date().toISOString();
-      this.db.prepare(
-        'UPDATE proposals SET status = ?, resolved_at = ? WHERE proposal_id = ?'
-      ).run('approved', now, proposalId);
+      this.db
+        .prepare('UPDATE proposals SET status = ?, resolved_at = ? WHERE proposal_id = ?')
+        .run('approved', now, proposalId);
 
       // INV-4: increment version
       const newVersion = this.incrementVersion();
@@ -507,13 +554,13 @@ export class Repository {
     if (proposal.status !== 'pending') throw new Error(`Proposal ${proposalId} is not pending`);
 
     const now = new Date().toISOString();
-    this.db.prepare(
-      'UPDATE proposals SET status = ?, review_comment = ?, resolved_at = ? WHERE proposal_id = ?'
-    ).run('rejected', reason, now, proposalId);
+    this.db
+      .prepare('UPDATE proposals SET status = ?, review_comment = ?, resolved_at = ? WHERE proposal_id = ?')
+      .run('rejected', reason, now, proposalId);
 
     // Reset analyzed_at on evidence observations so they can be re-analyzed
     const evidenceObs = this.getProposalEvidence(proposalId);
-    this.resetObservationsAnalyzed(evidenceObs.map(o => o.observation_id));
+    this.resetObservationsAnalyzed(evidenceObs.map((o) => o.observation_id));
   }
 
   // ============================================================
@@ -588,9 +635,9 @@ export class Repository {
 
   private _applyUpdateDoc(payload: { doc_id: string; content: string; content_hash: string; title?: string }): void {
     // Verify target exists and is approved
-    const existing = this.db.prepare(
-      "SELECT doc_id FROM documents WHERE doc_id = ? AND status = 'approved'"
-    ).get(payload.doc_id);
+    const existing = this.db
+      .prepare("SELECT doc_id FROM documents WHERE doc_id = ? AND status = 'approved'")
+      .get(payload.doc_id);
     if (!existing) {
       throw new Error(`Cannot update document '${payload.doc_id}': not found or not approved`);
     }
@@ -606,17 +653,15 @@ export class Repository {
   }
 
   private _applyDeprecate(payload: { entity_type: 'document' | 'edge' | 'layer_rule'; entity_id: string }): void {
-    const table = payload.entity_type === 'document' ? 'documents'
-      : payload.entity_type === 'edge' ? 'edges'
-      : 'layer_rules';
-    const idCol = payload.entity_type === 'document' ? 'doc_id'
-      : payload.entity_type === 'edge' ? 'edge_id'
-      : 'rule_id';
+    const table =
+      payload.entity_type === 'document' ? 'documents' : payload.entity_type === 'edge' ? 'edges' : 'layer_rules';
+    const idCol =
+      payload.entity_type === 'document' ? 'doc_id' : payload.entity_type === 'edge' ? 'edge_id' : 'rule_id';
 
     // Verify target exists and is approved
-    const existing = this.db.prepare(
-      `SELECT ${idCol} FROM ${table} WHERE ${idCol} = ? AND status = 'approved'`
-    ).get(payload.entity_id);
+    const existing = this.db
+      .prepare(`SELECT ${idCol} FROM ${table} WHERE ${idCol} = ? AND status = 'approved'`)
+      .get(payload.entity_id);
     if (!existing) {
       throw new Error(`Cannot deprecate ${payload.entity_type} '${payload.entity_id}': not found or not approved`);
     }
@@ -629,10 +674,12 @@ export class Repository {
   // ============================================================
 
   upsertTagMapping(mapping: Omit<TagMapping, 'created_at'>): void {
-    this.db.prepare(`
+    this.db
+      .prepare(`
       INSERT OR REPLACE INTO tag_mappings (tag, doc_id, confidence, source)
       VALUES (?, ?, ?, ?)
-    `).run(mapping.tag, mapping.doc_id, mapping.confidence, mapping.source);
+    `)
+      .run(mapping.tag, mapping.doc_id, mapping.confidence, mapping.source);
   }
 
   setTagMappings(tag: string, mappings: Array<Omit<TagMapping, 'tag' | 'created_at'>>): void {
@@ -649,11 +696,13 @@ export class Repository {
   }
 
   getTagMappings(tag: string): TagMapping[] {
-    return this.db.prepare(`
+    return this.db
+      .prepare(`
       SELECT * FROM tag_mappings
       WHERE tag = ?
       ORDER BY confidence DESC, doc_id ASC
-    `).all(tag) as TagMapping[];
+    `)
+      .all(tag) as TagMapping[];
   }
 
   getDocumentsByTags(tags: string[]): Array<{
@@ -665,7 +714,8 @@ export class Repository {
     if (tags.length === 0) return [];
 
     const placeholders = tags.map(() => '?').join(',');
-    const rows = this.db.prepare(`
+    const rows = this.db
+      .prepare(`
       SELECT
         tm.doc_id,
         GROUP_CONCAT(tm.tag ORDER BY tm.tag ASC) as matched_tags,
@@ -676,14 +726,15 @@ export class Repository {
       WHERE tm.tag IN (${placeholders})
       GROUP BY tm.doc_id
       ORDER BY max_confidence DESC, tm.doc_id ASC
-    `).all(...tags) as Array<{
+    `)
+      .all(...tags) as Array<{
       doc_id: string;
       matched_tags: string;
       max_confidence: number;
       avg_confidence: number;
     }>;
 
-    return rows.map(r => ({
+    return rows.map((r) => ({
       doc_id: r.doc_id,
       matched_tags: r.matched_tags.split(','),
       max_confidence: r.max_confidence,
@@ -692,11 +743,13 @@ export class Repository {
   }
 
   getTagsForDocument(docId: string): TagMapping[] {
-    return this.db.prepare(`
+    return this.db
+      .prepare(`
       SELECT * FROM tag_mappings
       WHERE doc_id = ?
       ORDER BY confidence DESC, tag ASC
-    `).all(docId) as TagMapping[];
+    `)
+      .all(docId) as TagMapping[];
   }
 
   deleteTagMapping(tag: string, docId: string): void {
@@ -708,10 +761,10 @@ export class Repository {
   }
 
   getAllTags(): string[] {
-    const rows = this.db.prepare(
-      'SELECT DISTINCT tag FROM tag_mappings ORDER BY tag ASC'
-    ).all() as Array<{ tag: string }>;
-    return rows.map(r => r.tag);
+    const rows = this.db.prepare('SELECT DISTINCT tag FROM tag_mappings ORDER BY tag ASC').all() as Array<{
+      tag: string;
+    }>;
+    return rows.map((r) => r.tag);
   }
 
   /**
@@ -723,7 +776,8 @@ export class Repository {
    * - Were created more than `days` days ago
    */
   archiveOldObservations(days: number): number {
-    const result = this.db.prepare(`
+    const result = this.db
+      .prepare(`
       UPDATE observations
       SET archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
       WHERE archived_at IS NULL
@@ -735,14 +789,15 @@ export class Repository {
           WHERE pe.observation_id = observations.observation_id
             AND p.status = 'pending'
         )
-    `).run(days);
+    `)
+      .run(days);
     return result.changes;
   }
 
   getArchivedObservationCount(): number {
-    const row = this.db.prepare(
-      'SELECT COUNT(*) as cnt FROM observations WHERE archived_at IS NOT NULL'
-    ).get() as { cnt: number };
+    const row = this.db.prepare('SELECT COUNT(*) as cnt FROM observations WHERE archived_at IS NOT NULL').get() as {
+      cnt: number;
+    };
     return row.cnt;
   }
 }

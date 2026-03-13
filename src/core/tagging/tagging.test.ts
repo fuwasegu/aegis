@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import type Database from 'better-sqlite3';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { createInMemoryDatabase, Repository } from '../store/index.js';
-import type { IntentTagger } from './tagger.js';
 import type { IntentTag } from '../types.js';
+import type { IntentTagger } from './tagger.js';
 
 // ============================================================
 // FakeTagger (test double)
@@ -100,9 +100,7 @@ describe('Repository - Tag Mappings', () => {
         { doc_id: 'auth-guide', confidence: 0.9, source: 'slm' },
         { doc_id: 'security-pattern', confidence: 0.8, source: 'slm' },
       ]);
-      repo.setTagMappings('auth', [
-        { doc_id: 'auth-guide', confidence: 0.95, source: 'slm' },
-      ]);
+      repo.setTagMappings('auth', [{ doc_id: 'auth-guide', confidence: 0.95, source: 'slm' }]);
 
       const mappings = repo.getTagMappings('auth');
       expect(mappings).toHaveLength(1);
@@ -124,9 +122,7 @@ describe('Repository - Tag Mappings', () => {
       repo.upsertTagMapping({ tag: 'auth', doc_id: 'payment-guide', confidence: 0.6, source: 'slm' });
 
       const mappings = repo.getTagMappings('auth');
-      expect(mappings.map(m => m.doc_id)).toEqual([
-        'security-pattern', 'auth-guide', 'payment-guide',
-      ]);
+      expect(mappings.map((m) => m.doc_id)).toEqual(['security-pattern', 'auth-guide', 'payment-guide']);
     });
 
     it('deterministic tiebreaker on equal confidence', () => {
@@ -134,7 +130,7 @@ describe('Repository - Tag Mappings', () => {
       repo.upsertTagMapping({ tag: 'test', doc_id: 'auth-guide', confidence: 0.8, source: 'slm' });
 
       const mappings = repo.getTagMappings('test');
-      expect(mappings.map(m => m.doc_id)).toEqual(['auth-guide', 'payment-guide']);
+      expect(mappings.map((m) => m.doc_id)).toEqual(['auth-guide', 'payment-guide']);
     });
 
     it('returns empty array for unknown tag', () => {
@@ -154,19 +150,19 @@ describe('Repository - Tag Mappings', () => {
       const results = repo.getDocumentsByTags(['auth', 'security']);
       expect(results).toHaveLength(2);
 
-      const authGuide = results.find(r => r.doc_id === 'auth-guide')!;
+      const authGuide = results.find((r) => r.doc_id === 'auth-guide')!;
       expect(authGuide.matched_tags).toEqual(['auth', 'security']);
       expect(authGuide.max_confidence).toBe(0.95);
       expect(authGuide.avg_confidence).toBeCloseTo(0.875, 2);
 
-      const secPattern = results.find(r => r.doc_id === 'security-pattern')!;
+      const secPattern = results.find((r) => r.doc_id === 'security-pattern')!;
       expect(secPattern.matched_tags).toEqual(['security']);
       expect(secPattern.max_confidence).toBe(0.9);
     });
 
     it('sorts by max_confidence DESC, doc_id ASC', () => {
       const results = repo.getDocumentsByTags(['auth', 'security']);
-      expect(results[0].doc_id).toBe('auth-guide');      // 0.95
+      expect(results[0].doc_id).toBe('auth-guide'); // 0.95
       expect(results[1].doc_id).toBe('security-pattern'); // 0.9
     });
 
@@ -182,7 +178,7 @@ describe('Repository - Tag Mappings', () => {
       repo.upsertTagMapping({ tag: 'auth', doc_id: 'draft-doc', confidence: 0.99, source: 'slm' });
 
       const results = repo.getDocumentsByTags(['auth']);
-      expect(results.map(r => r.doc_id)).not.toContain('draft-doc');
+      expect(results.map((r) => r.doc_id)).not.toContain('draft-doc');
     });
 
     it('excludes deprecated documents', () => {
@@ -197,7 +193,7 @@ describe('Repository - Tag Mappings', () => {
       repo.upsertTagMapping({ tag: 'auth', doc_id: 'old-doc', confidence: 0.99, source: 'slm' });
 
       const results = repo.getDocumentsByTags(['auth']);
-      expect(results.map(r => r.doc_id)).not.toContain('old-doc');
+      expect(results.map((r) => r.doc_id)).not.toContain('old-doc');
     });
 
     it('returns empty array for empty tags input', () => {
@@ -216,7 +212,7 @@ describe('Repository - Tag Mappings', () => {
       repo.upsertTagMapping({ tag: 'api', doc_id: 'auth-guide', confidence: 0.6, source: 'manual' });
 
       const tags = repo.getTagsForDocument('auth-guide');
-      expect(tags.map(t => t.tag)).toEqual(['security', 'auth', 'api']);
+      expect(tags.map((t) => t.tag)).toEqual(['security', 'auth', 'api']);
     });
 
     it('returns empty array for document with no tags', () => {
@@ -288,7 +284,7 @@ describe('IntentTagger Port', () => {
 
     it('returns empty array for unknown plan text', async () => {
       const tagger = new FakeTagger({
-        'known': [{ tag: 'x', confidence: 1.0 }],
+        known: [{ tag: 'x', confidence: 1.0 }],
       });
       expect(await tagger.extractTags('unknown', ['x'])).toEqual([]);
     });
@@ -309,17 +305,23 @@ describe('Tagger + Repository Integration', () => {
     repo = new Repository(db);
 
     repo.insertDocument({
-      doc_id: 'auth-guide', title: 'Auth', kind: 'guideline',
-      content: 'auth', content_hash: 'h1', status: 'approved',
+      doc_id: 'auth-guide',
+      title: 'Auth',
+      kind: 'guideline',
+      content: 'auth',
+      content_hash: 'h1',
+      status: 'approved',
     });
     repo.insertDocument({
-      doc_id: 'security-pattern', title: 'Security', kind: 'pattern',
-      content: 'sec', content_hash: 'h2', status: 'approved',
+      doc_id: 'security-pattern',
+      title: 'Security',
+      kind: 'pattern',
+      content: 'sec',
+      content_hash: 'h2',
+      status: 'approved',
     });
 
-    repo.setTagMappings('auth', [
-      { doc_id: 'auth-guide', confidence: 0.95, source: 'slm' },
-    ]);
+    repo.setTagMappings('auth', [{ doc_id: 'auth-guide', confidence: 0.95, source: 'slm' }]);
     repo.setTagMappings('security', [
       { doc_id: 'auth-guide', confidence: 0.8, source: 'slm' },
       { doc_id: 'security-pattern', confidence: 0.9, source: 'slm' },
@@ -336,7 +338,7 @@ describe('Tagger + Repository Integration', () => {
   it('extract tags → resolve documents via tag_mappings', async () => {
     const knownTags = repo.getAllTags();
     const tags = await tagger.extractTags('Add user authentication', knownTags);
-    const docs = repo.getDocumentsByTags(tags.map(t => t.tag));
+    const docs = repo.getDocumentsByTags(tags.map((t) => t.tag));
 
     expect(docs).toHaveLength(2);
     expect(docs[0].doc_id).toBe('auth-guide');
@@ -348,7 +350,7 @@ describe('Tagger + Repository Integration', () => {
   it('same tags produce identical results (deterministic)', async () => {
     const knownTags = repo.getAllTags();
     const tags = await tagger.extractTags('Add user authentication', knownTags);
-    const tagNames = tags.map(t => t.tag);
+    const tagNames = tags.map((t) => t.tag);
 
     const result1 = repo.getDocumentsByTags(tagNames);
     const result2 = repo.getDocumentsByTags(tagNames);
@@ -359,7 +361,7 @@ describe('Tagger + Repository Integration', () => {
   it('unknown plan produces no documents', async () => {
     const knownTags = repo.getAllTags();
     const tags = await tagger.extractTags('Unknown task', knownTags);
-    const docs = repo.getDocumentsByTags(tags.map(t => t.tag));
+    const docs = repo.getDocumentsByTags(tags.map((t) => t.tag));
 
     expect(docs).toEqual([]);
   });

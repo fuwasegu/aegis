@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { createInMemoryDatabase, Repository } from '../store/index.js';
-import { ContextCompiler } from './compiler.js';
 import type { IntentTagger } from '../tagging/tagger.js';
 import type { IntentTag } from '../types.js';
+import { ContextCompiler } from './compiler.js';
 
 function hash(content: string): string {
   return createHash('sha256').update(content).digest('hex');
@@ -18,22 +18,39 @@ function bootstrap(
   repo: Repository,
   data: {
     documents: { doc_id: string; title: string; kind: string; content: string }[];
-    edges: { edge_id: string; source_type: string; source_value: string; target_doc_id: string; edge_type: string; priority: number; specificity?: number }[];
-    layer_rules?: { rule_id: string; path_pattern: string; layer_name: string; priority: number; specificity?: number }[];
+    edges: {
+      edge_id: string;
+      source_type: string;
+      source_value: string;
+      target_doc_id: string;
+      edge_type: string;
+      priority: number;
+      specificity?: number;
+    }[];
+    layer_rules?: {
+      rule_id: string;
+      path_pattern: string;
+      layer_name: string;
+      priority: number;
+      specificity?: number;
+    }[];
   },
 ) {
   repo.insertProposal({
     proposal_id: 'boot',
     proposal_type: 'bootstrap',
     payload: JSON.stringify({
-      documents: data.documents.map(d => ({
-        ...d, content_hash: hash(d.content),
+      documents: data.documents.map((d) => ({
+        ...d,
+        content_hash: hash(d.content),
       })),
-      edges: data.edges.map(e => ({
-        ...e, specificity: e.specificity ?? 0,
+      edges: data.edges.map((e) => ({
+        ...e,
+        specificity: e.specificity ?? 0,
       })),
-      layer_rules: (data.layer_rules ?? []).map(r => ({
-        ...r, specificity: r.specificity ?? 0,
+      layer_rules: (data.layer_rules ?? []).map((r) => ({
+        ...r,
+        specificity: r.specificity ?? 0,
       })),
     }),
     status: 'pending',
@@ -74,11 +91,17 @@ describe('ContextCompiler', () => {
   // ── 1. target_files だけで動く ──
   it('resolves documents from target_files via path_requires', async () => {
     bootstrap(repo, {
-      documents: [
-        { doc_id: 'ddd-guide', title: 'DDD Fundamentals', kind: 'guideline', content: 'DDD content' },
-      ],
+      documents: [{ doc_id: 'ddd-guide', title: 'DDD Fundamentals', kind: 'guideline', content: 'DDD content' }],
       edges: [
-        { edge_id: 'e1', source_type: 'path', source_value: 'app/Domain/**', target_doc_id: 'ddd-guide', edge_type: 'path_requires', priority: 100, specificity: 2 },
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'app/Domain/**',
+          target_doc_id: 'ddd-guide',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 2,
+        },
       ],
     });
 
@@ -101,16 +124,40 @@ describe('ContextCompiler', () => {
         { doc_id: 'unrelated', title: 'Unrelated', kind: 'guideline', content: 'nope' },
       ],
       edges: [
-        { edge_id: 'e1', source_type: 'path', source_value: 'app/Domain/**', target_doc_id: 'ddd-guide', edge_type: 'path_requires', priority: 100, specificity: 2 },
-        { edge_id: 'e2', source_type: 'path', source_value: 'app/Domain/*/Entity.php', target_doc_id: 'entity-guide', edge_type: 'path_requires', priority: 50, specificity: 4 },
-        { edge_id: 'e3', source_type: 'path', source_value: 'tests/**', target_doc_id: 'unrelated', edge_type: 'path_requires', priority: 100, specificity: 1 },
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'app/Domain/**',
+          target_doc_id: 'ddd-guide',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 2,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'app/Domain/*/Entity.php',
+          target_doc_id: 'entity-guide',
+          edge_type: 'path_requires',
+          priority: 50,
+          specificity: 4,
+        },
+        {
+          edge_id: 'e3',
+          source_type: 'path',
+          source_value: 'tests/**',
+          target_doc_id: 'unrelated',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 1,
+        },
       ],
     });
 
     const result = await compiler.compile({ target_files: ['app/Domain/User/Entity.php'] });
 
     // Both e1 and e2 should match. e3 should NOT match.
-    const docIds = result.base.documents.map(d => d.doc_id);
+    const docIds = result.base.documents.map((d) => d.doc_id);
     expect(docIds).toContain('ddd-guide');
     expect(docIds).toContain('entity-guide');
     expect(docIds).not.toContain('unrelated');
@@ -124,7 +171,14 @@ describe('ContextCompiler', () => {
         { doc_id: 'usecase-guide', title: 'UseCase Guidelines', kind: 'guideline', content: 'UseCase content' },
       ],
       edges: [
-        { edge_id: 'e1', source_type: 'layer', source_value: 'UseCase', target_doc_id: 'usecase-guide', edge_type: 'layer_requires', priority: 100 },
+        {
+          edge_id: 'e1',
+          source_type: 'layer',
+          source_value: 'UseCase',
+          target_doc_id: 'usecase-guide',
+          edge_type: 'layer_requires',
+          priority: 100,
+        },
       ],
       layer_rules: [
         { rule_id: 'lr1', path_pattern: 'app/UseCases/**', layer_name: 'UseCase', priority: 100, specificity: 2 },
@@ -135,7 +189,7 @@ describe('ContextCompiler', () => {
 
     expect(result.base.documents).toHaveLength(1);
     expect(result.base.documents[0].doc_id).toBe('usecase-guide');
-    expect(result.base.resolution_path.some(e => e.edge_type === 'layer_requires')).toBe(true);
+    expect(result.base.resolution_path.some((e) => e.edge_type === 'layer_requires')).toBe(true);
   });
 
   // ── 3b. target_layers 明示指定が layer_rules 推論に優先する ──
@@ -146,8 +200,22 @@ describe('ContextCompiler', () => {
         { doc_id: 'domain-guide', title: 'Domain Guidelines', kind: 'guideline', content: 'Domain' },
       ],
       edges: [
-        { edge_id: 'e1', source_type: 'layer', source_value: 'UseCase', target_doc_id: 'usecase-guide', edge_type: 'layer_requires', priority: 100 },
-        { edge_id: 'e2', source_type: 'layer', source_value: 'Domain', target_doc_id: 'domain-guide', edge_type: 'layer_requires', priority: 100 },
+        {
+          edge_id: 'e1',
+          source_type: 'layer',
+          source_value: 'UseCase',
+          target_doc_id: 'usecase-guide',
+          edge_type: 'layer_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'layer',
+          source_value: 'Domain',
+          target_doc_id: 'domain-guide',
+          edge_type: 'layer_requires',
+          priority: 100,
+        },
       ],
       layer_rules: [
         { rule_id: 'lr1', path_pattern: 'app/UseCases/**', layer_name: 'UseCase', priority: 100, specificity: 2 },
@@ -160,7 +228,7 @@ describe('ContextCompiler', () => {
       target_layers: ['Domain'],
     });
 
-    const docIds = result.base.documents.map(d => d.doc_id);
+    const docIds = result.base.documents.map((d) => d.doc_id);
     expect(docIds).toContain('domain-guide');
     // UseCase should NOT be resolved because target_layers overrides inference
     expect(docIds).not.toContain('usecase-guide');
@@ -176,23 +244,44 @@ describe('ContextCompiler', () => {
       ],
       edges: [
         // path_requires → arch-root
-        { edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'arch-root', edge_type: 'path_requires', priority: 100 },
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'arch-root',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
         // arch-root depends on layer-guide
-        { edge_id: 'e2', source_type: 'doc', source_value: 'arch-root', target_doc_id: 'layer-guide', edge_type: 'doc_depends_on', priority: 100 },
+        {
+          edge_id: 'e2',
+          source_type: 'doc',
+          source_value: 'arch-root',
+          target_doc_id: 'layer-guide',
+          edge_type: 'doc_depends_on',
+          priority: 100,
+        },
         // layer-guide depends on naming-guide (transitive)
-        { edge_id: 'e3', source_type: 'doc', source_value: 'layer-guide', target_doc_id: 'naming-guide', edge_type: 'doc_depends_on', priority: 100 },
+        {
+          edge_id: 'e3',
+          source_type: 'doc',
+          source_value: 'layer-guide',
+          target_doc_id: 'naming-guide',
+          edge_type: 'doc_depends_on',
+          priority: 100,
+        },
       ],
     });
 
     const result = await compiler.compile({ target_files: ['src/index.ts'] });
 
-    const docIds = result.base.documents.map(d => d.doc_id);
+    const docIds = result.base.documents.map((d) => d.doc_id);
     expect(docIds).toContain('arch-root');
     expect(docIds).toContain('layer-guide');
     expect(docIds).toContain('naming-guide');
 
     // resolution_path should include both path_requires and doc_depends_on edges
-    const edgeTypes = result.base.resolution_path.map(e => e.edge_type);
+    const edgeTypes = result.base.resolution_path.map((e) => e.edge_type);
     expect(edgeTypes).toContain('path_requires');
     expect(edgeTypes).toContain('doc_depends_on');
   });
@@ -207,10 +296,38 @@ describe('ContextCompiler', () => {
         { doc_id: 'dep-doc', title: 'Dep Doc', kind: 'guideline', content: 'dep' },
       ],
       edges: [
-        { edge_id: 'e-path', source_type: 'path', source_value: 'src/**', target_doc_id: 'path-doc', edge_type: 'path_requires', priority: 100 },
-        { edge_id: 'e-layer', source_type: 'layer', source_value: 'Service', target_doc_id: 'layer-doc', edge_type: 'layer_requires', priority: 100 },
-        { edge_id: 'e-cmd', source_type: 'command', source_value: 'scaffold', target_doc_id: 'cmd-doc', edge_type: 'command_requires', priority: 100 },
-        { edge_id: 'e-dep', source_type: 'doc', source_value: 'path-doc', target_doc_id: 'dep-doc', edge_type: 'doc_depends_on', priority: 100 },
+        {
+          edge_id: 'e-path',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'path-doc',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e-layer',
+          source_type: 'layer',
+          source_value: 'Service',
+          target_doc_id: 'layer-doc',
+          edge_type: 'layer_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e-cmd',
+          source_type: 'command',
+          source_value: 'scaffold',
+          target_doc_id: 'cmd-doc',
+          edge_type: 'command_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e-dep',
+          source_type: 'doc',
+          source_value: 'path-doc',
+          target_doc_id: 'dep-doc',
+          edge_type: 'doc_depends_on',
+          priority: 100,
+        },
       ],
       layer_rules: [
         { rule_id: 'lr1', path_pattern: 'src/services/**', layer_name: 'Service', priority: 100, specificity: 2 },
@@ -222,7 +339,7 @@ describe('ContextCompiler', () => {
       command: 'scaffold',
     });
 
-    const edgeIds = result.base.resolution_path.map(e => e.edge_id);
+    const edgeIds = result.base.resolution_path.map((e) => e.edge_id);
     // path edges first, then layer, then command, then deps
     const pathIdx = edgeIds.indexOf('e-path');
     const layerIdx = edgeIds.indexOf('e-layer');
@@ -237,11 +354,16 @@ describe('ContextCompiler', () => {
   // ── 6. 同一 snapshot_id でも compile_id は毎回変わる ──
   it('produces unique compile_id for each invocation on the same snapshot', async () => {
     bootstrap(repo, {
-      documents: [
-        { doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'c' },
-      ],
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'c' }],
       edges: [
-        { edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'd1', edge_type: 'path_requires', priority: 100 },
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
       ],
     });
 
@@ -260,8 +382,22 @@ describe('ContextCompiler', () => {
         { doc_id: 'd2', title: 'Doc2', kind: 'pattern', content: 'c2' },
       ],
       edges: [
-        { edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'd1', edge_type: 'path_requires', priority: 100 },
-        { edge_id: 'e2', source_type: 'doc', source_value: 'd1', target_doc_id: 'd2', edge_type: 'doc_depends_on', priority: 100 },
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'doc',
+          source_value: 'd1',
+          target_doc_id: 'd2',
+          edge_type: 'doc_depends_on',
+          priority: 100,
+        },
       ],
     });
 
@@ -287,8 +423,22 @@ describe('ContextCompiler', () => {
         { doc_id: 'd-tmpl', title: 'Entity Template', kind: 'template', content: '<?php class {{name}} {}' },
       ],
       edges: [
-        { edge_id: 'e1', source_type: 'path', source_value: 'app/Domain/**', target_doc_id: 'd-guide', edge_type: 'path_requires', priority: 100 },
-        { edge_id: 'e2', source_type: 'path', source_value: 'app/Domain/**', target_doc_id: 'd-tmpl', edge_type: 'path_requires', priority: 100 },
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'app/Domain/**',
+          target_doc_id: 'd-guide',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'app/Domain/**',
+          target_doc_id: 'd-tmpl',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
       ],
     });
 
@@ -317,11 +467,16 @@ describe('ContextCompiler', () => {
   // ── Edge case: command_requires works ──
   it('resolves command_requires edges', async () => {
     bootstrap(repo, {
-      documents: [
-        { doc_id: 'scaffold-guide', title: 'Scaffold Guide', kind: 'guideline', content: 'scaffold' },
-      ],
+      documents: [{ doc_id: 'scaffold-guide', title: 'Scaffold Guide', kind: 'guideline', content: 'scaffold' }],
       edges: [
-        { edge_id: 'e1', source_type: 'command', source_value: 'scaffold', target_doc_id: 'scaffold-guide', edge_type: 'command_requires', priority: 100 },
+        {
+          edge_id: 'e1',
+          source_type: 'command',
+          source_value: 'scaffold',
+          target_doc_id: 'scaffold-guide',
+          edge_type: 'command_requires',
+          priority: 100,
+        },
       ],
     });
 
@@ -357,7 +512,14 @@ describe('ContextCompiler — expanded context', () => {
         { doc_id: 'security-doc', title: 'Security Guide', kind: 'guideline', content: 'security content' },
       ],
       edges: [
-        { edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'base-doc', edge_type: 'path_requires', priority: 100 },
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'base-doc',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
       ],
     });
 
@@ -396,9 +558,7 @@ describe('ContextCompiler — expanded context', () => {
   it('plan + tagger: expanded includes tag-matched docs not in base', async () => {
     setupBaseAndTags();
     const tagger = new FakeTagger({
-      'add authentication to login': [
-        { tag: 'authentication', confidence: 0.9 },
-      ],
+      'add authentication to login': [{ tag: 'authentication', confidence: 0.9 }],
     });
     const compiler = new ContextCompiler(repo, tagger);
 
@@ -408,7 +568,7 @@ describe('ContextCompiler — expanded context', () => {
     });
 
     expect(result.expanded).toBeDefined();
-    const expandedIds = result.expanded!.documents.map(d => d.doc_id);
+    const expandedIds = result.expanded!.documents.map((d) => d.doc_id);
     expect(expandedIds).toContain('auth-doc');
     expect(expandedIds).toContain('security-doc');
     expect(result.expanded!.confidence).toBeGreaterThan(0);
@@ -436,7 +596,7 @@ describe('ContextCompiler — expanded context', () => {
     });
 
     // base-doc is in base, so should NOT be in expanded
-    const expandedIds = result.expanded!.documents.map(d => d.doc_id);
+    const expandedIds = result.expanded!.documents.map((d) => d.doc_id);
     expect(expandedIds).not.toContain('base-doc');
     expect(expandedIds).toContain('auth-doc');
   });
@@ -507,7 +667,7 @@ describe('ContextCompiler — expanded context', () => {
       plan: 'add auth',
     });
 
-    const expandedIds = result.expanded!.documents.map(d => d.doc_id);
+    const expandedIds = result.expanded!.documents.map((d) => d.doc_id);
     expect(expandedIds).not.toContain('draft-doc');
   });
 
@@ -521,8 +681,22 @@ describe('ContextCompiler — expanded context', () => {
         { doc_id: 'auth-doc', title: 'Auth Guide', kind: 'guideline', content: 'auth' },
       ],
       edges: [
-        { edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'base-doc', edge_type: 'path_requires', priority: 100 },
-        { edge_id: 'e2', source_type: 'path', source_value: 'src/**', target_doc_id: 'tmpl-doc', edge_type: 'path_requires', priority: 100 },
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'base-doc',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'tmpl-doc',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
       ],
     });
 
@@ -544,7 +718,7 @@ describe('ContextCompiler — expanded context', () => {
     expect(result.base.templates).toHaveLength(1);
     expect(result.base.templates[0].name).toBe('Entity Template');
 
-    const expandedIds = result.expanded!.documents.map(d => d.doc_id);
+    const expandedIds = result.expanded!.documents.map((d) => d.doc_id);
     expect(expandedIds).not.toContain('tmpl-doc');
     expect(expandedIds).toContain('auth-doc');
   });

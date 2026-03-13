@@ -1,28 +1,35 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type Database from 'better-sqlite3';
-import { createInMemoryDatabase, Repository, AlreadyInitializedError } from '../store/index.js';
-import { initDetect, initConfirm, PreviewHashMismatchError } from './engine.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AlreadyInitializedError, createInMemoryDatabase, Repository } from '../store/index.js';
+import { initConfirm, initDetect, PreviewHashMismatchError } from './engine.js';
 import { calculateSpecificity, evaluateWhen } from './template-loader.js';
 
 const TEMPLATES_ROOT = join(import.meta.dirname, '../../../templates');
 
 // ── Helper: create a fake Laravel DDD project with high boosters ──
 function createLaravelDddProject(root: string): void {
-  writeFileSync(join(root, 'composer.json'), JSON.stringify({
-    require: { 'laravel/framework': '^11.0' },
-  }));
+  writeFileSync(
+    join(root, 'composer.json'),
+    JSON.stringify({
+      require: { 'laravel/framework': '^11.0' },
+    }),
+  );
   mkdirSync(join(root, 'app/Domain/User/Entities'), { recursive: true });
   mkdirSync(join(root, 'app/UseCases'), { recursive: true });
 }
 
 // ── Helper: create a minimal generic project ──
 function createGenericProject(root: string): void {
-  writeFileSync(join(root, 'package.json'), JSON.stringify({
-    name: 'test', dependencies: {},
-  }));
+  writeFileSync(
+    join(root, 'package.json'),
+    JSON.stringify({
+      name: 'test',
+      dependencies: {},
+    }),
+  );
   mkdirSync(join(root, 'src'), { recursive: true });
 }
 
@@ -79,21 +86,22 @@ describe('Init Engine', () => {
   it('emits warn when multiple profiles are tied on score', () => {
     // composer.json with laravel but no booster dirs → laravel-ddd score=0
     // generic-layered also matches with score=0 (no src/ either)
-    writeFileSync(join(tmpDir, 'composer.json'), JSON.stringify({
-      require: { 'laravel/framework': '^11.0' },
-    }));
+    writeFileSync(
+      join(tmpDir, 'composer.json'),
+      JSON.stringify({
+        require: { 'laravel/framework': '^11.0' },
+      }),
+    );
 
     const preview = initDetect(tmpDir, TEMPLATES_ROOT);
 
     // Both profiles should be detected
-    const profileIds = preview.detection.architecture_profiles.map(p => p.profile_id);
+    const profileIds = preview.detection.architecture_profiles.map((p) => p.profile_id);
     expect(profileIds).toContain('laravel-ddd');
     expect(profileIds).toContain('generic-layered');
 
     // Should have a warn about tied profiles
-    const tieWarnings = preview.warnings.filter(w =>
-      w.severity === 'warn' && w.message.includes('tied')
-    );
+    const tieWarnings = preview.warnings.filter((w) => w.severity === 'warn' && w.message.includes('tied'));
     expect(tieWarnings.length).toBeGreaterThan(0);
 
     // Not blocking — still confirmable
@@ -135,15 +143,13 @@ describe('Init Engine', () => {
 
     const preview = initDetect(tmpDir, TEMPLATES_ROOT);
     // generic-layered has no required signals, so it matches
-    const profileIds = preview.detection.architecture_profiles.map(p => p.profile_id);
+    const profileIds = preview.detection.architecture_profiles.map((p) => p.profile_id);
     expect(profileIds).toContain('generic-layered');
     // laravel-ddd requires composer.json + laravel, so it should NOT match
     expect(profileIds).not.toContain('laravel-ddd');
 
     // Low confidence warning should be present
-    const lowConfWarnings = preview.warnings.filter(w =>
-      w.message.includes('low confidence')
-    );
+    const lowConfWarnings = preview.warnings.filter((w) => w.message.includes('low confidence'));
     expect(lowConfWarnings.length).toBeGreaterThan(0);
 
     // Should still be confirmable (warn, not block)
@@ -160,14 +166,14 @@ describe('Init Engine', () => {
 
     // Documents
     expect(preview.generated.documents.length).toBeGreaterThanOrEqual(3);
-    const docIds = preview.generated.documents.map(d => d.doc_id);
+    const docIds = preview.generated.documents.map((d) => d.doc_id);
     expect(docIds).toContain('laravel-ddd-root');
     expect(docIds).toContain('laravel-ddd-entity');
     expect(docIds).toContain('laravel-ddd-usecase');
 
     // Edges
     expect(preview.generated.edges.length).toBeGreaterThan(0);
-    const pathEdges = preview.generated.edges.filter(e => e.edge_type === 'path_requires');
+    const pathEdges = preview.generated.edges.filter((e) => e.edge_type === 'path_requires');
     expect(pathEdges.length).toBeGreaterThan(0);
     // Path edges should have auto-calculated specificity > 0
     for (const e of pathEdges) {
@@ -181,9 +187,12 @@ describe('Init Engine', () => {
   // ── 8. when conditions filter edges correctly ──
   it('skips edges with unmet when conditions', () => {
     // Create project with Domain but WITHOUT UseCases
-    writeFileSync(join(tmpDir, 'composer.json'), JSON.stringify({
-      require: { 'laravel/framework': '^11.0' },
-    }));
+    writeFileSync(
+      join(tmpDir, 'composer.json'),
+      JSON.stringify({
+        require: { 'laravel/framework': '^11.0' },
+      }),
+    );
     mkdirSync(join(tmpDir, 'app/Domain'), { recursive: true });
     // No app/UseCases — usecase_root resolves to null (default)
 
@@ -191,18 +200,16 @@ describe('Init Engine', () => {
 
     // Only proceed if laravel-ddd was actually selected
     if (preview.template_id === 'laravel-ddd') {
-      const usecaseRootValue = preview._placeholders['usecase_root'];
+      const usecaseRootValue = preview._placeholders.usecase_root;
       if (usecaseRootValue === null) {
         // usecase path edges should be absent
         const usecasePathEdges = preview.generated.edges.filter(
-          e => e.edge_type === 'path_requires' && e.source_value.includes('UseCases')
+          (e) => e.edge_type === 'path_requires' && e.source_value.includes('UseCases'),
         );
         expect(usecasePathEdges).toHaveLength(0);
 
         // usecase layer rules should also be absent
-        const usecaseRules = preview.generated.layer_rules.filter(
-          r => r.layer_name === 'UseCase'
-        );
+        const usecaseRules = preview.generated.layer_rules.filter((r) => r.layer_name === 'UseCase');
         expect(usecaseRules).toHaveLength(0);
       }
     }
@@ -218,7 +225,7 @@ describe('Init Engine', () => {
     // generic-layered should match (no required signals) with low confidence
     expect(preview.template_id).toBe('generic-layered');
     expect(preview.has_blocking_warnings).toBe(false);
-    const warnMsgs = preview.warnings.filter(w => w.severity === 'warn');
+    const warnMsgs = preview.warnings.filter((w) => w.severity === 'warn');
     expect(warnMsgs.length).toBeGreaterThan(0);
   });
 

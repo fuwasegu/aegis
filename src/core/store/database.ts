@@ -35,7 +35,7 @@ export function createDatabase(dbPath: string): Database.Database {
 function applyMigrations(db: Database.Database): void {
   const hasColumn = (table: string, column: string): boolean => {
     const cols = db.pragma(`table_info(${table})`) as Array<{ name: string }>;
-    return cols.some(c => c.name === column);
+    return cols.some((c) => c.name === column);
   };
 
   // Migration 1: observations.analyzed_at (automation pipeline)

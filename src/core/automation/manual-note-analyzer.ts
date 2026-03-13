@@ -10,9 +10,9 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { ObservationAnalyzer } from './analyzer.js';
 import type { Repository } from '../store/repository.js';
-import type { AnalysisContext, AnalysisResult, ProposalDraft, DocumentKind } from '../types.js';
+import type { AnalysisContext, AnalysisResult, DocumentKind, ProposalDraft } from '../types.js';
+import type { ObservationAnalyzer } from './analyzer.js';
 
 export class ManualNoteAnalyzer implements ObservationAnalyzer {
   constructor(private repo: Repository) {}
@@ -75,9 +75,7 @@ export class ManualNoteAnalyzer implements ObservationAnalyzer {
     const docs = this.repo.getApprovedDocumentsByIds([payload.target_doc_id!]);
     if (docs.length === 0) return null;
 
-    const contentHash = createHash('sha256')
-      .update(payload.proposed_content!)
-      .digest('hex');
+    const contentHash = createHash('sha256').update(payload.proposed_content!).digest('hex');
 
     return {
       proposal_type: 'update_doc',
@@ -95,9 +93,7 @@ export class ManualNoteAnalyzer implements ObservationAnalyzer {
     payload: { content: string; new_doc_hint?: { doc_id: string; title: string; kind: DocumentKind } },
   ): ProposalDraft | null {
     const hint = payload.new_doc_hint!;
-    const contentHash = createHash('sha256')
-      .update(payload.content)
-      .digest('hex');
+    const contentHash = createHash('sha256').update(payload.content).digest('hex');
 
     return {
       proposal_type: 'new_doc',

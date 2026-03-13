@@ -1,8 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
-import { OllamaClient, OllamaError, DEFAULT_OLLAMA_CONFIG } from './ollama-client.js';
+import { describe, expect, it, vi } from 'vitest';
 import { OllamaIntentTagger } from './intent-tagger.js';
 import { LlamaIntentTagger } from './llama-intent-tagger.js';
-import { MODEL_CATALOG, DEFAULT_MODEL, resolveModelUri, listAvailableModels } from './models.js';
+import { DEFAULT_MODEL, listAvailableModels, MODEL_CATALOG, resolveModelUri } from './models.js';
+import { DEFAULT_OLLAMA_CONFIG, OllamaClient, OllamaError } from './ollama-client.js';
 
 // ============================================================
 // Model Catalog
@@ -65,7 +65,7 @@ describe('LlamaIntentTagger', () => {
     expect(result).toHaveLength(2);
     expect(result[0].tag).toBe('state_mutation');
     expect(result[1].tag).toBe('collection_operation');
-    expect(result.every(t => t.confidence > 0)).toBe(true);
+    expect(result.every((t) => t.confidence > 0)).toBe(true);
     expect(result[0].reasoning).toContain('llama.cpp');
   });
 
@@ -75,7 +75,7 @@ describe('LlamaIntentTagger', () => {
     const result = await tagger.extractTags('Migrate database', knownTags);
 
     expect(result).toHaveLength(2);
-    expect(result.map(t => t.tag)).toEqual(['state_mutation', 'db_migration']);
+    expect(result.map((t) => t.tag)).toEqual(['state_mutation', 'db_migration']);
   });
 
   it('returns empty on engine failure', async () => {
@@ -171,9 +171,11 @@ describe('OllamaIntentTagger (legacy)', () => {
 
   it('parses valid JSON response from generate', async () => {
     const mockClient = {
-      generate: vi.fn().mockResolvedValue(JSON.stringify({
-        tags: ['state_mutation', 'collection_operation'],
-      })),
+      generate: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          tags: ['state_mutation', 'collection_operation'],
+        }),
+      ),
       modelName: 'test-model',
       isHealthy: vi.fn().mockResolvedValue(true),
     } as any;
@@ -184,14 +186,16 @@ describe('OllamaIntentTagger (legacy)', () => {
     expect(result).toHaveLength(2);
     expect(result[0].tag).toBe('state_mutation');
     expect(result[1].tag).toBe('collection_operation');
-    expect(result.every(t => t.confidence > 0)).toBe(true);
+    expect(result.every((t) => t.confidence > 0)).toBe(true);
   });
 
   it('filters out unknown tags', async () => {
     const mockClient = {
-      generate: vi.fn().mockResolvedValue(JSON.stringify({
-        tags: ['state_mutation', 'unknown_tag', 'collection_operation'],
-      })),
+      generate: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          tags: ['state_mutation', 'unknown_tag', 'collection_operation'],
+        }),
+      ),
       modelName: 'test-model',
     } as any;
 
@@ -199,7 +203,7 @@ describe('OllamaIntentTagger (legacy)', () => {
     const result = await tagger.extractTags('Do something', knownTags);
 
     expect(result).toHaveLength(2);
-    expect(result.map(t => t.tag)).toEqual(['state_mutation', 'collection_operation']);
+    expect(result.map((t) => t.tag)).toEqual(['state_mutation', 'collection_operation']);
   });
 
   it('handles malformed JSON gracefully', async () => {

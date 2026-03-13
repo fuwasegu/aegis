@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createInMemoryDatabase, Repository, CycleDetectedError, AlreadyInitializedError } from './index.js';
 import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { AlreadyInitializedError, CycleDetectedError, createInMemoryDatabase, Repository } from './index.js';
 
 function hash(content: string): string {
   return createHash('sha256').update(content).digest('hex');
@@ -29,9 +29,30 @@ describe('Repository', () => {
 
   describe('INV-1: Canonical consistency', () => {
     it('getApprovedDocuments returns only approved docs', () => {
-      repo.insertDocument({ doc_id: 'doc1', title: 'T1', kind: 'guideline', content: 'c1', content_hash: hash('c1'), status: 'approved' });
-      repo.insertDocument({ doc_id: 'doc2', title: 'T2', kind: 'guideline', content: 'c2', content_hash: hash('c2'), status: 'draft' });
-      repo.insertDocument({ doc_id: 'doc3', title: 'T3', kind: 'guideline', content: 'c3', content_hash: hash('c3'), status: 'proposed' });
+      repo.insertDocument({
+        doc_id: 'doc1',
+        title: 'T1',
+        kind: 'guideline',
+        content: 'c1',
+        content_hash: hash('c1'),
+        status: 'approved',
+      });
+      repo.insertDocument({
+        doc_id: 'doc2',
+        title: 'T2',
+        kind: 'guideline',
+        content: 'c2',
+        content_hash: hash('c2'),
+        status: 'draft',
+      });
+      repo.insertDocument({
+        doc_id: 'doc3',
+        title: 'T3',
+        kind: 'guideline',
+        content: 'c3',
+        content_hash: hash('c3'),
+        status: 'proposed',
+      });
 
       const docs = repo.getApprovedDocuments();
       expect(docs).toHaveLength(1);
@@ -41,24 +62,81 @@ describe('Repository', () => {
 
   describe('INV-2: DAG constraint (cycle detection)', () => {
     beforeEach(() => {
-      repo.insertDocument({ doc_id: 'a', title: 'A', kind: 'guideline', content: 'a', content_hash: hash('a'), status: 'approved' });
-      repo.insertDocument({ doc_id: 'b', title: 'B', kind: 'guideline', content: 'b', content_hash: hash('b'), status: 'approved' });
-      repo.insertDocument({ doc_id: 'c', title: 'C', kind: 'guideline', content: 'c', content_hash: hash('c'), status: 'approved' });
+      repo.insertDocument({
+        doc_id: 'a',
+        title: 'A',
+        kind: 'guideline',
+        content: 'a',
+        content_hash: hash('a'),
+        status: 'approved',
+      });
+      repo.insertDocument({
+        doc_id: 'b',
+        title: 'B',
+        kind: 'guideline',
+        content: 'b',
+        content_hash: hash('b'),
+        status: 'approved',
+      });
+      repo.insertDocument({
+        doc_id: 'c',
+        title: 'C',
+        kind: 'guideline',
+        content: 'c',
+        content_hash: hash('c'),
+        status: 'approved',
+      });
     });
 
     it('detects direct cycle', () => {
-      repo.insertEdge({ edge_id: 'e1', source_type: 'doc', source_value: 'a', target_doc_id: 'b', edge_type: 'doc_depends_on', priority: 100, specificity: 0, status: 'approved' });
+      repo.insertEdge({
+        edge_id: 'e1',
+        source_type: 'doc',
+        source_value: 'a',
+        target_doc_id: 'b',
+        edge_type: 'doc_depends_on',
+        priority: 100,
+        specificity: 0,
+        status: 'approved',
+      });
       expect(repo.wouldCreateCycle('b', 'a')).toBe(true);
     });
 
     it('detects transitive cycle', () => {
-      repo.insertEdge({ edge_id: 'e1', source_type: 'doc', source_value: 'a', target_doc_id: 'b', edge_type: 'doc_depends_on', priority: 100, specificity: 0, status: 'approved' });
-      repo.insertEdge({ edge_id: 'e2', source_type: 'doc', source_value: 'b', target_doc_id: 'c', edge_type: 'doc_depends_on', priority: 100, specificity: 0, status: 'approved' });
+      repo.insertEdge({
+        edge_id: 'e1',
+        source_type: 'doc',
+        source_value: 'a',
+        target_doc_id: 'b',
+        edge_type: 'doc_depends_on',
+        priority: 100,
+        specificity: 0,
+        status: 'approved',
+      });
+      repo.insertEdge({
+        edge_id: 'e2',
+        source_type: 'doc',
+        source_value: 'b',
+        target_doc_id: 'c',
+        edge_type: 'doc_depends_on',
+        priority: 100,
+        specificity: 0,
+        status: 'approved',
+      });
       expect(repo.wouldCreateCycle('c', 'a')).toBe(true);
     });
 
     it('allows valid DAG edge', () => {
-      repo.insertEdge({ edge_id: 'e1', source_type: 'doc', source_value: 'a', target_doc_id: 'b', edge_type: 'doc_depends_on', priority: 100, specificity: 0, status: 'approved' });
+      repo.insertEdge({
+        edge_id: 'e1',
+        source_type: 'doc',
+        source_value: 'a',
+        target_doc_id: 'b',
+        edge_type: 'doc_depends_on',
+        priority: 100,
+        specificity: 0,
+        status: 'approved',
+      });
       expect(repo.wouldCreateCycle('a', 'c')).toBe(false);
     });
   });
@@ -143,18 +221,57 @@ describe('Repository', () => {
 
   describe('Transitive dependencies', () => {
     beforeEach(() => {
-      repo.insertDocument({ doc_id: 'root', title: 'Root', kind: 'guideline', content: 'r', content_hash: hash('r'), status: 'approved' });
-      repo.insertDocument({ doc_id: 'mid', title: 'Mid', kind: 'guideline', content: 'm', content_hash: hash('m'), status: 'approved' });
-      repo.insertDocument({ doc_id: 'leaf', title: 'Leaf', kind: 'pattern', content: 'l', content_hash: hash('l'), status: 'approved' });
+      repo.insertDocument({
+        doc_id: 'root',
+        title: 'Root',
+        kind: 'guideline',
+        content: 'r',
+        content_hash: hash('r'),
+        status: 'approved',
+      });
+      repo.insertDocument({
+        doc_id: 'mid',
+        title: 'Mid',
+        kind: 'guideline',
+        content: 'm',
+        content_hash: hash('m'),
+        status: 'approved',
+      });
+      repo.insertDocument({
+        doc_id: 'leaf',
+        title: 'Leaf',
+        kind: 'pattern',
+        content: 'l',
+        content_hash: hash('l'),
+        status: 'approved',
+      });
 
       // root -> mid -> leaf
-      repo.insertEdge({ edge_id: 'e1', source_type: 'doc', source_value: 'root', target_doc_id: 'mid', edge_type: 'doc_depends_on', priority: 100, specificity: 0, status: 'approved' });
-      repo.insertEdge({ edge_id: 'e2', source_type: 'doc', source_value: 'mid', target_doc_id: 'leaf', edge_type: 'doc_depends_on', priority: 100, specificity: 0, status: 'approved' });
+      repo.insertEdge({
+        edge_id: 'e1',
+        source_type: 'doc',
+        source_value: 'root',
+        target_doc_id: 'mid',
+        edge_type: 'doc_depends_on',
+        priority: 100,
+        specificity: 0,
+        status: 'approved',
+      });
+      repo.insertEdge({
+        edge_id: 'e2',
+        source_type: 'doc',
+        source_value: 'mid',
+        target_doc_id: 'leaf',
+        edge_type: 'doc_depends_on',
+        priority: 100,
+        specificity: 0,
+        status: 'approved',
+      });
     });
 
     it('resolves full dependency chain', () => {
       const deps = repo.getTransitiveDependencies(['root']);
-      const ids = deps.map(d => d.doc_id);
+      const ids = deps.map((d) => d.doc_id);
       expect(ids).toContain('root');
       expect(ids).toContain('mid');
       expect(ids).toContain('leaf');
@@ -162,7 +279,7 @@ describe('Repository', () => {
 
     it('includes start nodes at depth 0', () => {
       const deps = repo.getTransitiveDependencies(['root']);
-      const rootDep = deps.find(d => d.doc_id === 'root');
+      const rootDep = deps.find((d) => d.doc_id === 'root');
       expect(rootDep?.depth).toBe(0);
     });
   });
@@ -192,8 +309,24 @@ describe('Repository', () => {
             { doc_id: 'b', title: 'B', kind: 'guideline', content: 'b', content_hash: hash('b') },
           ],
           edges: [
-            { edge_id: 'e1', source_type: 'doc', source_value: 'a', target_doc_id: 'b', edge_type: 'doc_depends_on', priority: 100, specificity: 0 },
-            { edge_id: 'e2', source_type: 'doc', source_value: 'b', target_doc_id: 'a', edge_type: 'doc_depends_on', priority: 100, specificity: 0 },
+            {
+              edge_id: 'e1',
+              source_type: 'doc',
+              source_value: 'a',
+              target_doc_id: 'b',
+              edge_type: 'doc_depends_on',
+              priority: 100,
+              specificity: 0,
+            },
+            {
+              edge_id: 'e2',
+              source_type: 'doc',
+              source_value: 'b',
+              target_doc_id: 'a',
+              edge_type: 'doc_depends_on',
+              priority: 100,
+              specificity: 0,
+            },
           ],
           layer_rules: [],
         }),

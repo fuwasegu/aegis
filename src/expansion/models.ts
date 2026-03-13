@@ -5,9 +5,9 @@
  * node-llama-cpp's resolveModelFile handles downloading from HuggingFace.
  */
 
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 export interface ModelEntry {
   uri: string;
