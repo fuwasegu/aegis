@@ -1,6 +1,6 @@
 # ADR-006: テンプレートは bootstrap 用 seed source として維持し、配布は段階拡張する
 
-**ステータス:** Accepted
+**ステータス:** Implemented
 **日付:** 2026-03-13
 
 ## 関連議題

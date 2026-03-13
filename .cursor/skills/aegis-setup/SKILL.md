@@ -39,34 +39,36 @@ Using the **admin** surface tools:
 2. If preview looks correct:
    aegis_init_confirm({ preview_hash: "<hash from step 1>" })
    → Creates seed documents, edges, layer rules
-   → Auto-generates .cursor/rules/aegis-process.mdc
+
+3. Deploy adapter rules:
+   aegis_deploy_adapters({ project_root: "<absolute path to project>" })
+   → Generates .cursor/rules/aegis-process.mdc
+   → Generates CLAUDE.md section (if Claude Code project)
 ```
 
 After init, `.aegis/` directory is created with the database. It self-manages its `.gitignore`.
 
 ## Step 3: Import Existing Docs (Optional)
 
-If the project has existing architecture documentation:
+If the project has existing architecture documentation, read the file content and pass it directly:
 
 ```
 aegis_import_doc({
-  file_path: "/absolute/path/to/docs/architecture.md",
-  kind: "guideline"
+  content: "<full markdown content of the document>",
+  doc_id: "my-doc-id",
+  title: "My Document",
+  kind: "guideline",
+  tags: ["architecture", "patterns"],
+  edge_hints: [
+    { source_type: "doc_depends_on", target_doc_id: "other-doc-id" }
+  ]
 })
 ```
 
-Supports YAML frontmatter for metadata:
+Required fields: `content`, `doc_id`, `title`, `kind`.
+Optional fields: `tags`, `edge_hints`, `source_path` (for provenance tracking only).
 
-```yaml
----
-id: my-doc-id
-title: My Document
-kind: guideline
-requires: [other-doc-id]
----
-```
-
-Each import creates a **proposal** that must be approved:
+Each import creates a **proposal** (with full evidence chain via observation) that must be approved:
 
 ```
 aegis_list_proposals({ status: "pending" })
@@ -105,18 +107,33 @@ After writing code:
 3. Report compile misses via `aegis_observe`
 ```
 
-## SLM Configuration
+## SLM Configuration (Optional)
 
-By default, Aegis downloads and runs a local SLM (~1 GB) for intent tagging. To customize:
+SLM is **disabled by default**. The deterministic DAG context works without it. To enable intent tagging:
 
 | Flag | Effect |
 |------|--------|
-| `--model qwen3.5-4b` | Default model (~2.5 GB) |
-| `--model qwen3.5-9b` | Higher quality model (~5.5 GB) |
-| `--no-slm` | Disable SLM entirely (base DAG still works) |
+| `--slm` | Enable SLM (required for intent tagging) |
+| `--model qwen3.5-4b` | Default model (~2.5 GB, requires `--slm`) |
+| `--model qwen3.5-9b` | Higher quality model (~5.5 GB, requires `--slm`) |
 | `--list-models` | Show all available models |
+| `--ollama` | Use Ollama backend (implies `--slm`) |
+| `--template-dir <path>` | Additional template search path (local overrides bundled) |
 
 Models are stored in `~/.aegis/models/` and shared across all projects.
+
+Example MCP config with SLM enabled:
+
+```json
+{
+  "mcpServers": {
+    "aegis": {
+      "command": "npx",
+      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent", "--slm"]
+    }
+  }
+}
+```
 
 ## Troubleshooting
 
@@ -125,4 +142,4 @@ Models are stored in `~/.aegis/models/` and shared across all projects.
 | `No matching architecture profile` | Project structure doesn't match any template. Check detection evidence in init_detect output. |
 | `Ambiguous profile selection` | Multiple templates matched equally. May need to add template or adjust project structure. |
 | `Compile returns empty` | Run init first. Or check that edges exist for your file paths. |
-| SLM download fails | Use `--no-slm` to skip. Base context works without SLM. |
+| SLM download fails | Remove `--slm` flag. Base context works without SLM. |

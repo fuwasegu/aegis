@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="docs/assets/logo.png" alt="Aegis" width="200" />
+</div>
+
 # Aegis
 
 **DAG-based Deterministic Context Compiler for AI Coding Agents**
@@ -48,7 +52,7 @@ Add to your project's `.cursor/mcp.json`:
 }
 ```
 
-After running `aegis_init_confirm`, Aegis automatically generates `.cursor/rules/aegis-process.mdc` — a Cursor rule that instructs the agent to consult Aegis before writing code and report violations afterward. No manual rule writing needed.
+After initialization, run `aegis_deploy_adapters` to generate `.cursor/rules/aegis-process.mdc` — a Cursor rule that instructs the agent to consult Aegis before writing code and report violations afterward.
 
 ### Add to Claude Code
 
@@ -69,7 +73,7 @@ Or add to your project's `.mcp.json`:
 }
 ```
 
-After running `aegis_init_confirm`, Aegis automatically appends an `<!-- aegis:start -->` section to your `CLAUDE.md` that instructs Claude Code to follow the Aegis workflow. If `CLAUDE.md` doesn't exist, it creates one.
+After initialization, run `aegis_deploy_adapters` to append an `<!-- aegis:start -->` section to your `CLAUDE.md` that instructs Claude Code to follow the Aegis workflow. If `CLAUDE.md` doesn't exist, it creates one.
 
 ### Add to Codex
 
@@ -111,22 +115,24 @@ For operations that modify Canonical Knowledge (init, approve/reject proposals),
 }
 ```
 
-> **Surface separation (INV-6):** The agent surface provides 4 read-only tools. The admin surface provides all 13 tools including Canonical-mutating operations. AI agents cannot modify architecture rules without human approval.
+> **Surface separation (INV-6):** The agent surface provides 4 read-only tools. The admin surface provides all 15 tools (4 shared + 11 admin-only) including Canonical-mutating operations. AI agents cannot modify architecture rules without human approval.
 
-### SLM for Expanded Context (Intent Tagging)
+### SLM for Expanded Context (Intent Tagging) — Opt-in
 
-Aegis includes a built-in llama.cpp engine for SLM inference. On first startup, it automatically downloads a small model (~1 GB) to `~/.aegis/models/` (shared across all projects).
+Aegis includes a built-in llama.cpp engine for optional SLM inference. SLM is **disabled by default** — the deterministic DAG-based context works perfectly without it. To enable, add `--slm`:
 
 ```json
 {
   "mcpServers": {
     "aegis": {
       "command": "npx",
-      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent", "--model", "qwen3.5-4b"]
+      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent", "--slm", "--model", "qwen3.5-4b"]
     }
   }
 }
 ```
+
+On first SLM-enabled startup, the selected model is downloaded to `~/.aegis/models/` (shared across all projects).
 
 Available models (`--list-models` to see all):
 
@@ -137,9 +143,7 @@ Available models (`--list-models` to see all):
 
 You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 
-To disable SLM: add `"--no-slm"` to args. Base context (deterministic DAG) always works without SLM.
-
-> **Legacy:** `--ollama` flag is available for Ollama-based inference if preferred.
+> **Legacy:** `--ollama` flag is available for Ollama-based inference if preferred. Using `--ollama` implicitly enables SLM.
 
 ## Usage
 
@@ -152,7 +156,15 @@ aegis_init_detect({ project_root: "/path/to/your/project" })
 aegis_init_confirm({ preview_hash: "<hash from detect>" })
 ```
 
-This creates seed documents, DAG edges, and layer rules based on your project structure. It also generates `.cursor/rules/aegis-process.mdc` and a CLAUDE.md section to enforce the Aegis workflow.
+This creates seed documents, DAG edges, and layer rules based on your project structure.
+
+Then deploy adapter rules for your AI coding tool:
+
+```
+aegis_deploy_adapters({ project_root: "/path/to/your/project" })
+```
+
+This generates `.cursor/rules/aegis-process.mdc` and/or a `CLAUDE.md` section to enforce the Aegis workflow.
 
 ### 2. Use during development
 
@@ -196,11 +208,11 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | Tool | Description |
 |------|-------------|
 | `aegis_compile_context` | Compile deterministic context for target files |
-| `aegis_observe` | Record observations (compile_miss, review_correction, pr_merged, manual_note) |
+| `aegis_observe` | Record observations (compile_miss, review_correction, pr_merged, manual_note, document_import) |
 | `aegis_get_compile_audit` | Retrieve audit log of a past compile |
 | `aegis_init_detect` | Analyze a project to generate initialization preview |
 
-### Admin Surface (additional 10 tools)
+### Admin Surface (additional 11 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -212,7 +224,9 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `aegis_check_upgrade` | Check for template version upgrades |
 | `aegis_apply_upgrade` | Generate proposals for template upgrades |
 | `aegis_archive_observations` | Archive old observations |
-| `aegis_import_doc` | Import existing Markdown file as a new_doc proposal |
+| `aegis_import_doc` | Import existing document content as a new_doc proposal (content-based, no file path) |
+| `aegis_process_observations` | Trigger observation analysis pipeline for pending observations |
+| `aegis_deploy_adapters` | Deploy adapter rules (Cursor .mdc, CLAUDE.md, etc.) to the project |
 
 ## CLI Flags
 
@@ -220,11 +234,12 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 |------|---------|-------------|
 | `--surface` | `agent` | `agent` or `admin` |
 | `--db` | `.aegis/aegis.db` | SQLite database path |
-| `--templates` | `./templates` | Templates directory |
-| `--model` | `qwen3.5-4b` | SLM model name or HuggingFace URI |
-| `--no-slm` | false | Disable SLM (no expanded context) |
+| `--templates` | `./templates` | Bundled templates directory |
+| `--template-dir` | | Additional template search path (local overrides bundled) |
+| `--slm` | false | Enable SLM for expanded context (Intent Tagging) |
+| `--model` | `qwen3.5-4b` | SLM model name or HuggingFace URI (requires `--slm`) |
 | `--list-models` | | Show available models and exit |
-| `--ollama` | false | Use Ollama instead of built-in llama.cpp |
+| `--ollama` | false | Use Ollama instead of built-in llama.cpp (implies `--slm`) |
 | `--ollama-url` | `http://localhost:11434` | Ollama API URL (with `--ollama`) |
 
 ## Templates
@@ -245,7 +260,7 @@ Aegis ships with pre-built architecture templates:
 
 ```bash
 npm run build    # Compile TypeScript
-npm test         # Run all tests (207+)
+npm test         # Run all tests (227+)
 npm run test:watch
 ```
 

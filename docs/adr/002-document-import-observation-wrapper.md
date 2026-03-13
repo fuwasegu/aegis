@@ -1,6 +1,6 @@
 # ADR-002: 既存ドキュメント取り込みを専用 Observation と Wrapper Tool で扱う
 
-**ステータス:** Accepted
+**ステータス:** Implemented
 **日付:** 2026-03-13
 **Supersedes:** [ADR-001](./001-document-import-strategy.md)
 

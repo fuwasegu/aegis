@@ -1,6 +1,6 @@
 # ADR-003: Observation 自動化パイプラインは admin 明示処理とする
 
-**ステータス:** Accepted
+**ステータス:** Implemented
 **日付:** 2026-03-13
 
 ## 関連議題
