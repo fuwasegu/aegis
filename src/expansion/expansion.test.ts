@@ -59,8 +59,8 @@ describe('LlamaIntentTagger', () => {
 
   it('extracts known tags from engine response', async () => {
     const engine = createMockEngine({ tags: ['state_mutation', 'collection_operation'] });
-    const tagger = new LlamaIntentTagger(engine, knownTags);
-    const result = await tagger.extractTags('Sort bookmarks by creation date');
+    const tagger = new LlamaIntentTagger(engine);
+    const result = await tagger.extractTags('Sort bookmarks by creation date', knownTags);
 
     expect(result).toHaveLength(2);
     expect(result[0].tag).toBe('state_mutation');
@@ -71,8 +71,8 @@ describe('LlamaIntentTagger', () => {
 
   it('filters out unknown tags', async () => {
     const engine = createMockEngine({ tags: ['state_mutation', 'unknown_tag', 'db_migration'] });
-    const tagger = new LlamaIntentTagger(engine, knownTags);
-    const result = await tagger.extractTags('Migrate database');
+    const tagger = new LlamaIntentTagger(engine);
+    const result = await tagger.extractTags('Migrate database', knownTags);
 
     expect(result).toHaveLength(2);
     expect(result.map(t => t.tag)).toEqual(['state_mutation', 'db_migration']);
@@ -83,29 +83,36 @@ describe('LlamaIntentTagger', () => {
       generateJson: vi.fn().mockRejectedValue(new Error('engine failed')),
       modelName: 'test-model',
     } as any;
-    const tagger = new LlamaIntentTagger(engine, knownTags);
-    const result = await tagger.extractTags('Do something');
+    const tagger = new LlamaIntentTagger(engine);
+    const result = await tagger.extractTags('Do something', knownTags);
     expect(result).toEqual([]);
   });
 
   it('returns empty when response has no tags field', async () => {
     const engine = createMockEngine({ foo: 'bar' });
-    const tagger = new LlamaIntentTagger(engine, knownTags);
-    const result = await tagger.extractTags('Do something');
+    const tagger = new LlamaIntentTagger(engine);
+    const result = await tagger.extractTags('Do something', knownTags);
     expect(result).toEqual([]);
   });
 
   it('returns empty when tags is not an array', async () => {
     const engine = createMockEngine({ tags: 'not_an_array' });
-    const tagger = new LlamaIntentTagger(engine, knownTags);
-    const result = await tagger.extractTags('Do something');
+    const tagger = new LlamaIntentTagger(engine);
+    const result = await tagger.extractTags('Do something', knownTags);
+    expect(result).toEqual([]);
+  });
+
+  it('returns empty when knownTags is empty', async () => {
+    const engine = createMockEngine({ tags: ['state_mutation'] });
+    const tagger = new LlamaIntentTagger(engine);
+    const result = await tagger.extractTags('Do something', []);
     expect(result).toEqual([]);
   });
 
   it('passes system prompt with known tags to engine', async () => {
     const engine = createMockEngine({ tags: [] });
-    const tagger = new LlamaIntentTagger(engine, knownTags);
-    await tagger.extractTags('Plan text');
+    const tagger = new LlamaIntentTagger(engine);
+    await tagger.extractTags('Plan text', knownTags);
 
     const callArgs = engine.generateJson.mock.calls[0];
     expect(callArgs[1].systemPrompt).toContain('state_mutation');
@@ -157,8 +164,8 @@ describe('OllamaIntentTagger (legacy)', () => {
 
   it('returns empty tags when client is unavailable', async () => {
     const client = new OllamaClient({ baseUrl: 'http://localhost:1', maxRetries: 0, timeoutMs: 1000 });
-    const tagger = new OllamaIntentTagger(client, knownTags);
-    const result = await tagger.extractTags('Add a bookmark sorting feature');
+    const tagger = new OllamaIntentTagger(client);
+    const result = await tagger.extractTags('Add a bookmark sorting feature', knownTags);
     expect(result).toEqual([]);
   });
 
@@ -171,8 +178,8 @@ describe('OllamaIntentTagger (legacy)', () => {
       isHealthy: vi.fn().mockResolvedValue(true),
     } as any;
 
-    const tagger = new OllamaIntentTagger(mockClient, knownTags);
-    const result = await tagger.extractTags('Sort bookmarks by creation date');
+    const tagger = new OllamaIntentTagger(mockClient);
+    const result = await tagger.extractTags('Sort bookmarks by creation date', knownTags);
 
     expect(result).toHaveLength(2);
     expect(result[0].tag).toBe('state_mutation');
@@ -188,8 +195,8 @@ describe('OllamaIntentTagger (legacy)', () => {
       modelName: 'test-model',
     } as any;
 
-    const tagger = new OllamaIntentTagger(mockClient, knownTags);
-    const result = await tagger.extractTags('Do something');
+    const tagger = new OllamaIntentTagger(mockClient);
+    const result = await tagger.extractTags('Do something', knownTags);
 
     expect(result).toHaveLength(2);
     expect(result.map(t => t.tag)).toEqual(['state_mutation', 'collection_operation']);
@@ -201,8 +208,8 @@ describe('OllamaIntentTagger (legacy)', () => {
       modelName: 'test-model',
     } as any;
 
-    const tagger = new OllamaIntentTagger(mockClient, knownTags);
-    const result = await tagger.extractTags('Do something');
+    const tagger = new OllamaIntentTagger(mockClient);
+    const result = await tagger.extractTags('Do something', knownTags);
     expect(result).toEqual([]);
   });
 
@@ -212,8 +219,8 @@ describe('OllamaIntentTagger (legacy)', () => {
       modelName: 'test-model',
     } as any;
 
-    const tagger = new OllamaIntentTagger(mockClient, knownTags);
-    const result = await tagger.extractTags('Do something');
+    const tagger = new OllamaIntentTagger(mockClient);
+    const result = await tagger.extractTags('Do something', knownTags);
     expect(result).toEqual([]);
   });
 
@@ -223,8 +230,8 @@ describe('OllamaIntentTagger (legacy)', () => {
       modelName: 'test-model',
     } as any;
 
-    const tagger = new OllamaIntentTagger(mockClient, knownTags);
-    await tagger.extractTags('Plan text');
+    const tagger = new OllamaIntentTagger(mockClient);
+    await tagger.extractTags('Plan text', knownTags);
 
     const callArgs = mockClient.generate.mock.calls[0];
     expect(callArgs[1].system).toContain('state_mutation');

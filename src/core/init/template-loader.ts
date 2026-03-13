@@ -29,11 +29,11 @@ export interface PlaceholderDef {
   default: string | null;
 }
 
-export interface WhenCondition {
-  placeholder: string;
-  operator: 'is_not_null' | 'is_null' | 'equals';
-  value?: string;
-}
+export type WhenCondition =
+  | { placeholder: string; operator: 'is_not_null' | 'is_null' | 'equals'; value?: string }
+  | { all: WhenCondition[] }
+  | { any: WhenCondition[] }
+  | { not: WhenCondition };
 
 export interface SeedDocumentDef {
   doc_id: string;
@@ -112,27 +112,49 @@ export function loadManifest(templateDir: string): TemplateManifest {
 }
 
 /**
- * Load all template manifests from the templates root directory.
+ * Load all template manifests from one or more search directories.
+ * Per ADR-006 D-3: local templates (later in searchPaths) override bundled ones (earlier).
  */
-export function loadAllManifests(templatesRoot: string): { dir: string; manifest: TemplateManifest }[] {
-  const results: { dir: string; manifest: TemplateManifest }[] = [];
-  for (const entry of readdirSync(templatesRoot)) {
-    const dir = join(templatesRoot, entry);
-    if (statSync(dir).isDirectory() && existsSync(join(dir, 'manifest.yaml'))) {
-      results.push({ dir, manifest: loadManifest(dir) });
+export function loadAllManifests(
+  templatesRoot: string,
+  extraDirs?: string[],
+): { dir: string; manifest: TemplateManifest }[] {
+  const searchPaths = [templatesRoot, ...(extraDirs ?? [])];
+  const seen = new Map<string, { dir: string; manifest: TemplateManifest }>();
+
+  for (const root of searchPaths) {
+    if (!existsSync(root)) continue;
+    for (const entry of readdirSync(root)) {
+      const dir = join(root, entry);
+      if (statSync(dir).isDirectory() && existsSync(join(dir, 'manifest.yaml'))) {
+        const manifest = loadManifest(dir);
+        seen.set(manifest.template_id, { dir, manifest });
+      }
     }
   }
-  return results;
+  return [...seen.values()];
 }
 
 /**
  * Evaluate a `when` condition against resolved placeholders.
+ * Per ADR-006 D-9: supports boolean combinators (all, any, not).
  */
 export function evaluateWhen(
   when: WhenCondition | undefined,
   placeholders: Record<string, string | null>,
 ): boolean {
   if (!when) return true;
+
+  if ('all' in when) {
+    return when.all.every(sub => evaluateWhen(sub, placeholders));
+  }
+  if ('any' in when) {
+    return when.any.some(sub => evaluateWhen(sub, placeholders));
+  }
+  if ('not' in when) {
+    return !evaluateWhen(when.not, placeholders);
+  }
+
   const val = placeholders[when.placeholder] ?? null;
   switch (when.operator) {
     case 'is_not_null': return val !== null;

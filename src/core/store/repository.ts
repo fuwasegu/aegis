@@ -70,9 +70,21 @@ export class Repository {
 
   insertDocument(doc: Omit<Document, 'created_at' | 'updated_at'>): void {
     this.db.prepare(`
-      INSERT INTO documents (doc_id, title, kind, content, content_hash, status)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(doc.doc_id, doc.title, doc.kind, doc.content, doc.content_hash, doc.status);
+      INSERT INTO documents (doc_id, title, kind, content, content_hash, status, template_origin)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(doc.doc_id, doc.title, doc.kind, doc.content, doc.content_hash, doc.status, doc.template_origin ?? null);
+  }
+
+  setDocumentTemplateOrigin(docId: string, origin: string): void {
+    this.db.prepare(
+      'UPDATE documents SET template_origin = ? WHERE doc_id = ?'
+    ).run(origin, docId);
+  }
+
+  getDocumentsByTemplateOrigin(templateId: string): Document[] {
+    return this.db.prepare(
+      "SELECT * FROM documents WHERE template_origin LIKE ? AND status = 'approved'"
+    ).all(`${templateId}:%`) as Document[];
   }
 
   updateDocumentStatus(docId: string, status: EntityStatus): void {
@@ -462,6 +474,11 @@ export class Repository {
         this._applyAddEdge(payload);
       } else if (proposal.proposal_type === 'new_doc') {
         this._applyNewDoc(payload);
+        if (Array.isArray(payload.tags) && payload.tags.length > 0 && payload.doc_id) {
+          for (const tag of payload.tags as string[]) {
+            this.upsertTagMapping({ tag, doc_id: payload.doc_id as string, confidence: 1.0, source: 'manual' });
+          }
+        }
       } else if (proposal.proposal_type === 'update_doc') {
         this._applyUpdateDoc(payload);
       } else if (proposal.proposal_type === 'deprecate') {
@@ -699,17 +716,25 @@ export class Repository {
 
   /**
    * Archive observations older than the given number of days.
-   * Sets archived_at on observations that:
+   * Per ADR-003 D-7, only archives observations that:
    * - Have no archived_at yet
+   * - Are analyzed (analyzed_at IS NOT NULL)
+   * - Have no linked pending proposals (all resolved or no proposals at all)
    * - Were created more than `days` days ago
-   * Returns the number of archived observations.
    */
   archiveOldObservations(days: number): number {
     const result = this.db.prepare(`
       UPDATE observations
       SET archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
       WHERE archived_at IS NULL
+        AND analyzed_at IS NOT NULL
         AND created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-' || ? || ' days')
+        AND NOT EXISTS (
+          SELECT 1 FROM proposal_evidence pe
+          JOIN proposals p ON p.proposal_id = pe.proposal_id
+          WHERE pe.observation_id = observations.observation_id
+            AND p.status = 'pending'
+        )
     `).run(days);
     return result.changes;
   }

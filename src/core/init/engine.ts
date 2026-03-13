@@ -52,10 +52,11 @@ export interface InitPreview {
 export function initDetect(
   projectRoot: string,
   templatesRoot: string,
+  extraTemplateDirs?: string[],
 ): InitPreview {
   // ── Stage 1: detect ──
   const stack = detectStack(projectRoot);
-  const manifests = loadAllManifests(templatesRoot);
+  const manifests = loadAllManifests(templatesRoot, extraTemplateDirs);
 
   const allEvidence: DetectionEvidence[] = [];
   const profiles: ProfileCandidate[] = [];
@@ -248,6 +249,12 @@ export function initConfirm(
 
   // ── Stage 4: approve (reuses standard governance) ──
   const result = repo.approveProposal(proposalId);
+
+  // Record template provenance on bootstrapped documents (ADR-006 D-7)
+  const provenanceTag = `${preview.template_id}:${preview.template_version}`;
+  for (const doc of preview.generated.documents) {
+    repo.setDocumentTemplateOrigin(doc.doc_id, provenanceTag);
+  }
 
   // Record init provenance in init_manifest
   repo.insertInitManifest({

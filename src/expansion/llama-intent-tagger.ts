@@ -22,13 +22,12 @@ Rules:
 - Do not include any explanation or text outside the JSON.`;
 
 export class LlamaIntentTagger implements IntentTagger {
-  constructor(
-    private engine: LlamaEngine,
-    private knownTags: string[],
-  ) {}
+  constructor(private engine: LlamaEngine) {}
 
-  async extractTags(plan: string): Promise<IntentTag[]> {
-    const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{{TAGS}}', this.knownTags.join(', '));
+  async extractTags(plan: string, knownTags: string[]): Promise<IntentTag[]> {
+    if (knownTags.length === 0) return [];
+
+    const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{{TAGS}}', knownTags.join(', '));
 
     try {
       const result = await this.engine.generateJson<{ tags?: string[] }>(plan, {
@@ -40,7 +39,7 @@ export class LlamaIntentTagger implements IntentTagger {
       if (!result || !Array.isArray(result.tags)) return [];
 
       return result.tags
-        .filter(tag => typeof tag === 'string' && this.knownTags.includes(tag))
+        .filter(tag => typeof tag === 'string' && knownTags.includes(tag))
         .map(tag => ({
           tag,
           confidence: 0.8,

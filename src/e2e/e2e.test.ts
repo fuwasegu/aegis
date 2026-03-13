@@ -28,7 +28,7 @@ function makeTmpProject(): string {
 }
 
 class FakeTagger implements IntentTagger {
-  async extractTags(): Promise<IntentTag[]> {
+  async extractTags(_plan: string, _knownTags: string[]): Promise<IntentTag[]> {
     return [{ tag: 'state_mutation', confidence: 0.9 }];
   }
 }

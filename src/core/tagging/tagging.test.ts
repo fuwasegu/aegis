@@ -11,7 +11,7 @@ import type { IntentTag } from '../types.js';
 class FakeTagger implements IntentTagger {
   constructor(private tagMap: Record<string, IntentTag[]> = {}) {}
 
-  async extractTags(plan: string): Promise<IntentTag[]> {
+  async extractTags(plan: string, _knownTags: string[]): Promise<IntentTag[]> {
     return this.tagMap[plan] ?? [];
   }
 }
@@ -280,7 +280,7 @@ describe('IntentTagger Port', () => {
         ],
       });
 
-      const tags = await tagger.extractTags('Add user authentication');
+      const tags = await tagger.extractTags('Add user authentication', ['auth', 'security']);
       expect(tags).toHaveLength(2);
       expect(tags[0]).toEqual({ tag: 'auth', confidence: 0.95 });
       expect(tags[1]).toEqual({ tag: 'security', confidence: 0.8 });
@@ -290,7 +290,7 @@ describe('IntentTagger Port', () => {
       const tagger = new FakeTagger({
         'known': [{ tag: 'x', confidence: 1.0 }],
       });
-      expect(await tagger.extractTags('unknown')).toEqual([]);
+      expect(await tagger.extractTags('unknown', ['x'])).toEqual([]);
     });
   });
 });
@@ -334,7 +334,8 @@ describe('Tagger + Repository Integration', () => {
   });
 
   it('extract tags → resolve documents via tag_mappings', async () => {
-    const tags = await tagger.extractTags('Add user authentication');
+    const knownTags = repo.getAllTags();
+    const tags = await tagger.extractTags('Add user authentication', knownTags);
     const docs = repo.getDocumentsByTags(tags.map(t => t.tag));
 
     expect(docs).toHaveLength(2);
@@ -345,7 +346,8 @@ describe('Tagger + Repository Integration', () => {
   });
 
   it('same tags produce identical results (deterministic)', async () => {
-    const tags = await tagger.extractTags('Add user authentication');
+    const knownTags = repo.getAllTags();
+    const tags = await tagger.extractTags('Add user authentication', knownTags);
     const tagNames = tags.map(t => t.tag);
 
     const result1 = repo.getDocumentsByTags(tagNames);
@@ -355,7 +357,8 @@ describe('Tagger + Repository Integration', () => {
   });
 
   it('unknown plan produces no documents', async () => {
-    const tags = await tagger.extractTags('Unknown task');
+    const knownTags = repo.getAllTags();
+    const tags = await tagger.extractTags('Unknown task', knownTags);
     const docs = repo.getDocumentsByTags(tags.map(t => t.tag));
 
     expect(docs).toEqual([]);

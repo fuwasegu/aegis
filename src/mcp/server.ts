@@ -16,6 +16,37 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { AegisService, SurfaceViolationError, ObserveValidationError, type Surface } from './services.js';
 
+const WORKFLOW_GUIDE = `# Aegis Workflow Guide
+
+## Core Workflow: Read → Write → Approve
+
+1. **Read** — Before editing, call \`aegis_compile_context\` with your target files.
+   Aegis returns relevant guidelines, patterns, constraints, and templates.
+
+2. **Write** — After coding, report what happened via \`aegis_observe\`:
+   - \`compile_miss\`: context didn't cover what was needed
+   - \`review_correction\`: reviewer corrected an agent's output
+   - \`pr_merged\`: PR merged with file changes
+   - \`manual_note\`: freeform knowledge capture
+
+3. **Approve** — Admin reviews proposals generated from observations:
+   - \`aegis_list_proposals\` → \`aegis_get_proposal\` → \`aegis_approve_proposal\` / \`aegis_reject_proposal\`
+
+## Admin Operations
+
+- \`aegis_init_detect\` + \`aegis_init_confirm\`: Initialize a project
+- \`aegis_import_doc\`: Import existing documents with explicit metadata
+- \`aegis_process_observations\`: Run the analyzer pipeline on pending observations
+- \`aegis_deploy_adapters\`: Generate IDE-specific configurations (Cursor rules, Claude config)
+- \`aegis_check_upgrade\` + \`aegis_apply_upgrade\`: Template version upgrades
+
+## Key Principles
+
+- **Observation → Proposal → Canonical**: No direct writes to Canonical Knowledge
+- **Agent surface is read-only**: Agents can read context and record observations, but cannot approve
+- **Deterministic context**: Same inputs always produce the same compiled context
+`;
+
 export function createAegisServer(service: AegisService, surface: Surface): McpServer {
   const server = new McpServer({
     name: `aegis-${surface}`,
@@ -50,7 +81,7 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
     'aegis_observe',
     'Record an observation event. Writes to Observation Layer only (never Canonical).',
     {
-      event_type: z.enum(['compile_miss', 'review_correction', 'pr_merged', 'manual_note']).describe('Event type'),
+      event_type: z.enum(['compile_miss', 'review_correction', 'pr_merged', 'manual_note', 'document_import']).describe('Event type'),
       related_compile_id: z.string().optional().describe('Required for compile_miss'),
       related_snapshot_id: z.string().optional().describe('Required for compile_miss, optional for review_correction'),
       payload: z.record(z.string(), z.unknown()).describe('Event-specific payload (JSON object)'),
@@ -215,27 +246,81 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
 
     server.tool(
       'aegis_import_doc',
-      'Import an existing Markdown file into Canonical Knowledge as a new_doc proposal. Parses YAML frontmatter for metadata.',
+      'Import an existing document into Canonical Knowledge. Creates a document_import observation and generates new_doc/add_edge proposals. Content and metadata must be provided by the caller.',
       {
-        file_path: z.string().describe('Absolute path to the Markdown file to import'),
-        doc_id: z.string().optional().describe('Override document ID (default: derived from filename)'),
-        title: z.string().optional().describe('Override title (default: from frontmatter or filename)'),
-        kind: z.enum(['guideline', 'pattern', 'constraint', 'template', 'reference']).optional().describe('Override document kind (default: from frontmatter or "reference")'),
+        content: z.string().describe('Document content (Markdown body)'),
+        doc_id: z.string().describe('Document ID (lowercase alphanumeric, hyphens, underscores)'),
+        title: z.string().describe('Document title'),
+        kind: z.enum(['guideline', 'pattern', 'constraint', 'template', 'reference']).describe('Document kind'),
+        edge_hints: z.array(z.object({
+          source_type: z.enum(['path', 'layer', 'command', 'doc']),
+          source_value: z.string(),
+          edge_type: z.enum(['path_requires', 'layer_requires', 'command_requires', 'doc_depends_on']),
+          priority: z.number().int().optional(),
+        })).optional().describe('DAG edge hints for connecting the document'),
+        tags: z.array(z.string()).optional().describe('Tags for tag_mappings (applied on approve)'),
+        source_path: z.string().optional().describe('Original file path (provenance metadata)'),
       },
       async (params) => {
         try {
-          const result = service.importDoc(
-            params.file_path,
-            { doc_id: params.doc_id, title: params.title, kind: params.kind },
-            surface,
-          );
+          const result = await service.importDoc(params, surface);
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         } catch (e: any) {
           return { content: [{ type: 'text', text: `Import failed: ${e.message}` }], isError: true };
         }
       },
     );
+
+    server.tool(
+      'aegis_process_observations',
+      'Process pending observations through the analyzer pipeline, generating proposals. Per ADR-003: admin-only explicit operation.',
+      {
+        event_type: z.enum(['compile_miss', 'review_correction', 'pr_merged', 'manual_note', 'document_import']).optional().describe('Process only this event type (default: all types)'),
+      },
+      async (params) => {
+        try {
+          const result = await service.processObservations(params.event_type, surface);
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        } catch (e: any) {
+          return { content: [{ type: 'text', text: `Processing failed: ${e.message}` }], isError: true };
+        }
+      },
+    );
+
+    server.tool(
+      'aegis_deploy_adapters',
+      'Explicitly deploy IDE adapter configurations (Cursor rules, Claude Code config). Per ADR-005: not auto-deployed from init.',
+      {
+        project_root: z.string().describe('Absolute path to the project root directory'),
+        targets: z.array(z.enum(['cursor', 'claude'])).optional().describe('Adapter targets to deploy (default: all)'),
+      },
+      async (params) => {
+        try {
+          const result = service.deployAdapters(params.project_root, params.targets, surface);
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        } catch (e: any) {
+          return { content: [{ type: 'text', text: `Deploy failed: ${e.message}` }], isError: true };
+        }
+      },
+    );
   }
+
+  // ============================================================
+  // MCP Resources — Aegis usage guides (ADR-005 D-2)
+  // ============================================================
+
+  server.resource(
+    'aegis-workflow',
+    'aegis://guide/workflow',
+    { mimeType: 'text/markdown' },
+    async () => ({
+      contents: [{
+        uri: 'aegis://guide/workflow',
+        mimeType: 'text/markdown',
+        text: WORKFLOW_GUIDE,
+      }],
+    }),
+  );
 
   return server;
 }

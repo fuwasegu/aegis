@@ -23,7 +23,12 @@ import type { IntentTagger } from '../core/tagging/tagger.js';
 import { deployCursorAdapter } from '../adapters/cursor/generate.js';
 import { deployClaudeAdapter } from '../adapters/claude/generate.js';
 import type { AdapterConfig, AdapterResult } from '../adapters/types.js';
-import { importDocument, type ImportResult } from '../core/import/importer.js';
+import { RuleBasedAnalyzer } from '../core/automation/rule-analyzer.js';
+import { ReviewCorrectionAnalyzer } from '../core/automation/review-correction-analyzer.js';
+import { PrMergedAnalyzer } from '../core/automation/pr-merged-analyzer.js';
+import { ManualNoteAnalyzer } from '../core/automation/manual-note-analyzer.js';
+import { DocumentImportAnalyzer } from '../core/automation/document-import-analyzer.js';
+import type { ObservationEventType, DocumentKind, EdgeSpec } from '../core/types.js';
 
 export type Surface = 'agent' | 'admin';
 
@@ -46,15 +51,23 @@ export class ObserveValidationError extends Error {
  */
 export class AegisService {
   private compiler: ContextCompiler;
-  // In-memory preview cache: preview_hash → { preview, projectRoot }
   private previewCache = new Map<string, { preview: InitPreview; projectRoot: string }>();
+  private analyzerRegistry: Map<ObservationEventType, ObservationAnalyzer>;
 
   constructor(
     private repo: Repository,
     private templatesRoot: string,
     tagger: IntentTagger | null = null,
+    private extraTemplateDirs: string[] = [],
   ) {
     this.compiler = new ContextCompiler(repo, tagger);
+    this.analyzerRegistry = new Map<ObservationEventType, ObservationAnalyzer>([
+      ['compile_miss', new RuleBasedAnalyzer()],
+      ['review_correction', new ReviewCorrectionAnalyzer(repo)],
+      ['pr_merged', new PrMergedAnalyzer(repo)],
+      ['manual_note', new ManualNoteAnalyzer(repo)],
+      ['document_import', new DocumentImportAnalyzer(repo)],
+    ]);
   }
 
   // ============================================================
@@ -159,6 +172,25 @@ export class AegisService {
           }
         }
         break;
+      case 'document_import':
+        this.validateDocumentImportPayload(p);
+        break;
+    }
+  }
+
+  private validateDocumentImportPayload(p: Record<string, unknown>): void {
+    if (typeof p.content !== 'string' || !p.content) {
+      throw new ObserveValidationError('document_import: content is required');
+    }
+    if (typeof p.doc_id !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/.test(p.doc_id)) {
+      throw new ObserveValidationError('document_import: doc_id must match /^[a-z0-9][a-z0-9_-]*$/');
+    }
+    if (typeof p.title !== 'string' || !p.title) {
+      throw new ObserveValidationError('document_import: title is required');
+    }
+    const validKinds = ['guideline', 'pattern', 'constraint', 'template', 'reference'];
+    if (typeof p.kind !== 'string' || !validKinds.includes(p.kind)) {
+      throw new ObserveValidationError(`document_import: kind must be one of ${validKinds.join(', ')}`);
     }
   }
 
@@ -176,8 +208,7 @@ export class AegisService {
   }
 
   initDetect(projectRoot: string, surface: Surface): InitPreview {
-    // init_detect is allowed on both surfaces (read-only preview, no Canonical mutation)
-    const preview = coreInitDetect(projectRoot, this.templatesRoot);
+    const preview = coreInitDetect(projectRoot, this.templatesRoot, this.extraTemplateDirs);
     if (preview.preview_hash) {
       this.previewCache.set(preview.preview_hash, { preview, projectRoot });
     }
@@ -262,7 +293,7 @@ export class AegisService {
    */
   async analyzeAndPropose(
     analyzer: ObservationAnalyzer,
-    eventType: 'compile_miss' | 'review_correction' | 'pr_merged' | 'manual_note',
+    eventType: 'compile_miss' | 'review_correction' | 'pr_merged' | 'manual_note' | 'document_import',
     surface: Surface,
   ): Promise<{ analysis: AnalysisResult; proposals: ProposeResult }> {
     this.assertAdmin('analyzeAndPropose', surface);
@@ -307,7 +338,7 @@ export class AegisService {
   initConfirm(
     previewHash: string,
     surface: Surface,
-  ): CanonicalVersion & { adapters?: AdapterResult[] } {
+  ): CanonicalVersion {
     this.assertAdmin('aegis_init_confirm', surface);
 
     const cached = this.previewCache.get(previewHash);
@@ -315,28 +346,27 @@ export class AegisService {
       throw new Error(`No cached preview found for hash '${previewHash.slice(0, 12)}...'. Run init_detect first.`);
     }
 
-    const { preview, projectRoot } = cached;
+    const { preview } = cached;
     const result = coreInitConfirm(this.repo, preview, previewHash);
 
     this.previewCache.delete(previewHash);
 
-    const adapters = this.deployAdapters(projectRoot, preview.template_id);
-    return { ...result, adapters };
+    return result;
   }
 
   checkUpgrade(surface: Surface): UpgradePreview | null {
     this.assertAdmin('aegis_check_upgrade', surface);
-    return detectUpgrade(this.repo, this.templatesRoot);
+    return detectUpgrade(this.repo, this.templatesRoot, this.extraTemplateDirs);
   }
 
   applyUpgrade(surface: Surface): { proposal_ids: string[] } {
     this.assertAdmin('aegis_apply_upgrade', surface);
-    const preview = detectUpgrade(this.repo, this.templatesRoot);
+    const preview = detectUpgrade(this.repo, this.templatesRoot, this.extraTemplateDirs);
     if (!preview || !preview.has_changes) {
       return { proposal_ids: [] };
     }
 
-    const drafts = generateUpgradeProposals(preview, this.repo, this.templatesRoot);
+    const drafts = generateUpgradeProposals(preview, this.repo, this.templatesRoot, this.extraTemplateDirs);
     const proposeService = new ProposeService(this.repo);
     const result = proposeService.propose(drafts);
     return { proposal_ids: result.created_proposal_ids };
@@ -351,27 +381,118 @@ export class AegisService {
     return { archived_count };
   }
 
-  importDoc(
-    filePath: string,
-    overrides: { doc_id?: string; title?: string; kind?: string } | undefined,
+  /**
+   * Import a document via the Observation → Analyzer → Proposal pipeline.
+   * Per ADR-002: admin-only wrapper that internally does observe + analyzeAndPropose.
+   */
+  async importDoc(
+    params: {
+      content: string;
+      doc_id: string;
+      title: string;
+      kind: string;
+      edge_hints?: EdgeSpec[];
+      tags?: string[];
+      source_path?: string;
+    },
     surface: Surface,
-  ): { proposal_ids: string[]; doc_id: string; title: string; kind: string; requires: string[] } {
+  ): Promise<{
+    proposal_ids: string[];
+    observation_id: string;
+    warnings: string[];
+  }> {
     this.assertAdmin('aegis_import_doc', surface);
 
-    const result: ImportResult = importDocument(filePath, overrides as any);
-    const proposeService = new ProposeService(this.repo);
-    const proposeResult = proposeService.propose(result.drafts);
+    const payload = { ...params };
+    this.validateDocumentImportPayload(payload as Record<string, unknown>);
+
+    const observationId = uuidv4();
+    this.repo.insertObservation({
+      observation_id: observationId,
+      event_type: 'document_import',
+      payload: JSON.stringify(payload),
+      related_compile_id: null,
+      related_snapshot_id: null,
+    });
+
+    const analyzer = this.analyzerRegistry.get('document_import')!;
+    const { proposals } = await this.analyzeAndPropose(analyzer, 'document_import', surface);
+
+    const warnings: string[] = [];
+    if (!params.edge_hints?.length && !params.tags?.length) {
+      warnings.push('Imported document has no edge_hints or tags — it will be isolated in the DAG until edges are added.');
+    }
 
     return {
-      proposal_ids: proposeResult.created_proposal_ids,
-      doc_id: result.doc.doc_id,
-      title: result.doc.title,
-      kind: result.doc.kind,
-      requires: result.doc.requires,
+      proposal_ids: proposals.created_proposal_ids,
+      observation_id: observationId,
+      warnings,
     };
   }
 
-  private deployAdapters(projectRoot: string, templateId: string): AdapterResult[] {
+  /**
+   * Process pending observations by running the analyzer registry.
+   * Per ADR-003 D-2: admin-only explicit operation.
+   */
+  async processObservations(
+    eventType: ObservationEventType | undefined,
+    surface: Surface,
+  ): Promise<{
+    processed: number;
+    proposals_created: number;
+    errors: string[];
+  }> {
+    this.assertAdmin('aegis_process_observations', surface);
+
+    const typesToProcess = eventType
+      ? [eventType]
+      : [...this.analyzerRegistry.keys()];
+
+    let totalProcessed = 0;
+    let totalCreated = 0;
+    const allErrors: string[] = [];
+
+    for (const et of typesToProcess) {
+      const analyzer = this.analyzerRegistry.get(et);
+      if (!analyzer) continue;
+
+      const unanalyzed = this.repo.getUnanalyzedObservations(et);
+      if (unanalyzed.length === 0) continue;
+
+      try {
+        const { analysis, proposals } = await this.analyzeAndPropose(analyzer, et, surface);
+        totalProcessed += unanalyzed.length - analysis.skipped_observation_ids.length;
+        totalCreated += proposals.created_proposal_ids.length;
+        for (const err of analysis.errors) {
+          allErrors.push(`[${et}] ${err.observation_id}: ${err.reason}`);
+        }
+      } catch (e) {
+        allErrors.push(`[${et}] Pipeline error: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
+    return {
+      processed: totalProcessed,
+      proposals_created: totalCreated,
+      errors: allErrors,
+    };
+  }
+
+  /**
+   * Per ADR-005: explicit adapter deployment (not auto from initConfirm).
+   * projectRoot is stored during initDetect and retrieved from the preview cache
+   * or must be provided explicitly.
+   */
+  deployAdapters(
+    projectRoot: string,
+    targets: string[] | undefined,
+    surface: Surface,
+  ): AdapterResult[] {
+    this.assertAdmin('aegis_deploy_adapters', surface);
+
+    const manifest = this.repo.getInitManifest();
+    const templateId = manifest?.template_id ?? 'unknown';
+
     const config: AdapterConfig = {
       projectRoot,
       templateId,
@@ -382,13 +503,20 @@ export class AegisService {
       },
     };
 
+    const validTargets = targets ?? ['cursor', 'claude'];
     const results: AdapterResult[] = [];
-    try {
-      results.push(deployCursorAdapter(config));
-    } catch { /* non-fatal */ }
-    try {
-      results.push(deployClaudeAdapter(config));
-    } catch { /* non-fatal */ }
+
+    for (const target of validTargets) {
+      try {
+        if (target === 'cursor') {
+          results.push(deployCursorAdapter(config));
+        } else if (target === 'claude') {
+          results.push(deployClaudeAdapter(config));
+        }
+      } catch {
+        // Non-fatal per ADR-005 D-4
+      }
+    }
     return results;
   }
 

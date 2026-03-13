@@ -49,13 +49,13 @@ function bootstrap(
 class FakeTagger implements IntentTagger {
   constructor(private tagMap: Record<string, IntentTag[]> = {}) {}
 
-  async extractTags(plan: string): Promise<IntentTag[]> {
+  async extractTags(plan: string, _knownTags: string[]): Promise<IntentTag[]> {
     return this.tagMap[plan] ?? [];
   }
 }
 
 class FailingTagger implements IntentTagger {
-  async extractTags(_plan: string): Promise<IntentTag[]> {
+  async extractTags(_plan: string, _knownTags: string[]): Promise<IntentTag[]> {
     throw new Error('SLM connection failed');
   }
 }

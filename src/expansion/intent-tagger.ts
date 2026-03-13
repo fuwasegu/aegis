@@ -15,13 +15,12 @@ Rules:
 - Do not include any explanation or text outside the JSON.`;
 
 export class OllamaIntentTagger implements IntentTagger {
-  constructor(
-    private client: OllamaClient,
-    private knownTags: string[],
-  ) {}
+  constructor(private client: OllamaClient) {}
 
-  async extractTags(plan: string): Promise<IntentTag[]> {
-    const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{{TAGS}}', this.knownTags.join(', '));
+  async extractTags(plan: string, knownTags: string[]): Promise<IntentTag[]> {
+    if (knownTags.length === 0) return [];
+
+    const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{{TAGS}}', knownTags.join(', '));
 
     let response: string;
     try {
@@ -35,16 +34,16 @@ export class OllamaIntentTagger implements IntentTagger {
       return [];
     }
 
-    return this.parseResponse(response);
+    return this.parseResponse(response, knownTags);
   }
 
-  private parseResponse(raw: string): IntentTag[] {
+  private parseResponse(raw: string, knownTags: string[]): IntentTag[] {
     try {
       const parsed = JSON.parse(raw);
       if (!parsed || !Array.isArray(parsed.tags)) return [];
 
       return parsed.tags
-        .filter((t: unknown): t is string => typeof t === 'string' && this.knownTags.includes(t))
+        .filter((t: unknown): t is string => typeof t === 'string' && knownTags.includes(t))
         .map((tag: string) => ({
           tag,
           confidence: 0.8,

@@ -7,6 +7,7 @@ import { RuleBasedAnalyzer } from './rule-analyzer.js';
 import { ReviewCorrectionAnalyzer } from './review-correction-analyzer.js';
 import { PrMergedAnalyzer } from './pr-merged-analyzer.js';
 import { ManualNoteAnalyzer } from './manual-note-analyzer.js';
+import { DocumentImportAnalyzer } from './document-import-analyzer.js';
 import { ProposeService } from './propose.js';
 import type { ObservationAnalyzer } from './analyzer.js';
 import type { AnalysisContext, AnalysisResult, Observation } from '../types.js';
@@ -1542,5 +1543,176 @@ describe('ManualNoteAnalyzer', () => {
     const result = await analyzer.analyze([ctx]);
     expect(result.drafts).toHaveLength(1);
     expect(result.drafts[0].proposal_type).toBe('update_doc');
+  });
+});
+
+// ============================================================
+// DocumentImportAnalyzer
+// ============================================================
+
+describe('DocumentImportAnalyzer', () => {
+  let repo: Repository;
+  let analyzer: DocumentImportAnalyzer;
+
+  beforeEach(() => {
+    const db = createInMemoryDatabase();
+    repo = new Repository(db);
+    analyzer = new DocumentImportAnalyzer(repo);
+  });
+
+  function makeContext(payload: Record<string, unknown>): AnalysisContext {
+    const obs: Observation = {
+      observation_id: 'obs-import-1',
+      event_type: 'document_import',
+      payload: JSON.stringify(payload),
+      related_compile_id: null,
+      related_snapshot_id: null,
+      created_at: new Date().toISOString(),
+      archived_at: null,
+      analyzed_at: null,
+    };
+    return { observation: obs, compile_audit: null };
+  }
+
+  it('creates new_doc draft from valid document_import', async () => {
+    const ctx = makeContext({
+      content: '# Hello\nWorld',
+      doc_id: 'hello-world',
+      title: 'Hello World',
+      kind: 'guideline',
+    });
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts[0].proposal_type).toBe('new_doc');
+    expect(result.drafts[0].payload).toMatchObject({
+      doc_id: 'hello-world',
+      title: 'Hello World',
+      kind: 'guideline',
+      content: '# Hello\nWorld',
+    });
+    expect(result.drafts[0].payload.content_hash).toBeTruthy();
+    expect(result.drafts[0].evidence_observation_ids).toEqual(['obs-import-1']);
+  });
+
+  it('includes tags in new_doc payload', async () => {
+    const ctx = makeContext({
+      content: 'content',
+      doc_id: 'tagged-doc',
+      title: 'Tagged',
+      kind: 'pattern',
+      tags: ['auth', 'security'],
+    });
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts[0].payload.tags).toEqual(['auth', 'security']);
+  });
+
+  it('generates add_edge drafts from edge_hints', async () => {
+    const ctx = makeContext({
+      content: 'content',
+      doc_id: 'with-edges',
+      title: 'With Edges',
+      kind: 'guideline',
+      edge_hints: [
+        { source_type: 'path', source_value: 'src/**', edge_type: 'path_requires' },
+        { source_type: 'layer', source_value: 'Domain', edge_type: 'layer_requires', priority: 50 },
+      ],
+    });
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts).toHaveLength(3);
+    expect(result.drafts[0].proposal_type).toBe('new_doc');
+    expect(result.drafts[1].proposal_type).toBe('add_edge');
+    expect(result.drafts[1].payload).toMatchObject({
+      source_type: 'path',
+      source_value: 'src/**',
+      target_doc_id: 'with-edges',
+      edge_type: 'path_requires',
+      priority: 100,
+    });
+    expect(result.drafts[2].payload).toMatchObject({
+      source_type: 'layer',
+      source_value: 'Domain',
+      priority: 50,
+    });
+  });
+
+  it('rejects invalid doc_id', async () => {
+    const ctx = makeContext({
+      content: 'content',
+      doc_id: 'INVALID ID!',
+      title: 'Bad',
+      kind: 'guideline',
+    });
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].reason).toContain('doc_id');
+  });
+
+  it('rejects empty content', async () => {
+    const ctx = makeContext({
+      content: '',
+      doc_id: 'empty-doc',
+      title: 'Empty',
+      kind: 'guideline',
+    });
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].reason).toContain('content');
+  });
+
+  it('rejects invalid kind', async () => {
+    const ctx = makeContext({
+      content: 'content',
+      doc_id: 'bad-kind',
+      title: 'Bad Kind',
+      kind: 'invalid',
+    });
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].reason).toContain('kind');
+  });
+
+  it('skips non-document_import events', async () => {
+    const obs: Observation = {
+      observation_id: 'obs-wrong',
+      event_type: 'manual_note',
+      payload: JSON.stringify({ content: 'note' }),
+      related_compile_id: null,
+      related_snapshot_id: null,
+      created_at: new Date().toISOString(),
+      archived_at: null,
+      analyzed_at: null,
+    };
+    const ctx: AnalysisContext = { observation: obs, compile_audit: null };
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.skipped_observation_ids).toEqual(['obs-wrong']);
+    expect(result.drafts).toHaveLength(0);
+  });
+
+  it('includes source_path in payload when provided', async () => {
+    const ctx = makeContext({
+      content: 'content',
+      doc_id: 'sourced-doc',
+      title: 'Sourced',
+      kind: 'reference',
+      source_path: '/path/to/original.md',
+    });
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts[0].payload.source_path).toBe('/path/to/original.md');
   });
 });

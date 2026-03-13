@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS documents (
     content_hash    TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'draft'
                     CHECK (status IN ('draft', 'proposed', 'approved', 'deprecated')),
+    template_origin TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -56,7 +57,7 @@ CREATE TABLE IF NOT EXISTS observations (
     observation_id      TEXT PRIMARY KEY,
     event_type          TEXT NOT NULL
                         CHECK (event_type IN ('compile_miss', 'review_correction',
-                                              'pr_merged', 'manual_note')),
+                                              'pr_merged', 'manual_note', 'document_import')),
     payload             TEXT NOT NULL,
     related_compile_id  TEXT,
     related_snapshot_id TEXT,

@@ -17,6 +17,7 @@ export interface Document {
   content: string;
   content_hash: string;
   status: EntityStatus;
+  template_origin: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -50,7 +51,7 @@ export interface LayerRule {
 // Observation Layer
 // ============================================================
 
-export type ObservationEventType = 'compile_miss' | 'review_correction' | 'pr_merged' | 'manual_note';
+export type ObservationEventType = 'compile_miss' | 'review_correction' | 'pr_merged' | 'manual_note' | 'document_import';
 
 export interface Observation {
   observation_id: string;
@@ -196,6 +197,13 @@ export interface CompiledContext {
 // Write API Types (§4)
 // ============================================================
 
+export interface EdgeSpec {
+  source_type: EdgeSourceType;
+  source_value: string;
+  edge_type: EdgeType;
+  priority?: number;
+}
+
 export type ObserveEvent =
   | {
       event_type: 'compile_miss';
@@ -234,8 +242,20 @@ export type ObserveEvent =
         new_doc_hint?: {
           doc_id: string;
           title: string;
-          kind: 'guideline' | 'pattern' | 'constraint' | 'template' | 'reference';
+          kind: DocumentKind;
         };
+      };
+    }
+  | {
+      event_type: 'document_import';
+      payload: {
+        content: string;
+        doc_id: string;
+        title: string;
+        kind: DocumentKind;
+        edge_hints?: EdgeSpec[];
+        tags?: string[];
+        source_path?: string;
       };
     };
 

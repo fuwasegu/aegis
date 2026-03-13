@@ -188,7 +188,8 @@ export class ContextCompiler {
 
     if (request.plan && this.tagger) {
       try {
-        const tags = await this.tagger.extractTags(request.plan);
+        const knownTags = this.repo.getAllTags();
+        const tags = await this.tagger.extractTags(request.plan, knownTags);
         const tagNames = tags.map(t => t.tag);
 
         if (tagNames.length > 0) {

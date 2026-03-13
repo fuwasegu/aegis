@@ -5,11 +5,12 @@
  * Usage:
  *   npx aegis --surface agent                    # Agent surface (default)
  *   npx aegis --surface admin                    # Admin surface
- *   npx aegis --model qwen2.5-1.5b              # Select SLM from catalog
- *   npx aegis --model hf:user/repo:file.gguf    # Custom HuggingFace model
- *   npx aegis --no-slm                           # Disable SLM (no expanded context)
- *   npx aegis --ollama                           # Use Ollama instead of llama.cpp
+ *   npx aegis --slm                              # Enable SLM for expanded context (opt-in)
+ *   npx aegis --slm --model qwen3.5-9b           # Select SLM model from catalog
+ *   npx aegis --slm --model hf:user/repo:f.gguf  # Custom HuggingFace model
+ *   npx aegis --slm --ollama                      # Use Ollama instead of llama.cpp
  *
+ * SLM is disabled by default (ADR-004). Enable with --slm for expanded context.
  * Models are stored in ~/.aegis/models/ (shared across projects).
  * DB defaults to .aegis/aegis.db (per project).
  */
@@ -32,18 +33,13 @@ import type { IntentTagger } from './core/tagging/tagger.js';
 const DEFAULT_DB_DIR = '.aegis';
 const DEFAULT_DB_PATH = join(DEFAULT_DB_DIR, 'aegis.db');
 
-const KNOWN_TAGS = [
-  'state_mutation', 'collection_operation', 'db_migration', 'api_endpoint',
-  'authentication', 'authorization', 'validation', 'error_handling', 'logging',
-  'caching', 'event_dispatch', 'external_api', 'file_operation', 'query_optimization',
-];
-
 interface CliArgs {
   surface: Surface;
   dbPath: string;
   templatesRoot: string;
+  extraTemplateDirs: string[];
   model: string;
-  noSlm: boolean;
+  enableSlm: boolean;
   useOllama: boolean;
   ollamaUrl: string;
   listModels: boolean;
@@ -54,8 +50,9 @@ function parseArgs(): CliArgs {
   let surface: Surface = 'agent';
   let dbPath = DEFAULT_DB_PATH;
   let templatesRoot = join(import.meta.dirname, '../templates');
+  const extraTemplateDirs: string[] = [];
   let model = DEFAULT_MODEL;
-  let noSlm = false;
+  let enableSlm = false;
   let useOllama = false;
   let ollamaUrl = 'http://localhost:11434';
   let listModels = false;
@@ -78,18 +75,26 @@ function parseArgs(): CliArgs {
       case '--model':
         model = args[++i];
         break;
+      case '--template-dir':
+        extraTemplateDirs.push(args[++i]);
+        break;
+      case '--slm':
+        enableSlm = true;
+        break;
       case '--no-slm':
       case '--no-ollama':
-        noSlm = true;
+        enableSlm = false;
         break;
       case '--ollama':
         useOllama = true;
+        enableSlm = true;
         break;
       case '--ollama-url':
         ollamaUrl = args[++i];
         break;
       case '--ollama-model':
         model = args[++i];
+        enableSlm = true;
         break;
       case '--list-models':
         listModels = true;
@@ -97,11 +102,11 @@ function parseArgs(): CliArgs {
     }
   }
 
-  return { surface, dbPath, templatesRoot, model, noSlm, useOllama, ollamaUrl, listModels };
+  return { surface, dbPath, templatesRoot, extraTemplateDirs, model, enableSlm, useOllama, ollamaUrl, listModels };
 }
 
 async function createTagger(cliArgs: CliArgs): Promise<IntentTagger | null> {
-  if (cliArgs.noSlm) return null;
+  if (!cliArgs.enableSlm) return null;
 
   if (cliArgs.useOllama) {
     return createOllamaTagger(cliArgs);
@@ -116,10 +121,10 @@ async function createLlamaTagger(cliArgs: CliArgs): Promise<IntentTagger | null>
     console.error(`[aegis] Initializing llama.cpp engine (model: ${cliArgs.model})...`);
     await engine.initialize();
     console.error(`[aegis] llama.cpp engine ready`);
-    return new LlamaIntentTagger(engine, KNOWN_TAGS);
+    return new LlamaIntentTagger(engine);
   } catch (err) {
     console.error(`[aegis] llama.cpp initialization failed: ${err instanceof Error ? err.message : err}`);
-    console.error('[aegis] Expanded context disabled. Use --no-slm to suppress this warning.');
+    console.error('[aegis] Expanded context disabled.');
     return null;
   }
 }
@@ -137,7 +142,7 @@ async function createOllamaTagger(cliArgs: CliArgs): Promise<IntentTagger | null
   }
 
   console.error(`[aegis] Ollama connected (model: ${cliArgs.model})`);
-  return new OllamaIntentTagger(client, KNOWN_TAGS);
+  return new OllamaIntentTagger(client);
 }
 
 function printModels(): void {
@@ -173,7 +178,7 @@ async function main() {
   const db = createDatabase(dbPath);
   const repo = new Repository(db);
   const tagger = await createTagger(cliArgs);
-  const service = new AegisService(repo, templatesRoot, tagger);
+  const service = new AegisService(repo, templatesRoot, tagger, cliArgs.extraTemplateDirs);
   const server = createAegisServer(service, surface);
 
   const transport = new StdioServerTransport();

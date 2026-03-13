@@ -17,6 +17,21 @@ import {
 } from './template-loader.js';
 import { resolvePlaceholders } from './detector.js';
 
+/**
+ * Simple semver comparison (major.minor.patch).
+ * Returns negative if a < b, 0 if equal, positive if a > b.
+ */
+function compareSemver(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const va = pa[i] ?? 0;
+    const vb = pb[i] ?? 0;
+    if (va !== vb) return va - vb;
+  }
+  return 0;
+}
+
 export interface UpgradePreview {
   template_id: string;
   from_version: string;
@@ -29,11 +44,13 @@ export type UpgradeChange =
   | { type: 'update_doc'; doc_id: string; old_hash: string; new_hash: string }
   | { type: 'new_doc'; doc_id: string; title: string }
   | { type: 'new_edge'; edge_id: string; source_value: string; target_doc_id: string }
-  | { type: 'new_layer_rule'; rule_id: string; path_pattern: string; layer_name: string };
+  | { type: 'new_layer_rule'; rule_id: string; path_pattern: string; layer_name: string }
+  | { type: 'removed_doc'; doc_id: string };
 
 export function detectUpgrade(
   repo: Repository,
   templatesRoot: string,
+  extraTemplateDirs?: string[],
 ): UpgradePreview | null {
   const manifest = repo.getInitManifest();
   if (!manifest) return null;
@@ -42,14 +59,14 @@ export function detectUpgrade(
   const fromVersion = manifest.template_version;
   const storedPlaceholders = JSON.parse(manifest.placeholders) as Record<string, string | null>;
 
-  const allManifests = loadAllManifests(templatesRoot);
+  const allManifests = loadAllManifests(templatesRoot, extraTemplateDirs);
   const entry = allManifests.find(m => m.manifest.template_id === templateId);
   if (!entry) return null;
 
   const currentManifest = entry.manifest;
   const toVersion = currentManifest.version;
 
-  if (fromVersion === toVersion) {
+  if (compareSemver(toVersion, fromVersion) <= 0) {
     return { template_id: templateId, from_version: fromVersion, to_version: toVersion, changes: [], has_changes: false };
   }
 
@@ -59,6 +76,7 @@ export function detectUpgrade(
   // Check document changes
   const existingDocs = repo.getApprovedDocuments();
   const existingDocMap = new Map(existingDocs.map(d => [d.doc_id, d]));
+  const newDocIdSet = new Set(generated.documents.map(d => d.doc_id));
 
   for (const newDoc of generated.documents) {
     const existing = existingDocMap.get(newDoc.doc_id);
@@ -66,6 +84,15 @@ export function detectUpgrade(
       changes.push({ type: 'new_doc', doc_id: newDoc.doc_id, title: newDoc.title });
     } else if (existing.content_hash !== newDoc.content_hash) {
       changes.push({ type: 'update_doc', doc_id: newDoc.doc_id, old_hash: existing.content_hash, new_hash: newDoc.content_hash });
+    }
+  }
+
+  // Per ADR-006 D-8: detect removed seeds using provenance.
+  // Docs with template_origin matching this template but absent from new seed → removed.
+  const templateOwnedDocs = repo.getDocumentsByTemplateOrigin(templateId);
+  for (const ownedDoc of templateOwnedDocs) {
+    if (!newDocIdSet.has(ownedDoc.doc_id) && existingDocMap.has(ownedDoc.doc_id)) {
+      changes.push({ type: 'removed_doc', doc_id: ownedDoc.doc_id });
     }
   }
 
@@ -104,10 +131,11 @@ export function generateUpgradeProposals(
   preview: UpgradePreview,
   repo: Repository,
   templatesRoot: string,
+  extraTemplateDirs?: string[],
 ): ProposalDraft[] {
   if (!preview.has_changes) return [];
 
-  const allManifests = loadAllManifests(templatesRoot);
+  const allManifests = loadAllManifests(templatesRoot, extraTemplateDirs);
   const entry = allManifests.find(m => m.manifest.template_id === preview.template_id);
   if (!entry) return [];
 
@@ -171,6 +199,17 @@ export function generateUpgradeProposals(
             evidence_observation_ids: [],
           });
         }
+        break;
+      }
+      case 'removed_doc': {
+        drafts.push({
+          proposal_type: 'deprecate',
+          payload: {
+            entity_type: 'document',
+            entity_id: change.doc_id,
+          },
+          evidence_observation_ids: [],
+        });
         break;
       }
     }
