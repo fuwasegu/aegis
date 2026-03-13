@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "aegis": {
+      "command": "node",
+      "args": ["dist/main.js", "--surface", "agent"]
+    },
+    "aegis-admin": {
+      "command": "node",
+      "args": ["dist/main.js", "--surface", "admin"]
+    }
+  }
+}
