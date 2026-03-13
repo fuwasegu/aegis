@@ -5,7 +5,7 @@
  * Surface separation (INV-6):
  * - Agent Surface: compile_context, observe, get_compile_audit, init_detect (4 tools)
  * - Admin Surface: agent tools + init_confirm,
- *                  list/get/approve/reject_proposals (10 tools total)
+ *                  list/get/approve/reject_proposals, list_observations (15 tools total)
  * - propose is NOT exposed (internal only)
  *
  * init_detect is on both surfaces (read-only preview).
@@ -37,6 +37,7 @@ const WORKFLOW_GUIDE = `# Aegis Workflow Guide
 - \`aegis_init_detect\` + \`aegis_init_confirm\`: Initialize a project
 - \`aegis_import_doc\`: Import existing documents with explicit metadata
 - \`aegis_process_observations\`: Run the analyzer pipeline on pending observations
+- \`aegis_list_observations\`: Triage observations by outcome (proposed/skipped/pending)
 - \`aegis_check_upgrade\` + \`aegis_apply_upgrade\`: Template version upgrades
 
 ## Key Principles
@@ -293,6 +294,29 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
         } catch (e: any) {
           return { content: [{ type: 'text', text: `Import failed: ${e.message}` }], isError: true };
         }
+      },
+    );
+
+    server.tool(
+      'aegis_list_observations',
+      'List observations with outcome-based filtering. Per ADR-008: helps admin triage skipped observations.',
+      {
+        event_type: z
+          .enum(['compile_miss', 'review_correction', 'pr_merged', 'manual_note', 'document_import'])
+          .optional()
+          .describe('Filter by event type'),
+        outcome: z
+          .enum(['proposed', 'skipped', 'pending'])
+          .optional()
+          .describe(
+            'Filter by outcome: pending (not yet analyzed), proposed (generated proposals), skipped (analyzed but no proposals)',
+          ),
+        limit: z.number().int().min(1).max(100).optional().describe('Max results (default 20)'),
+        offset: z.number().int().min(0).optional().describe('Pagination offset'),
+      },
+      async (params) => {
+        const result = service.listObservations(params, surface);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       },
     );
 

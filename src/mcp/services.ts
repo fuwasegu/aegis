@@ -118,6 +118,9 @@ export class AegisService {
         if (typeof p.review_comment !== 'string' || !p.review_comment) {
           throw new ObserveValidationError('compile_miss payload requires review_comment');
         }
+        if (p.target_doc_id !== undefined && typeof p.target_doc_id !== 'string') {
+          throw new ObserveValidationError('compile_miss payload target_doc_id must be a string if provided');
+        }
         break;
       case 'review_correction':
         if (typeof p.file_path !== 'string' || !p.file_path) {
@@ -377,6 +380,63 @@ export class AegisService {
     this.assertAdmin('aegis_archive_observations', surface);
     const archived_count = this.repo.archiveOldObservations(days);
     return { archived_count };
+  }
+
+  /**
+   * List observations with outcome-based filtering.
+   * Per ADR-008: outcome is derived from proposal_evidence JOIN, not analyzed_at alone.
+   */
+  listObservations(
+    params: {
+      event_type?: ObservationEventType;
+      outcome?: 'proposed' | 'skipped' | 'pending';
+      limit?: number;
+      offset?: number;
+    },
+    surface: Surface,
+  ): {
+    observations: Array<{
+      observation_id: string;
+      event_type: string;
+      outcome: 'proposed' | 'skipped' | 'pending';
+      review_comment: string | null;
+      target_doc_id: string | null;
+      created_at: string;
+      analyzed_at: string | null;
+    }>;
+    total: number;
+  } {
+    this.assertAdmin('aegis_list_observations', surface);
+
+    const result = this.repo.listObservations(
+      { event_type: params.event_type, outcome: params.outcome },
+      params.limit ?? 20,
+      params.offset ?? 0,
+    );
+
+    return {
+      observations: result.observations.map((obs) => {
+        let review_comment: string | null = null;
+        let target_doc_id: string | null = null;
+        try {
+          const payload = JSON.parse(obs.payload);
+          review_comment = payload.review_comment ?? null;
+          target_doc_id = payload.target_doc_id ?? null;
+        } catch {
+          // payload parse failure — leave as null
+        }
+        return {
+          observation_id: obs.observation_id,
+          event_type: obs.event_type,
+          outcome: obs.outcome,
+          review_comment,
+          target_doc_id,
+          created_at: obs.created_at,
+          analyzed_at: obs.analyzed_at,
+        };
+      }),
+      total: result.total,
+    };
   }
 
   /**

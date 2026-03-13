@@ -90,3 +90,40 @@ templates/      — Init templates (laravel-ddd, generic-layered, typescript-mcp
 - Ollama integration for SLM-powered intent tagging with graceful degradation
 - Template upgrade detection and proposal generation via `check_upgrade` / `apply_upgrade`
 - **Bootstrap proposal has no evidence**: `proposal_type='bootstrap'` is the sole exception to P-3's "1+ Observation per Proposal" rule. Bootstrap proposals are created by the init engine, not derived from observations. This is an intentional design decision — init is a controlled bootstrapping process, not an observation-driven workflow.
+
+<!-- aegis:start -->
+## Aegis Process Enforcement
+
+You MUST follow this process for every coding task. No exceptions.
+
+### Before Writing Code
+
+1. **Create a Plan** — Before touching any file, articulate what you intend to do.
+2. **Consult Aegis** — Call `aegis_compile_context` with:
+   - `target_files`: the files you plan to edit
+   - `plan`: your natural-language plan (optional but recommended)
+   - `command`: the type of operation (scaffold, refactor, review, etc.)
+3. **Read and follow** the returned architecture guidelines.
+
+### After Writing Code
+
+4. **Self-Review** — Check your implementation against the returned guidelines.
+5. **Report Compile Misses** — If Aegis failed to provide a needed guideline:
+   ```
+   aegis_observe({
+     event_type: "compile_miss",
+     related_compile_id: "<from step 2>",
+     related_snapshot_id: "<from step 2>",
+     payload: {
+       target_files: ["<files>"],
+       review_comment: "<what was missing>"
+     }
+   })
+   ```
+
+### Rules
+
+- NEVER skip the Aegis consultation step.
+- NEVER ignore guidelines returned by Aegis.
+- The compile_id and snapshot_id from step 2 are required for observation reporting.
+<!-- aegis:end -->
