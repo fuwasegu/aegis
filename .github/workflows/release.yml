@@ -23,7 +23,9 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
-      - run: npm ci --ignore-optional
+      - name: Install dependencies
+        run: npm ci
+        timeout-minutes: 5
 
       - name: Build
         run: npm run build
@@ -37,6 +39,11 @@ jobs:
           npm version "$TAG" --no-git-tag-version --allow-same-version
 
       - name: Publish
-        run: npm publish --provenance --access public
+        run: |
+          if [ "${{ github.event.repository.visibility }}" = "public" ]; then
+            npm publish --provenance --access public
+          else
+            npm publish --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
