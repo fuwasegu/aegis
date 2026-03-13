@@ -14,10 +14,12 @@ import { DEFAULT_MODEL, getModelsDirectory, resolveModelUri } from './models.js'
 // We use `any` for cached module/instance refs and rely on the dynamic import at runtime.
 let _nodeLlamaCpp: any = null;
 
+const NODE_LLAMA_CPP = 'node-llama-cpp';
+
 async function loadNodeLlamaCpp(): Promise<any> {
   if (_nodeLlamaCpp) return _nodeLlamaCpp;
   try {
-    _nodeLlamaCpp = await import('node-llama-cpp');
+    _nodeLlamaCpp = await import(NODE_LLAMA_CPP);
     return _nodeLlamaCpp;
   } catch {
     throw new LlamaEngineError(
