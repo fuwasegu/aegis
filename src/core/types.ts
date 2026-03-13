@@ -217,6 +217,7 @@ export type ObserveEvent =
       payload: {
         target_files: string[];
         missing_doc?: string;
+        target_doc_id?: string;
         review_comment: string;
       };
     }

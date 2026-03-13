@@ -924,3 +924,231 @@ describe('AegisService — observe payload validation', () => {
     ).toThrow('target_doc_id required when proposed_content is provided');
   });
 });
+
+// ============================================================
+// ADR-008: compile_miss target_doc_id + list_observations
+// ============================================================
+
+describe('AegisService — compile_miss target_doc_id (ADR-008)', () => {
+  let db: Database.Database;
+  let repo: Repository;
+  let service: AegisService;
+
+  beforeEach(() => {
+    db = createInMemoryDatabase();
+    repo = new Repository(db);
+    service = new AegisService(repo, TEMPLATES_ROOT);
+  });
+
+  it('compile_miss with target_doc_id succeeds and stores it in payload', () => {
+    const result = service.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-1',
+        related_snapshot_id: 'snap-1',
+        payload: {
+          target_files: ['src/a.ts'],
+          review_comment: 'archived_at not documented',
+          target_doc_id: 'ts-mcp-repository-guidelines',
+        },
+      },
+      'agent',
+    );
+    expect(result.observation_id).toBeTruthy();
+    const obs = db.prepare('SELECT * FROM observations WHERE observation_id = ?').get(result.observation_id) as any;
+    const payload = JSON.parse(obs.payload);
+    expect(payload.target_doc_id).toBe('ts-mcp-repository-guidelines');
+    expect(payload.review_comment).toBe('archived_at not documented');
+  });
+
+  it('compile_miss without target_doc_id still succeeds (optional field)', () => {
+    const result = service.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-1',
+        related_snapshot_id: 'snap-1',
+        payload: {
+          target_files: ['src/a.ts'],
+          review_comment: 'some miss',
+        },
+      },
+      'agent',
+    );
+    expect(result.observation_id).toBeTruthy();
+  });
+
+  it('compile_miss with non-string target_doc_id rejects', () => {
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'compile_miss',
+          related_compile_id: 'cmp-1',
+          related_snapshot_id: 'snap-1',
+          payload: {
+            target_files: ['src/a.ts'],
+            review_comment: 'miss',
+            target_doc_id: 123,
+          },
+        } as any,
+        'agent',
+      ),
+    ).toThrow('target_doc_id must be a string');
+  });
+});
+
+describe('AegisService — list_observations (ADR-008)', () => {
+  let db: Database.Database;
+  let repo: Repository;
+  let service: AegisService;
+
+  beforeEach(() => {
+    db = createInMemoryDatabase();
+    repo = new Repository(db);
+    service = new AegisService(repo, TEMPLATES_ROOT);
+  });
+
+  it('requires admin surface', () => {
+    expect(() => service.listObservations({}, 'agent')).toThrow(SurfaceViolationError);
+  });
+
+  it('returns pending observations (not yet analyzed)', () => {
+    repo.insertObservation({
+      observation_id: 'obs-pending',
+      event_type: 'compile_miss',
+      payload: JSON.stringify({ review_comment: 'pending miss', target_files: ['a.ts'] }),
+      related_compile_id: 'cmp-1',
+      related_snapshot_id: 'snap-1',
+    });
+
+    const result = service.listObservations({ outcome: 'pending' }, 'admin');
+    expect(result.total).toBe(1);
+    expect(result.observations).toHaveLength(1);
+    expect(result.observations[0].outcome).toBe('pending');
+    expect(result.observations[0].review_comment).toBe('pending miss');
+  });
+
+  it('returns skipped observations (analyzed but no proposal)', () => {
+    repo.insertObservation({
+      observation_id: 'obs-skipped',
+      event_type: 'compile_miss',
+      payload: JSON.stringify({
+        review_comment: 'skipped miss',
+        target_files: ['a.ts'],
+        target_doc_id: 'some-doc',
+      }),
+      related_compile_id: 'cmp-1',
+      related_snapshot_id: 'snap-1',
+    });
+    repo.markObservationsAnalyzed(['obs-skipped']);
+
+    const result = service.listObservations({ outcome: 'skipped' }, 'admin');
+    expect(result.total).toBe(1);
+    expect(result.observations[0].outcome).toBe('skipped');
+    expect(result.observations[0].target_doc_id).toBe('some-doc');
+  });
+
+  it('returns proposed observations (analyzed with proposal evidence)', () => {
+    repo.insertObservation({
+      observation_id: 'obs-proposed',
+      event_type: 'compile_miss',
+      payload: JSON.stringify({ review_comment: 'proposed miss', target_files: ['a.ts'], missing_doc: 'doc-x' }),
+      related_compile_id: 'cmp-1',
+      related_snapshot_id: 'snap-1',
+    });
+    repo.markObservationsAnalyzed(['obs-proposed']);
+    repo.insertProposal({
+      proposal_id: 'p-1',
+      proposal_type: 'add_edge',
+      payload: JSON.stringify({
+        source_type: 'path',
+        source_value: 'src/**',
+        target_doc_id: 'doc-x',
+        edge_type: 'path_requires',
+      }),
+      status: 'pending',
+      review_comment: null,
+    });
+    repo.insertProposalEvidence('p-1', 'obs-proposed');
+
+    const result = service.listObservations({ outcome: 'proposed' }, 'admin');
+    expect(result.total).toBe(1);
+    expect(result.observations[0].outcome).toBe('proposed');
+  });
+
+  it('filters by event_type', () => {
+    repo.insertObservation({
+      observation_id: 'obs-miss',
+      event_type: 'compile_miss',
+      payload: JSON.stringify({ review_comment: 'miss', target_files: ['a.ts'] }),
+      related_compile_id: 'cmp-1',
+      related_snapshot_id: 'snap-1',
+    });
+    repo.insertObservation({
+      observation_id: 'obs-note',
+      event_type: 'manual_note',
+      payload: JSON.stringify({ content: 'a note' }),
+      related_compile_id: null,
+      related_snapshot_id: null,
+    });
+
+    const result = service.listObservations({ event_type: 'compile_miss' }, 'admin');
+    expect(result.total).toBe(1);
+    expect(result.observations[0].event_type).toBe('compile_miss');
+  });
+
+  it('correctly distinguishes proposed vs skipped in mixed set', () => {
+    repo.insertObservation({
+      observation_id: 'obs-1',
+      event_type: 'compile_miss',
+      payload: JSON.stringify({ review_comment: 'has proposal', target_files: ['a.ts'] }),
+      related_compile_id: 'cmp-1',
+      related_snapshot_id: 'snap-1',
+    });
+    repo.insertObservation({
+      observation_id: 'obs-2',
+      event_type: 'compile_miss',
+      payload: JSON.stringify({ review_comment: 'no proposal', target_files: ['b.ts'] }),
+      related_compile_id: 'cmp-2',
+      related_snapshot_id: 'snap-2',
+    });
+    repo.markObservationsAnalyzed(['obs-1', 'obs-2']);
+    repo.insertProposal({
+      proposal_id: 'p-1',
+      proposal_type: 'add_edge',
+      payload: '{}',
+      status: 'pending',
+      review_comment: null,
+    });
+    repo.insertProposalEvidence('p-1', 'obs-1');
+
+    const proposed = service.listObservations({ outcome: 'proposed' }, 'admin');
+    expect(proposed.total).toBe(1);
+    expect(proposed.observations[0].observation_id).toBe('obs-1');
+
+    const skipped = service.listObservations({ outcome: 'skipped' }, 'admin');
+    expect(skipped.total).toBe(1);
+    expect(skipped.observations[0].observation_id).toBe('obs-2');
+  });
+
+  it('respects limit and offset', () => {
+    for (let i = 0; i < 5; i++) {
+      repo.insertObservation({
+        observation_id: `obs-${i}`,
+        event_type: 'manual_note',
+        payload: JSON.stringify({ content: `note ${i}` }),
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
+    }
+
+    const page1 = service.listObservations({ limit: 2, offset: 0 }, 'admin');
+    expect(page1.total).toBe(5);
+    expect(page1.observations).toHaveLength(2);
+
+    const page2 = service.listObservations({ limit: 2, offset: 2 }, 'admin');
+    expect(page2.observations).toHaveLength(2);
+
+    const page3 = service.listObservations({ limit: 2, offset: 4 }, 'admin');
+    expect(page3.observations).toHaveLength(1);
+  });
+});

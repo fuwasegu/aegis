@@ -276,6 +276,57 @@ export class Repository {
     }
   }
 
+  listObservations(
+    filters: {
+      event_type?: string;
+      outcome?: 'proposed' | 'skipped' | 'pending';
+    },
+    limit = 20,
+    offset = 0,
+  ): { observations: Array<Observation & { outcome: 'proposed' | 'skipped' | 'pending' }>; total: number } {
+    const baseFrom = `
+      FROM observations o
+      LEFT JOIN proposal_evidence pe ON pe.observation_id = o.observation_id`;
+
+    const conditions: string[] = ['o.archived_at IS NULL'];
+    const params: unknown[] = [];
+
+    if (filters.event_type) {
+      conditions.push('o.event_type = ?');
+      params.push(filters.event_type);
+    }
+
+    const whereClause = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+
+    const groupedSelect = `
+      SELECT o.*,
+        CASE
+          WHEN o.analyzed_at IS NULL THEN 'pending'
+          WHEN COUNT(pe.proposal_id) > 0 THEN 'proposed'
+          ELSE 'skipped'
+        END AS outcome
+      ${baseFrom}${whereClause}
+      GROUP BY o.observation_id`;
+
+    if (filters.outcome) {
+      const countSql = `SELECT COUNT(*) as total FROM (${groupedSelect}) sub WHERE sub.outcome = ?`;
+      const selectSql = `${groupedSelect} HAVING outcome = ? ORDER BY o.created_at DESC LIMIT ? OFFSET ?`;
+      const { total } = this.db.prepare(countSql).get(...params, filters.outcome) as { total: number };
+      const observations = this.db.prepare(selectSql).all(...params, filters.outcome, limit, offset) as Array<
+        Observation & { outcome: 'proposed' | 'skipped' | 'pending' }
+      >;
+      return { observations, total };
+    }
+
+    const countSql = `SELECT COUNT(DISTINCT o.observation_id) as total ${baseFrom}${whereClause}`;
+    const selectSql = `${groupedSelect} ORDER BY o.created_at DESC LIMIT ? OFFSET ?`;
+    const { total } = this.db.prepare(countSql).get(...params) as { total: number };
+    const observations = this.db.prepare(selectSql).all(...params, limit, offset) as Array<
+      Observation & { outcome: 'proposed' | 'skipped' | 'pending' }
+    >;
+    return { observations, total };
+  }
+
   // ============================================================
   // Proposals
   // ============================================================
@@ -799,5 +850,31 @@ export class Repository {
       cnt: number;
     };
     return row.cnt;
+  }
+
+  searchArchivedObservations(
+    eventType?: string,
+    limit = 50,
+    offset = 0,
+  ): { observations: Observation[]; total: number } {
+    const conditions = ['archived_at IS NOT NULL'];
+    const params: unknown[] = [];
+
+    if (eventType) {
+      conditions.push('event_type = ?');
+      params.push(eventType);
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const { total } = this.db.prepare(`SELECT COUNT(*) as total FROM observations ${where}`).get(...params) as {
+      total: number;
+    };
+
+    const observations = this.db
+      .prepare(`SELECT * FROM observations ${where} ORDER BY archived_at DESC LIMIT ? OFFSET ?`)
+      .all(...params, limit, offset) as Observation[];
+
+    return { observations, total };
   }
 }
