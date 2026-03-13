@@ -51,7 +51,12 @@ export interface LayerRule {
 // Observation Layer
 // ============================================================
 
-export type ObservationEventType = 'compile_miss' | 'review_correction' | 'pr_merged' | 'manual_note' | 'document_import';
+export type ObservationEventType =
+  | 'compile_miss'
+  | 'review_correction'
+  | 'pr_merged'
+  | 'manual_note'
+  | 'document_import';
 
 export interface Observation {
   observation_id: string;

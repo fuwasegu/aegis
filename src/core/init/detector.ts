@@ -3,12 +3,9 @@
  * Implements §8.2 Stage 1 (detect): static filesystem scan, no LLM.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import picomatch from 'picomatch';
-import type {
-  DetectSignal, TemplateManifest, PlaceholderDef,
-} from './template-loader.js';
+import type { DetectSignal, TemplateManifest } from './template-loader.js';
 
 // ── Detection result types (mirrors v2 §8.3) ──
 
@@ -48,17 +45,17 @@ export function detectStack(projectRoot: string): StackDetection {
   // Check manifest files in priority order
   if (existsSync(join(projectRoot, 'composer.json'))) {
     const raw = JSON.parse(readFileSync(join(projectRoot, 'composer.json'), 'utf-8'));
-    const framework = raw?.require?.['laravel/framework'] ? 'laravel'
-      : raw?.require?.['symfony/framework-bundle'] ? 'symfony'
-      : undefined;
+    const framework = raw?.require?.['laravel/framework']
+      ? 'laravel'
+      : raw?.require?.['symfony/framework-bundle']
+        ? 'symfony'
+        : undefined;
     return { language: 'php', framework, package_manager: 'composer', detected_from: 'composer.json' };
   }
   if (existsSync(join(projectRoot, 'package.json'))) {
     const raw = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf-8'));
     const deps = { ...raw?.dependencies, ...raw?.devDependencies };
-    const framework = deps?.['next'] ? 'next.js'
-      : deps?.['nuxt'] ? 'nuxt'
-      : undefined;
+    const framework = deps?.next ? 'next.js' : deps?.nuxt ? 'nuxt' : undefined;
     return { language: 'typescript', framework, package_manager: 'npm', detected_from: 'package.json' };
   }
   if (existsSync(join(projectRoot, 'pyproject.toml'))) {
@@ -80,8 +77,9 @@ export function evaluateSignal(signal: DetectSignal, projectRoot: string): boole
       return signal.path ? existsSync(join(projectRoot, signal.path)) : false;
 
     case 'dir_exists':
-      return signal.path ? existsSync(join(projectRoot, signal.path)) &&
-        statSync(join(projectRoot, signal.path)).isDirectory() : false;
+      return signal.path
+        ? existsSync(join(projectRoot, signal.path)) && statSync(join(projectRoot, signal.path)).isDirectory()
+        : false;
 
     case 'package_dependency': {
       if (!signal.file || !signal.key || !signal.pattern) return false;
@@ -91,7 +89,7 @@ export function evaluateSignal(signal: DetectSignal, projectRoot: string): boole
         const raw = JSON.parse(readFileSync(filePath, 'utf-8'));
         const deps = raw?.[signal.key];
         if (!deps || typeof deps !== 'object') return false;
-        return Object.keys(deps).some(k => k === signal.pattern || k.includes(signal.pattern!));
+        return Object.keys(deps).some((k) => k === signal.pattern || k.includes(signal.pattern!));
       } catch {
         return false;
       }
@@ -185,9 +183,7 @@ export function scoreProfile(
 
   const thresholds = manifest.detect_signals.confidence_thresholds;
   const confidence: 'high' | 'medium' | 'low' =
-    totalWeight >= thresholds.high ? 'high'
-    : totalWeight >= thresholds.medium ? 'medium'
-    : 'low';
+    totalWeight >= thresholds.high ? 'high' : totalWeight >= thresholds.medium ? 'medium' : 'low';
 
   return {
     candidate: {
@@ -287,11 +283,7 @@ function resolveComposerAutoload(projectRoot: string, fallback: string | null): 
   }
 }
 
-function resolvePackageJsonField(
-  projectRoot: string,
-  fieldPaths: string[],
-  fallback: string | null,
-): string | null {
+function resolvePackageJsonField(projectRoot: string, fieldPaths: string[], fallback: string | null): string | null {
   try {
     const pkgPath = join(projectRoot, 'package.json');
     if (!existsSync(pkgPath)) return fallback;

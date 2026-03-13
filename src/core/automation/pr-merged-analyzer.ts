@@ -10,11 +10,11 @@
  * - Skip observations where all changed files are already covered
  */
 
-import { v4 as uuidv4 } from 'uuid';
 import picomatch from 'picomatch';
-import type { ObservationAnalyzer } from './analyzer.js';
+import { v4 as uuidv4 } from 'uuid';
 import type { Repository } from '../store/repository.js';
 import type { AnalysisContext, AnalysisResult, ProposalDraft } from '../types.js';
+import type { ObservationAnalyzer } from './analyzer.js';
 
 export class PrMergedAnalyzer implements ObservationAnalyzer {
   constructor(private repo: Repository) {}
@@ -59,7 +59,7 @@ export class PrMergedAnalyzer implements ObservationAnalyzer {
     }
 
     const existingEdges = this.repo.getApprovedEdgesByType('path_requires');
-    const existingPatterns = existingEdges.map(e => e.source_value);
+    const existingPatterns = existingEdges.map((e) => e.source_value);
 
     const uncoveredPatterns = this.findUncoveredPatterns(payload.files_changed, existingPatterns);
 
@@ -72,7 +72,7 @@ export class PrMergedAnalyzer implements ObservationAnalyzer {
       return [];
     }
 
-    return uncoveredPatterns.map(pattern => ({
+    return uncoveredPatterns.map((pattern) => ({
       proposal_type: 'add_edge' as const,
       payload: {
         edge_id: uuidv4(),
@@ -88,11 +88,11 @@ export class PrMergedAnalyzer implements ObservationAnalyzer {
   }
 
   private findUncoveredPatterns(files: string[], existingPatterns: string[]): string[] {
-    const matchers = existingPatterns.map(p => picomatch(p));
+    const matchers = existingPatterns.map((p) => picomatch(p));
 
     const dirPatterns = new Set<string>();
     for (const file of files) {
-      const covered = matchers.some(match => match(file));
+      const covered = matchers.some((match) => match(file));
       if (!covered) {
         dirPatterns.add(this.derivePathPattern(file));
       }
@@ -103,17 +103,17 @@ export class PrMergedAnalyzer implements ObservationAnalyzer {
 
   private findRootDocument(): string | null {
     const docs = this.repo.getApprovedDocuments();
-    const root = docs.find(d => d.kind === 'guideline' && d.doc_id.includes('root'));
+    const root = docs.find((d) => d.kind === 'guideline' && d.doc_id.includes('root'));
     return root?.doc_id ?? docs[0]?.doc_id ?? null;
   }
 
   private derivePathPattern(filePath: string): string {
     const parts = filePath.split('/');
     if (parts.length <= 1) return '**';
-    return parts.slice(0, -1).join('/') + '/**';
+    return `${parts.slice(0, -1).join('/')}/**`;
   }
 
   private calculateSpecificity(pattern: string): number {
-    return pattern.split('/').filter(s => s !== '**' && s !== '*').length;
+    return pattern.split('/').filter((s) => s !== '**' && s !== '*').length;
   }
 }

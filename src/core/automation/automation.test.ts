@@ -1,17 +1,17 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
-import { createInMemoryDatabase, Repository } from '../store/index.js';
-import { RuleBasedAnalyzer } from './rule-analyzer.js';
-import { ReviewCorrectionAnalyzer } from './review-correction-analyzer.js';
-import { PrMergedAnalyzer } from './pr-merged-analyzer.js';
-import { ManualNoteAnalyzer } from './manual-note-analyzer.js';
-import { DocumentImportAnalyzer } from './document-import-analyzer.js';
-import { ProposeService } from './propose.js';
-import type { ObservationAnalyzer } from './analyzer.js';
-import type { AnalysisContext, AnalysisResult, Observation } from '../types.js';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { AegisService, SurfaceViolationError } from '../../mcp/services.js';
+import { createInMemoryDatabase, Repository } from '../store/index.js';
+import type { AnalysisContext, Observation } from '../types.js';
+import type { ObservationAnalyzer } from './analyzer.js';
+import { DocumentImportAnalyzer } from './document-import-analyzer.js';
+import { ManualNoteAnalyzer } from './manual-note-analyzer.js';
+import { PrMergedAnalyzer } from './pr-merged-analyzer.js';
+import { ProposeService } from './propose.js';
+import { ReviewCorrectionAnalyzer } from './review-correction-analyzer.js';
+import { RuleBasedAnalyzer } from './rule-analyzer.js';
 
 const TEMPLATES_ROOT = join(import.meta.dirname, '../../../templates');
 
@@ -19,10 +19,7 @@ function hash(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
-function makeObservation(
-  id: string,
-  overrides: Partial<Observation> = {},
-): Observation {
+function makeObservation(id: string, overrides: Partial<Observation> = {}): Observation {
   return {
     observation_id: id,
     event_type: 'compile_miss',
@@ -158,7 +155,7 @@ describe('RuleBasedAnalyzer', () => {
 
     // Two unique patterns: app/Domain/User/** and app/Domain/Order/**
     expect(result.drafts).toHaveLength(2);
-    const patterns = result.drafts.map(d => d.payload.source_value).sort();
+    const patterns = result.drafts.map((d) => d.payload.source_value).sort();
     expect(patterns).toEqual(['app/Domain/Order/**', 'app/Domain/User/**']);
     // All drafts share same evidence
     for (const draft of result.drafts) {
@@ -170,10 +167,7 @@ describe('RuleBasedAnalyzer', () => {
   it('duplicate directories in target_files are deduplicated', async () => {
     const obs = makeObservation('obs-8', {
       payload: JSON.stringify({
-        target_files: [
-          'src/utils/helper.ts',
-          'src/utils/format.ts',
-        ],
+        target_files: ['src/utils/helper.ts', 'src/utils/format.ts'],
         missing_doc: 'util-guide',
         review_comment: 'test',
       }),
@@ -416,11 +410,13 @@ describe('ProposeService', () => {
       related_snapshot_id: null,
     });
 
-    const result = proposeService.propose([{
-      proposal_type: 'add_edge',
-      payload: { source_type: 'path', source_value: 'app/**', target_doc_id: 'doc-1' },
-      evidence_observation_ids: ['obs-1'],
-    }]);
+    const result = proposeService.propose([
+      {
+        proposal_type: 'add_edge',
+        payload: { source_type: 'path', source_value: 'app/**', target_doc_id: 'doc-1' },
+        evidence_observation_ids: ['obs-1'],
+      },
+    ]);
 
     expect(result.created_proposal_ids).toHaveLength(1);
     expect(result.skipped_duplicate_count).toBe(0);
@@ -459,8 +455,20 @@ describe('ProposeService', () => {
   });
 
   it('different observations create separate proposals', () => {
-    repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
-    repo.insertObservation({ observation_id: 'obs-2', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
+    repo.insertObservation({
+      observation_id: 'obs-1',
+      event_type: 'compile_miss',
+      payload: '{}',
+      related_compile_id: null,
+      related_snapshot_id: null,
+    });
+    repo.insertObservation({
+      observation_id: 'obs-2',
+      event_type: 'compile_miss',
+      payload: '{}',
+      related_compile_id: null,
+      related_snapshot_id: null,
+    });
 
     const result = proposeService.propose([
       { proposal_type: 'add_edge', payload: { target: 'a' }, evidence_observation_ids: ['obs-1'] },
@@ -471,43 +479,75 @@ describe('ProposeService', () => {
   });
 
   it('rejected proposal does not block re-proposal', () => {
-    repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
+    repo.insertObservation({
+      observation_id: 'obs-1',
+      event_type: 'compile_miss',
+      payload: '{}',
+      related_compile_id: null,
+      related_snapshot_id: null,
+    });
 
-    const first = proposeService.propose([{
-      proposal_type: 'add_edge',
-      payload: { target: 'a' },
-      evidence_observation_ids: ['obs-1'],
-    }]);
+    const first = proposeService.propose([
+      {
+        proposal_type: 'add_edge',
+        payload: { target: 'a' },
+        evidence_observation_ids: ['obs-1'],
+      },
+    ]);
     repo.rejectProposal(first.created_proposal_ids[0], 'not needed');
 
-    const second = proposeService.propose([{
-      proposal_type: 'add_edge',
-      payload: { target: 'a' },
-      evidence_observation_ids: ['obs-1'],
-    }]);
+    const second = proposeService.propose([
+      {
+        proposal_type: 'add_edge',
+        payload: { target: 'a' },
+        evidence_observation_ids: ['obs-1'],
+      },
+    ]);
     expect(second.created_proposal_ids).toHaveLength(1);
   });
 
   it('serializes payload to JSON correctly', () => {
-    repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
+    repo.insertObservation({
+      observation_id: 'obs-1',
+      event_type: 'compile_miss',
+      payload: '{}',
+      related_compile_id: null,
+      related_snapshot_id: null,
+    });
 
     const payloadObj = { source_type: 'path', source_value: 'src/**', target_doc_id: 'doc-x', priority: 100 };
-    const result = proposeService.propose([{
-      proposal_type: 'add_edge',
-      payload: payloadObj,
-      evidence_observation_ids: ['obs-1'],
-    }]);
+    const result = proposeService.propose([
+      {
+        proposal_type: 'add_edge',
+        payload: payloadObj,
+        evidence_observation_ids: ['obs-1'],
+      },
+    ]);
 
     const proposal = repo.getProposal(result.created_proposal_ids[0]);
     expect(JSON.parse(proposal!.payload)).toEqual(payloadObj);
   });
 
   it('multiple drafts from same observation are all persisted', () => {
-    repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
+    repo.insertObservation({
+      observation_id: 'obs-1',
+      event_type: 'compile_miss',
+      payload: '{}',
+      related_compile_id: null,
+      related_snapshot_id: null,
+    });
 
     const result = proposeService.propose([
-      { proposal_type: 'add_edge', payload: { source_value: 'app/Domain/User/**', target_doc_id: 'ddd-guide' }, evidence_observation_ids: ['obs-1'] },
-      { proposal_type: 'add_edge', payload: { source_value: 'app/Domain/Order/**', target_doc_id: 'ddd-guide' }, evidence_observation_ids: ['obs-1'] },
+      {
+        proposal_type: 'add_edge',
+        payload: { source_value: 'app/Domain/User/**', target_doc_id: 'ddd-guide' },
+        evidence_observation_ids: ['obs-1'],
+      },
+      {
+        proposal_type: 'add_edge',
+        payload: { source_value: 'app/Domain/Order/**', target_doc_id: 'ddd-guide' },
+        evidence_observation_ids: ['obs-1'],
+      },
     ]);
 
     expect(result.created_proposal_ids).toHaveLength(2);
@@ -515,53 +555,97 @@ describe('ProposeService', () => {
   });
 
   it('semantic duplicate: same source_value+target_doc_id is skipped', () => {
-    repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
+    repo.insertObservation({
+      observation_id: 'obs-1',
+      event_type: 'compile_miss',
+      payload: '{}',
+      related_compile_id: null,
+      related_snapshot_id: null,
+    });
 
-    const first = proposeService.propose([{
-      proposal_type: 'add_edge',
-      payload: { source_type: 'path', source_value: 'app/**', target_doc_id: 'doc-1', edge_type: 'path_requires' },
-      evidence_observation_ids: ['obs-1'],
-    }]);
+    const first = proposeService.propose([
+      {
+        proposal_type: 'add_edge',
+        payload: { source_type: 'path', source_value: 'app/**', target_doc_id: 'doc-1', edge_type: 'path_requires' },
+        evidence_observation_ids: ['obs-1'],
+      },
+    ]);
     expect(first.created_proposal_ids).toHaveLength(1);
 
     // Same semantic key (source_type:source_value:target_doc_id:edge_type), different edge_id
-    const second = proposeService.propose([{
-      proposal_type: 'add_edge',
-      payload: { source_type: 'path', source_value: 'app/**', target_doc_id: 'doc-1', edge_type: 'path_requires', edge_id: 'new-uuid' },
-      evidence_observation_ids: ['obs-1'],
-    }]);
+    const second = proposeService.propose([
+      {
+        proposal_type: 'add_edge',
+        payload: {
+          source_type: 'path',
+          source_value: 'app/**',
+          target_doc_id: 'doc-1',
+          edge_type: 'path_requires',
+          edge_id: 'new-uuid',
+        },
+        evidence_observation_ids: ['obs-1'],
+      },
+    ]);
     expect(second.created_proposal_ids).toHaveLength(0);
     expect(second.skipped_duplicate_count).toBe(1);
   });
 
   it('different semantic key is not treated as duplicate', () => {
-    repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
+    repo.insertObservation({
+      observation_id: 'obs-1',
+      event_type: 'compile_miss',
+      payload: '{}',
+      related_compile_id: null,
+      related_snapshot_id: null,
+    });
 
-    proposeService.propose([{
-      proposal_type: 'add_edge',
-      payload: { source_type: 'path', source_value: 'app/User/**', target_doc_id: 'doc-1', edge_type: 'path_requires' },
-      evidence_observation_ids: ['obs-1'],
-    }]);
+    proposeService.propose([
+      {
+        proposal_type: 'add_edge',
+        payload: {
+          source_type: 'path',
+          source_value: 'app/User/**',
+          target_doc_id: 'doc-1',
+          edge_type: 'path_requires',
+        },
+        evidence_observation_ids: ['obs-1'],
+      },
+    ]);
 
     // Different source_value → different semantic key
-    const second = proposeService.propose([{
-      proposal_type: 'add_edge',
-      payload: { source_type: 'path', source_value: 'app/Order/**', target_doc_id: 'doc-1', edge_type: 'path_requires' },
-      evidence_observation_ids: ['obs-1'],
-    }]);
+    const second = proposeService.propose([
+      {
+        proposal_type: 'add_edge',
+        payload: {
+          source_type: 'path',
+          source_value: 'app/Order/**',
+          target_doc_id: 'doc-1',
+          edge_type: 'path_requires',
+        },
+        evidence_observation_ids: ['obs-1'],
+      },
+    ]);
     expect(second.created_proposal_ids).toHaveLength(1);
   });
 
   it('transaction rollback on evidence insert failure leaves no orphan proposal', () => {
-    repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
+    repo.insertObservation({
+      observation_id: 'obs-1',
+      event_type: 'compile_miss',
+      payload: '{}',
+      related_compile_id: null,
+      related_snapshot_id: null,
+    });
 
     // Draft with a non-existent observation ID as evidence → FK violation
     expect(() => {
-      proposeService.propose([{
-        proposal_type: 'add_edge',
-        payload: { source_value: 'app/**' },
-        evidence_observation_ids: ['obs-nonexistent'],
-      }]);
+      proposeService.propose([
+        {
+          proposal_type: 'add_edge',
+          payload: { source_value: 'app/**' },
+          evidence_observation_ids: ['obs-nonexistent'],
+        },
+      ]);
     }).toThrow();
 
     // No orphan proposals in DB
@@ -585,7 +669,13 @@ describe('Repository — automation queries', () => {
 
   describe('getObservation', () => {
     it('returns stored observation', () => {
-      repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{"a":1}', related_compile_id: 'cmp-1', related_snapshot_id: 'snap-1' });
+      repo.insertObservation({
+        observation_id: 'obs-1',
+        event_type: 'compile_miss',
+        payload: '{"a":1}',
+        related_compile_id: 'cmp-1',
+        related_snapshot_id: 'snap-1',
+      });
 
       const obs = repo.getObservation('obs-1');
       expect(obs).toBeDefined();
@@ -600,8 +690,20 @@ describe('Repository — automation queries', () => {
 
   describe('getPendingProposalsByType', () => {
     it('returns all pending proposals of given type', () => {
-      repo.insertProposal({ proposal_id: 'p-1', proposal_type: 'add_edge', payload: '{"source_value":"a"}', status: 'pending', review_comment: null });
-      repo.insertProposal({ proposal_id: 'p-2', proposal_type: 'add_edge', payload: '{"source_value":"b"}', status: 'pending', review_comment: null });
+      repo.insertProposal({
+        proposal_id: 'p-1',
+        proposal_type: 'add_edge',
+        payload: '{"source_value":"a"}',
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.insertProposal({
+        proposal_id: 'p-2',
+        proposal_type: 'add_edge',
+        payload: '{"source_value":"b"}',
+        status: 'pending',
+        review_comment: null,
+      });
 
       const result = repo.getPendingProposalsByType('add_edge');
       expect(result).toHaveLength(2);
@@ -612,8 +714,20 @@ describe('Repository — automation queries', () => {
     });
 
     it('excludes rejected proposals', () => {
-      repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
-      repo.insertProposal({ proposal_id: 'p-1', proposal_type: 'add_edge', payload: '{}', status: 'pending', review_comment: null });
+      repo.insertObservation({
+        observation_id: 'obs-1',
+        event_type: 'compile_miss',
+        payload: '{}',
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
+      repo.insertProposal({
+        proposal_id: 'p-1',
+        proposal_type: 'add_edge',
+        payload: '{}',
+        status: 'pending',
+        review_comment: null,
+      });
       repo.insertProposalEvidence('p-1', 'obs-1');
       repo.rejectProposal('p-1', 'nope');
 
@@ -621,7 +735,13 @@ describe('Repository — automation queries', () => {
     });
 
     it('excludes proposals of different type', () => {
-      repo.insertProposal({ proposal_id: 'p-1', proposal_type: 'new_doc', payload: '{}', status: 'pending', review_comment: null });
+      repo.insertProposal({
+        proposal_id: 'p-1',
+        proposal_type: 'new_doc',
+        payload: '{}',
+        status: 'pending',
+        review_comment: null,
+      });
 
       expect(repo.getPendingProposalsByType('add_edge')).toHaveLength(0);
     });
@@ -629,8 +749,20 @@ describe('Repository — automation queries', () => {
 
   describe('getUnanalyzedObservations', () => {
     it('returns observations with analyzed_at IS NULL', () => {
-      repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
-      repo.insertObservation({ observation_id: 'obs-2', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
+      repo.insertObservation({
+        observation_id: 'obs-1',
+        event_type: 'compile_miss',
+        payload: '{}',
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
+      repo.insertObservation({
+        observation_id: 'obs-2',
+        event_type: 'compile_miss',
+        payload: '{}',
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
 
       // Mark obs-1 as analyzed
       repo.markObservationsAnalyzed(['obs-1']);
@@ -641,8 +773,20 @@ describe('Repository — automation queries', () => {
     });
 
     it('respects eventType filter', () => {
-      repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
-      repo.insertObservation({ observation_id: 'obs-2', event_type: 'manual_note', payload: '{}', related_compile_id: null, related_snapshot_id: null });
+      repo.insertObservation({
+        observation_id: 'obs-1',
+        event_type: 'compile_miss',
+        payload: '{}',
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
+      repo.insertObservation({
+        observation_id: 'obs-2',
+        event_type: 'manual_note',
+        payload: '{}',
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
 
       const result = repo.getUnanalyzedObservations('compile_miss');
       expect(result).toHaveLength(1);
@@ -650,14 +794,26 @@ describe('Repository — automation queries', () => {
     });
 
     it('returns empty array when all are analyzed', () => {
-      repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
+      repo.insertObservation({
+        observation_id: 'obs-1',
+        event_type: 'compile_miss',
+        payload: '{}',
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
       repo.markObservationsAnalyzed(['obs-1']);
 
       expect(repo.getUnanalyzedObservations('compile_miss')).toHaveLength(0);
     });
 
     it('resetObservationsAnalyzed makes observations available again', () => {
-      repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
+      repo.insertObservation({
+        observation_id: 'obs-1',
+        event_type: 'compile_miss',
+        payload: '{}',
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
       repo.markObservationsAnalyzed(['obs-1']);
       expect(repo.getUnanalyzedObservations('compile_miss')).toHaveLength(0);
 
@@ -668,7 +824,13 @@ describe('Repository — automation queries', () => {
 
   describe('markObservationsAnalyzed', () => {
     it('sets analyzed_at on specified observations', () => {
-      repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
+      repo.insertObservation({
+        observation_id: 'obs-1',
+        event_type: 'compile_miss',
+        payload: '{}',
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
 
       repo.markObservationsAnalyzed(['obs-1']);
 
@@ -683,9 +845,21 @@ describe('Repository — automation queries', () => {
 
   describe('rejectProposal resets analyzed_at', () => {
     it('resets analyzed_at on evidence observations', () => {
-      repo.insertObservation({ observation_id: 'obs-1', event_type: 'compile_miss', payload: '{}', related_compile_id: null, related_snapshot_id: null });
+      repo.insertObservation({
+        observation_id: 'obs-1',
+        event_type: 'compile_miss',
+        payload: '{}',
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
       repo.markObservationsAnalyzed(['obs-1']);
-      repo.insertProposal({ proposal_id: 'p-1', proposal_type: 'add_edge', payload: '{}', status: 'pending', review_comment: null });
+      repo.insertProposal({
+        proposal_id: 'p-1',
+        proposal_type: 'add_edge',
+        payload: '{}',
+        status: 'pending',
+        review_comment: null,
+      });
       repo.insertProposalEvidence('p-1', 'obs-1');
 
       repo.rejectProposal('p-1', 'wrong edge');
@@ -719,10 +893,24 @@ describe('AegisService — analyzeAndPropose', () => {
       proposal_type: 'bootstrap',
       payload: JSON.stringify({
         documents: [
-          { doc_id: 'ddd-guide', title: 'DDD Guideline', kind: 'guideline', content: 'DDD content', content_hash: hash('DDD content') },
+          {
+            doc_id: 'ddd-guide',
+            title: 'DDD Guideline',
+            kind: 'guideline',
+            content: 'DDD content',
+            content_hash: hash('DDD content'),
+          },
         ],
         edges: [
-          { edge_id: 'e1', source_type: 'path', source_value: 'app/UseCases/**', target_doc_id: 'ddd-guide', edge_type: 'path_requires', priority: 100, specificity: 2 },
+          {
+            edge_id: 'e1',
+            source_type: 'path',
+            source_value: 'app/UseCases/**',
+            target_doc_id: 'ddd-guide',
+            edge_type: 'path_requires',
+            priority: 100,
+            specificity: 2,
+          },
         ],
         layer_rules: [],
       }),
@@ -735,16 +923,19 @@ describe('AegisService — analyzeAndPropose', () => {
   it('full flow: observe compile_miss → analyzeAndPropose → proposal in DB', async () => {
     bootstrapKnowledge();
 
-    const { observation_id } = adminService.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-001',
-      related_snapshot_id: 'snap-001',
-      payload: {
-        target_files: ['app/Domain/User/UserEntity.php'],
-        missing_doc: 'ddd-guide',
-        review_comment: 'DDD guideline was missing for Domain files',
+    const { observation_id } = adminService.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-001',
+        related_snapshot_id: 'snap-001',
+        payload: {
+          target_files: ['app/Domain/User/UserEntity.php'],
+          missing_doc: 'ddd-guide',
+          review_comment: 'DDD guideline was missing for Domain files',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const analyzer = new RuleBasedAnalyzer();
     const result = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
@@ -769,16 +960,19 @@ describe('AegisService — analyzeAndPropose', () => {
   it('analyzeAndPropose marks observations as analyzed (idempotent)', async () => {
     bootstrapKnowledge();
 
-    adminService.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-001',
-      related_snapshot_id: 'snap-001',
-      payload: {
-        target_files: ['app/Domain/User/UserEntity.php'],
-        missing_doc: 'ddd-guide',
-        review_comment: 'missing doc',
+    adminService.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-001',
+        related_snapshot_id: 'snap-001',
+        payload: {
+          target_files: ['app/Domain/User/UserEntity.php'],
+          missing_doc: 'ddd-guide',
+          review_comment: 'missing doc',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const analyzer = new RuleBasedAnalyzer();
 
@@ -795,27 +989,33 @@ describe('AegisService — analyzeAndPropose', () => {
     bootstrapKnowledge();
 
     // Observation without missing_doc → will be skipped by RuleBasedAnalyzer
-    adminService.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-001',
-      related_snapshot_id: 'snap-001',
-      payload: {
-        target_files: ['src/a.ts'],
-        review_comment: 'something was missing but idk what',
+    adminService.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-001',
+        related_snapshot_id: 'snap-001',
+        payload: {
+          target_files: ['src/a.ts'],
+          review_comment: 'something was missing but idk what',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     // New observation with missing_doc
-    adminService.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-002',
-      related_snapshot_id: 'snap-001',
-      payload: {
-        target_files: ['src/b.ts'],
-        missing_doc: 'ddd-guide',
-        review_comment: 'missing doc',
+    adminService.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-002',
+        related_snapshot_id: 'snap-001',
+        payload: {
+          target_files: ['src/b.ts'],
+          missing_doc: 'ddd-guide',
+          review_comment: 'missing doc',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const analyzer = new RuleBasedAnalyzer();
 
@@ -833,16 +1033,19 @@ describe('AegisService — analyzeAndPropose', () => {
   it('rejected proposal allows re-analysis end-to-end', async () => {
     bootstrapKnowledge();
 
-    adminService.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-001',
-      related_snapshot_id: 'snap-001',
-      payload: {
-        target_files: ['app/Domain/User/UserEntity.php'],
-        missing_doc: 'ddd-guide',
-        review_comment: 'missing doc',
+    adminService.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-001',
+        related_snapshot_id: 'snap-001',
+        payload: {
+          target_files: ['app/Domain/User/UserEntity.php'],
+          missing_doc: 'ddd-guide',
+          review_comment: 'missing doc',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const analyzer = new RuleBasedAnalyzer();
 
@@ -861,9 +1064,9 @@ describe('AegisService — analyzeAndPropose', () => {
 
   it('agent surface cannot call analyzeAndPropose', async () => {
     const analyzer = new RuleBasedAnalyzer();
-    await expect(
-      adminService.analyzeAndPropose(analyzer, 'compile_miss', 'agent'),
-    ).rejects.toThrow(SurfaceViolationError);
+    await expect(adminService.analyzeAndPropose(analyzer, 'compile_miss', 'agent')).rejects.toThrow(
+      SurfaceViolationError,
+    );
   });
 
   it('fake analyzer works for deterministic testing', async () => {
@@ -879,11 +1082,19 @@ describe('AegisService — analyzeAndPropose', () => {
 
     const fakeAnalyzer: ObservationAnalyzer = {
       analyze: async () => ({
-        drafts: [{
-          proposal_type: 'new_doc',
-          payload: { doc_id: 'fake-doc', title: 'Fake', kind: 'guideline', content: 'fake', content_hash: hash('fake') },
-          evidence_observation_ids: ['obs-fake'],
-        }],
+        drafts: [
+          {
+            proposal_type: 'new_doc',
+            payload: {
+              doc_id: 'fake-doc',
+              title: 'Fake',
+              kind: 'guideline',
+              content: 'fake',
+              content_hash: hash('fake'),
+            },
+            evidence_observation_ids: ['obs-fake'],
+          },
+        ],
         skipped_observation_ids: [],
         errors: [],
       }),
@@ -899,19 +1110,19 @@ describe('AegisService — analyzeAndPropose', () => {
   it('multiple target_files produce multiple proposals end-to-end', async () => {
     bootstrapKnowledge();
 
-    adminService.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-001',
-      related_snapshot_id: 'snap-001',
-      payload: {
-        target_files: [
-          'app/Domain/User/UserEntity.php',
-          'app/Domain/Order/OrderEntity.php',
-        ],
-        missing_doc: 'ddd-guide',
-        review_comment: 'missing DDD doc for both dirs',
+    adminService.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-001',
+        related_snapshot_id: 'snap-001',
+        payload: {
+          target_files: ['app/Domain/User/UserEntity.php', 'app/Domain/Order/OrderEntity.php'],
+          missing_doc: 'ddd-guide',
+          review_comment: 'missing DDD doc for both dirs',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const analyzer = new RuleBasedAnalyzer();
     const result = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
@@ -919,29 +1130,31 @@ describe('AegisService — analyzeAndPropose', () => {
     expect(result.analysis.drafts).toHaveLength(2);
     expect(result.proposals.created_proposal_ids).toHaveLength(2);
 
-    const patterns = result.proposals.created_proposal_ids.map(id => {
-      const p = repo.getProposal(id)!;
-      return JSON.parse(p.payload).source_value;
-    }).sort();
+    const patterns = result.proposals.created_proposal_ids
+      .map((id) => {
+        const p = repo.getProposal(id)!;
+        return JSON.parse(p.payload).source_value;
+      })
+      .sort();
     expect(patterns).toEqual(['app/Domain/Order/**', 'app/Domain/User/**']);
   });
 
   it('partial reject: only rejected edge is re-proposed, surviving one is skipped', async () => {
     bootstrapKnowledge();
 
-    adminService.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-001',
-      related_snapshot_id: 'snap-001',
-      payload: {
-        target_files: [
-          'app/Domain/User/UserEntity.php',
-          'app/Domain/Order/OrderEntity.php',
-        ],
-        missing_doc: 'ddd-guide',
-        review_comment: 'missing DDD doc',
+    adminService.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-001',
+        related_snapshot_id: 'snap-001',
+        payload: {
+          target_files: ['app/Domain/User/UserEntity.php', 'app/Domain/Order/OrderEntity.php'],
+          missing_doc: 'ddd-guide',
+          review_comment: 'missing DDD doc',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const analyzer = new RuleBasedAnalyzer();
 
@@ -950,7 +1163,7 @@ describe('AegisService — analyzeAndPropose', () => {
     expect(first.proposals.created_proposal_ids).toHaveLength(2);
 
     // Find which proposal has User pattern and reject it
-    const userProposalId = first.proposals.created_proposal_ids.find(id => {
+    const userProposalId = first.proposals.created_proposal_ids.find((id) => {
       const p = repo.getProposal(id)!;
       return JSON.parse(p.payload).source_value === 'app/Domain/User/**';
     })!;
@@ -971,15 +1184,18 @@ describe('AegisService — analyzeAndPropose', () => {
   it('review_correction → analyzeAndPropose → pending update_doc proposal', async () => {
     bootstrapKnowledge();
 
-    const { observation_id } = adminService.observe({
-      event_type: 'review_correction',
-      payload: {
-        file_path: 'app/Domain/User/UserEntity.php',
-        correction: 'DDD guide needs aggregate root section',
-        target_doc_id: 'ddd-guide',
-        proposed_content: 'Updated DDD content with aggregate roots',
+    const { observation_id } = adminService.observe(
+      {
+        event_type: 'review_correction',
+        payload: {
+          file_path: 'app/Domain/User/UserEntity.php',
+          correction: 'DDD guide needs aggregate root section',
+          target_doc_id: 'ddd-guide',
+          proposed_content: 'Updated DDD content with aggregate roots',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const analyzer = new ReviewCorrectionAnalyzer(repo);
     const result = await adminService.analyzeAndPropose(analyzer, 'review_correction', 'admin');
@@ -1005,15 +1221,18 @@ describe('AegisService — analyzeAndPropose', () => {
   it('review_correction reject → re-analyze produces new update_doc', async () => {
     bootstrapKnowledge();
 
-    adminService.observe({
-      event_type: 'review_correction',
-      payload: {
-        file_path: 'app/Domain/User/UserEntity.php',
-        correction: 'Fix DDD guide',
-        target_doc_id: 'ddd-guide',
-        proposed_content: 'First attempt content',
+    adminService.observe(
+      {
+        event_type: 'review_correction',
+        payload: {
+          file_path: 'app/Domain/User/UserEntity.php',
+          correction: 'Fix DDD guide',
+          target_doc_id: 'ddd-guide',
+          proposed_content: 'First attempt content',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const analyzer = new ReviewCorrectionAnalyzer(repo);
 
@@ -1037,30 +1256,36 @@ describe('AegisService — analyzeAndPropose', () => {
     // a new proposal for the same doc_id is skipped regardless of observation.
     // This prevents concurrent conflicting updates to the same document.
 
-    adminService.observe({
-      event_type: 'review_correction',
-      payload: {
-        file_path: 'src/a.ts',
-        correction: 'First correction',
-        target_doc_id: 'ddd-guide',
-        proposed_content: 'First update',
+    adminService.observe(
+      {
+        event_type: 'review_correction',
+        payload: {
+          file_path: 'src/a.ts',
+          correction: 'First correction',
+          target_doc_id: 'ddd-guide',
+          proposed_content: 'First update',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const analyzer = new ReviewCorrectionAnalyzer(repo);
     const first = await adminService.analyzeAndPropose(analyzer, 'review_correction', 'admin');
     expect(first.proposals.created_proposal_ids).toHaveLength(1);
 
     // Second observation for same doc — skipped because pending proposal exists
-    adminService.observe({
-      event_type: 'review_correction',
-      payload: {
-        file_path: 'src/b.ts',
-        correction: 'Second correction',
-        target_doc_id: 'ddd-guide',
-        proposed_content: 'Second update',
+    adminService.observe(
+      {
+        event_type: 'review_correction',
+        payload: {
+          file_path: 'src/b.ts',
+          correction: 'Second correction',
+          target_doc_id: 'ddd-guide',
+          proposed_content: 'Second update',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const second = await adminService.analyzeAndPropose(analyzer, 'review_correction', 'admin');
     expect(second.proposals.created_proposal_ids).toHaveLength(0);
@@ -1070,13 +1295,16 @@ describe('AegisService — analyzeAndPropose', () => {
   it('review_correction without target_doc_id is skipped by analyzer', async () => {
     bootstrapKnowledge();
 
-    adminService.observe({
-      event_type: 'review_correction',
-      payload: {
-        file_path: 'src/a.ts',
-        correction: 'Something needs fixing but no target specified',
+    adminService.observe(
+      {
+        event_type: 'review_correction',
+        payload: {
+          file_path: 'src/a.ts',
+          correction: 'Something needs fixing but no target specified',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const analyzer = new ReviewCorrectionAnalyzer(repo);
     const result = await adminService.analyzeAndPropose(analyzer, 'review_correction', 'admin');
@@ -1089,15 +1317,18 @@ describe('AegisService — analyzeAndPropose', () => {
   it('review_correction → approve → doc updated in Canonical', async () => {
     bootstrapKnowledge();
 
-    adminService.observe({
-      event_type: 'review_correction',
-      payload: {
-        file_path: 'app/Domain/User/UserEntity.php',
-        correction: 'Add aggregate root section',
-        target_doc_id: 'ddd-guide',
-        proposed_content: 'DDD content with aggregate roots',
+    adminService.observe(
+      {
+        event_type: 'review_correction',
+        payload: {
+          file_path: 'app/Domain/User/UserEntity.php',
+          correction: 'Add aggregate root section',
+          target_doc_id: 'ddd-guide',
+          proposed_content: 'DDD content with aggregate roots',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const analyzer = new ReviewCorrectionAnalyzer(repo);
     const result = await adminService.analyzeAndPropose(analyzer, 'review_correction', 'admin');
@@ -1109,7 +1340,7 @@ describe('AegisService — analyzeAndPropose', () => {
 
     // Verify the document was updated
     const docs = repo.getApprovedDocuments();
-    const updated = docs.find(d => d.doc_id === 'ddd-guide');
+    const updated = docs.find((d) => d.doc_id === 'ddd-guide');
     expect(updated).toBeDefined();
     expect(updated!.content).toBe('DDD content with aggregate roots');
     expect(updated!.content_hash).toBe(hash('DDD content with aggregate roots'));
@@ -1129,11 +1360,16 @@ describe('AegisService — analyzeAndPropose', () => {
     const asyncAnalyzer: ObservationAnalyzer = {
       analyze: async (contexts) => {
         // Simulate async work (e.g. SLM inference)
-        await new Promise(resolve => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 10));
         return {
-          drafts: contexts.map(ctx => ({
+          drafts: contexts.map((ctx) => ({
             proposal_type: 'add_edge' as const,
-            payload: { source_type: 'path', source_value: 'src/**', target_doc_id: 'ddd-guide', edge_type: 'path_requires' },
+            payload: {
+              source_type: 'path',
+              source_value: 'src/**',
+              target_doc_id: 'ddd-guide',
+              edge_type: 'path_requires',
+            },
             evidence_observation_ids: [ctx.observation.observation_id],
           })),
           skipped_observation_ids: [],
@@ -1155,24 +1391,32 @@ describe('AegisService — analyzeAndPropose', () => {
   it('concurrent analyzeAndPropose: pessimistic claim prevents duplicate processing', async () => {
     bootstrapKnowledge();
 
-    adminService.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-001',
-      related_snapshot_id: 'snap-001',
-      payload: {
-        target_files: ['app/Domain/User/UserEntity.php'],
-        missing_doc: 'ddd-guide',
-        review_comment: 'missing doc',
+    adminService.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-001',
+        related_snapshot_id: 'snap-001',
+        payload: {
+          target_files: ['app/Domain/User/UserEntity.php'],
+          missing_doc: 'ddd-guide',
+          review_comment: 'missing doc',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const slowAnalyzer: ObservationAnalyzer = {
       analyze: async (contexts) => {
-        await new Promise(resolve => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, 20));
         return {
-          drafts: contexts.map(ctx => ({
+          drafts: contexts.map((ctx) => ({
             proposal_type: 'add_edge' as const,
-            payload: { source_type: 'path', source_value: 'app/Domain/User/**', target_doc_id: 'ddd-guide', edge_type: 'path_requires' },
+            payload: {
+              source_type: 'path',
+              source_value: 'app/Domain/User/**',
+              target_doc_id: 'ddd-guide',
+              edge_type: 'path_requires',
+            },
             evidence_observation_ids: [ctx.observation.observation_id],
           })),
           skipped_observation_ids: [],
@@ -1188,9 +1432,7 @@ describe('AegisService — analyzeAndPropose', () => {
     ]);
 
     // Exactly one proposal total across both calls
-    const totalProposals =
-      first.proposals.created_proposal_ids.length +
-      second.proposals.created_proposal_ids.length;
+    const totalProposals = first.proposals.created_proposal_ids.length + second.proposals.created_proposal_ids.length;
     expect(totalProposals).toBe(1);
 
     // One call got the observation, the other got empty
@@ -1201,24 +1443,29 @@ describe('AegisService — analyzeAndPropose', () => {
   it('analyzer failure rolls back pessimistic claim', async () => {
     bootstrapKnowledge();
 
-    adminService.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-001',
-      related_snapshot_id: 'snap-001',
-      payload: {
-        target_files: ['app/Domain/User/UserEntity.php'],
-        missing_doc: 'ddd-guide',
-        review_comment: 'missing doc',
+    adminService.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-001',
+        related_snapshot_id: 'snap-001',
+        payload: {
+          target_files: ['app/Domain/User/UserEntity.php'],
+          missing_doc: 'ddd-guide',
+          review_comment: 'missing doc',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     const failingAnalyzer: ObservationAnalyzer = {
-      analyze: async () => { throw new Error('SLM crashed'); },
+      analyze: async () => {
+        throw new Error('SLM crashed');
+      },
     };
 
-    await expect(
-      adminService.analyzeAndPropose(failingAnalyzer, 'compile_miss', 'admin'),
-    ).rejects.toThrow('SLM crashed');
+    await expect(adminService.analyzeAndPropose(failingAnalyzer, 'compile_miss', 'admin')).rejects.toThrow(
+      'SLM crashed',
+    );
 
     // Claim was rolled back — observation is available again
     const unanalyzed = repo.getUnanalyzedObservations('compile_miss');
@@ -1233,33 +1480,41 @@ describe('AegisService — analyzeAndPropose', () => {
   it('propose failure rolls back pessimistic claim', async () => {
     bootstrapKnowledge();
 
-    adminService.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-001',
-      related_snapshot_id: 'snap-001',
-      payload: {
-        target_files: ['app/Domain/User/UserEntity.php'],
-        missing_doc: 'ddd-guide',
-        review_comment: 'missing doc',
+    adminService.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-001',
+        related_snapshot_id: 'snap-001',
+        payload: {
+          target_files: ['app/Domain/User/UserEntity.php'],
+          missing_doc: 'ddd-guide',
+          review_comment: 'missing doc',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     // Analyzer returns a draft with a non-existent evidence observation ID → FK violation in propose()
     const badDraftAnalyzer: ObservationAnalyzer = {
       analyze: async () => ({
-        drafts: [{
-          proposal_type: 'add_edge' as const,
-          payload: { source_type: 'path', source_value: 'app/**', target_doc_id: 'ddd-guide', edge_type: 'path_requires' },
-          evidence_observation_ids: ['obs-nonexistent'],
-        }],
+        drafts: [
+          {
+            proposal_type: 'add_edge' as const,
+            payload: {
+              source_type: 'path',
+              source_value: 'app/**',
+              target_doc_id: 'ddd-guide',
+              edge_type: 'path_requires',
+            },
+            evidence_observation_ids: ['obs-nonexistent'],
+          },
+        ],
         skipped_observation_ids: [],
         errors: [],
       }),
     };
 
-    await expect(
-      adminService.analyzeAndPropose(badDraftAnalyzer, 'compile_miss', 'admin'),
-    ).rejects.toThrow();
+    await expect(adminService.analyzeAndPropose(badDraftAnalyzer, 'compile_miss', 'admin')).rejects.toThrow();
 
     // Claim was rolled back — observation is available for retry
     const unanalyzed = repo.getUnanalyzedObservations('compile_miss');
@@ -1382,7 +1637,7 @@ describe('PrMergedAnalyzer', () => {
     };
     const result = await analyzer.analyze([ctx]);
     expect(result.drafts).toHaveLength(2);
-    const patterns = result.drafts.map(d => (d.payload as any).source_value).sort();
+    const patterns = result.drafts.map((d) => (d.payload as any).source_value).sort();
     expect(patterns).toEqual(['src/adapters/claude/**', 'src/adapters/cursor/**']);
   });
 
@@ -1395,10 +1650,7 @@ describe('PrMergedAnalyzer', () => {
         payload: JSON.stringify({
           pr_id: 'PR-101',
           summary: 'Mixed changes',
-          files_changed: [
-            'src/core/store/repository.ts',
-            'src/new-module/handler.ts',
-          ],
+          files_changed: ['src/core/store/repository.ts', 'src/new-module/handler.ts'],
         }),
       },
       compile_audit: null,

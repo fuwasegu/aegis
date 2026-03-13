@@ -10,10 +10,7 @@ import picomatch from 'picomatch';
 import { v4 as uuidv4 } from 'uuid';
 import type { Repository } from '../store/repository.js';
 import type { IntentTagger } from '../tagging/tagger.js';
-import type {
-  CompileRequest, CompiledContext, ResolvedDoc, ResolvedEdge,
-  Edge, Document, LayerRule,
-} from '../types.js';
+import type { CompiledContext, CompileRequest, Edge, ResolvedDoc, ResolvedEdge } from '../types.js';
 
 /**
  * Deterministic sort for edges: specificity DESC → priority ASC → edge_id ASC.
@@ -100,8 +97,8 @@ export class ContextCompiler {
     const deps = this.repo.getTransitiveDependencies(startDocIds);
 
     // Add dependency edges to resolution_path
-    const depDocIds = deps.map(d => d.doc_id);
-    const newDepDocIds = depDocIds.filter(id => !collectedDocIds.has(id));
+    const depDocIds = deps.map((d) => d.doc_id);
+    const newDepDocIds = depDocIds.filter((id) => !collectedDocIds.has(id));
     if (newDepDocIds.length > 0) {
       const depMatched: Edge[] = [];
       const allDocEdges = this.repo.getApprovedEdgesByType('doc_depends_on');
@@ -190,22 +187,19 @@ export class ContextCompiler {
       try {
         const knownTags = this.repo.getAllTags();
         const tags = await this.tagger.extractTags(request.plan, knownTags);
-        const tagNames = tags.map(t => t.tag);
+        const tagNames = tags.map((t) => t.tag);
 
         if (tagNames.length > 0) {
           const candidates = this.repo.getDocumentsByTags(tagNames);
 
           // Exclude docs already in base (both documents and templates)
-          const baseDocIdSet = new Set([
-            ...regularDocs.map(d => d.doc_id),
-            ...templateDocIds,
-          ]);
-          const filtered = candidates.filter(c => !baseDocIdSet.has(c.doc_id));
+          const baseDocIdSet = new Set([...regularDocs.map((d) => d.doc_id), ...templateDocIds]);
+          const filtered = candidates.filter((c) => !baseDocIdSet.has(c.doc_id));
 
           // Fetch full documents, preserving getDocumentsByTags order
-          const expandedIds = filtered.map(c => c.doc_id);
+          const expandedIds = filtered.map((c) => c.doc_id);
           const fetchedDocs = this.repo.getApprovedDocumentsByIds(expandedIds);
-          const fetchedMap = new Map(fetchedDocs.map(d => [d.doc_id, d]));
+          const fetchedMap = new Map(fetchedDocs.map((d) => [d.doc_id, d]));
 
           // Re-order to match getDocumentsByTags deterministic order
           const expandedDocs: ResolvedDoc[] = [];
@@ -222,12 +216,9 @@ export class ContextCompiler {
           }
 
           // Build confidence & reasoning from tag match data
-          const avgConfidence = filtered.length > 0
-            ? filtered.reduce((sum, c) => sum + c.max_confidence, 0) / filtered.length
-            : 0;
-          const reasoning = filtered.map(c =>
-            `${c.doc_id} matched [${c.matched_tags.join(', ')}]`
-          ).join('; ');
+          const avgConfidence =
+            filtered.length > 0 ? filtered.reduce((sum, c) => sum + c.max_confidence, 0) / filtered.length : 0;
+          const reasoning = filtered.map((c) => `${c.doc_id} matched [${c.matched_tags.join(', ')}]`).join('; ');
 
           result.expanded = {
             documents: expandedDocs,
@@ -236,7 +227,7 @@ export class ContextCompiler {
             resolution_path: [],
           };
 
-          expandedDocIds = expandedDocs.map(d => d.doc_id);
+          expandedDocIds = expandedDocs.map((d) => d.doc_id);
         } else {
           // Tagger returned no tags
           result.expanded = {
@@ -259,7 +250,7 @@ export class ContextCompiler {
       compile_id: compileId,
       snapshot_id: snapshot.snapshot_id,
       request: JSON.stringify(request),
-      base_doc_ids: JSON.stringify(regularDocs.map(d => d.doc_id)),
+      base_doc_ids: JSON.stringify(regularDocs.map((d) => d.doc_id)),
       expanded_doc_ids: expandedDocIds !== null ? JSON.stringify(expandedDocIds) : null,
     });
 
@@ -269,15 +260,17 @@ export class ContextCompiler {
   /**
    * get_compile_audit — retrieve a past compile_context invocation.
    */
-  getCompileAudit(compileId: string): {
-    compile_id: string;
-    snapshot_id: string;
-    knowledge_version: number;
-    request: object;
-    base_doc_ids: string[];
-    expanded_doc_ids: string[] | null;
-    created_at: string;
-  } | undefined {
+  getCompileAudit(compileId: string):
+    | {
+        compile_id: string;
+        snapshot_id: string;
+        knowledge_version: number;
+        request: object;
+        base_doc_ids: string[];
+        expanded_doc_ids: string[] | null;
+        created_at: string;
+      }
+    | undefined {
     const log = this.repo.getCompileLog(compileId);
     if (!log) return undefined;
 
@@ -338,16 +331,18 @@ export class ContextCompiler {
     const map = new Map<string, { specificity: number; priority: number }>();
     for (const edge of edges) {
       const existing = map.get(edge.target_doc_id);
-      if (!existing ||
-          edge.specificity > existing.specificity ||
-          (edge.specificity === existing.specificity && edge.priority < existing.priority)) {
+      if (
+        !existing ||
+        edge.specificity > existing.specificity ||
+        (edge.specificity === existing.specificity && edge.priority < existing.priority)
+      ) {
         map.set(edge.target_doc_id, { specificity: edge.specificity, priority: edge.priority });
       }
     }
     return map;
   }
 
-  private emptyResult(request: CompileRequest, warnings: string[]): CompiledContext {
+  private emptyResult(_request: CompileRequest, warnings: string[]): CompiledContext {
     return {
       compile_id: '',
       snapshot_id: '',

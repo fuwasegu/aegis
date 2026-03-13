@@ -7,15 +7,9 @@
  * Scope: only template-originated seed data. User-added documents/edges are untouched.
  */
 
-import { createHash } from 'node:crypto';
-import { v4 as uuidv4 } from 'uuid';
 import type { Repository } from '../store/repository.js';
 import type { ProposalDraft } from '../types.js';
-import {
-  loadAllManifests, resolveTemplate,
-  type ResolvedSeedDocument, type ResolvedSeedEdge, type ResolvedSeedLayerRule,
-} from './template-loader.js';
-import { resolvePlaceholders } from './detector.js';
+import { loadAllManifests, resolveTemplate } from './template-loader.js';
 
 /**
  * Simple semver comparison (major.minor.patch).
@@ -60,14 +54,20 @@ export function detectUpgrade(
   const storedPlaceholders = JSON.parse(manifest.placeholders) as Record<string, string | null>;
 
   const allManifests = loadAllManifests(templatesRoot, extraTemplateDirs);
-  const entry = allManifests.find(m => m.manifest.template_id === templateId);
+  const entry = allManifests.find((m) => m.manifest.template_id === templateId);
   if (!entry) return null;
 
   const currentManifest = entry.manifest;
   const toVersion = currentManifest.version;
 
   if (compareSemver(toVersion, fromVersion) <= 0) {
-    return { template_id: templateId, from_version: fromVersion, to_version: toVersion, changes: [], has_changes: false };
+    return {
+      template_id: templateId,
+      from_version: fromVersion,
+      to_version: toVersion,
+      changes: [],
+      has_changes: false,
+    };
   }
 
   const generated = resolveTemplate(entry.dir, currentManifest, storedPlaceholders);
@@ -75,15 +75,20 @@ export function detectUpgrade(
 
   // Check document changes
   const existingDocs = repo.getApprovedDocuments();
-  const existingDocMap = new Map(existingDocs.map(d => [d.doc_id, d]));
-  const newDocIdSet = new Set(generated.documents.map(d => d.doc_id));
+  const existingDocMap = new Map(existingDocs.map((d) => [d.doc_id, d]));
+  const newDocIdSet = new Set(generated.documents.map((d) => d.doc_id));
 
   for (const newDoc of generated.documents) {
     const existing = existingDocMap.get(newDoc.doc_id);
     if (!existing) {
       changes.push({ type: 'new_doc', doc_id: newDoc.doc_id, title: newDoc.title });
     } else if (existing.content_hash !== newDoc.content_hash) {
-      changes.push({ type: 'update_doc', doc_id: newDoc.doc_id, old_hash: existing.content_hash, new_hash: newDoc.content_hash });
+      changes.push({
+        type: 'update_doc',
+        doc_id: newDoc.doc_id,
+        old_hash: existing.content_hash,
+        new_hash: newDoc.content_hash,
+      });
     }
   }
 
@@ -98,23 +103,35 @@ export function detectUpgrade(
 
   // Check edge changes
   const existingEdges = repo.getApprovedEdges();
-  const existingEdgeSet = new Set(existingEdges.map(e => `${e.source_type}:${e.source_value}:${e.target_doc_id}:${e.edge_type}`));
+  const existingEdgeSet = new Set(
+    existingEdges.map((e) => `${e.source_type}:${e.source_value}:${e.target_doc_id}:${e.edge_type}`),
+  );
 
   for (const newEdge of generated.edges) {
     const key = `${newEdge.source_type}:${newEdge.source_value}:${newEdge.target_doc_id}:${newEdge.edge_type}`;
     if (!existingEdgeSet.has(key)) {
-      changes.push({ type: 'new_edge', edge_id: newEdge.edge_id, source_value: newEdge.source_value, target_doc_id: newEdge.target_doc_id });
+      changes.push({
+        type: 'new_edge',
+        edge_id: newEdge.edge_id,
+        source_value: newEdge.source_value,
+        target_doc_id: newEdge.target_doc_id,
+      });
     }
   }
 
   // Check layer_rule changes
   const existingRules = repo.getApprovedLayerRules();
-  const existingRuleSet = new Set(existingRules.map(r => `${r.path_pattern}:${r.layer_name}`));
+  const existingRuleSet = new Set(existingRules.map((r) => `${r.path_pattern}:${r.layer_name}`));
 
   for (const newRule of generated.layer_rules) {
     const key = `${newRule.path_pattern}:${newRule.layer_name}`;
     if (!existingRuleSet.has(key)) {
-      changes.push({ type: 'new_layer_rule', rule_id: newRule.rule_id, path_pattern: newRule.path_pattern, layer_name: newRule.layer_name });
+      changes.push({
+        type: 'new_layer_rule',
+        rule_id: newRule.rule_id,
+        path_pattern: newRule.path_pattern,
+        layer_name: newRule.layer_name,
+      });
     }
   }
 
@@ -136,7 +153,7 @@ export function generateUpgradeProposals(
   if (!preview.has_changes) return [];
 
   const allManifests = loadAllManifests(templatesRoot, extraTemplateDirs);
-  const entry = allManifests.find(m => m.manifest.template_id === preview.template_id);
+  const entry = allManifests.find((m) => m.manifest.template_id === preview.template_id);
   if (!entry) return [];
 
   const manifest = repo.getInitManifest();
@@ -145,7 +162,7 @@ export function generateUpgradeProposals(
   const storedPlaceholders = JSON.parse(manifest.placeholders) as Record<string, string | null>;
   const generated = resolveTemplate(entry.dir, entry.manifest, storedPlaceholders);
 
-  const docMap = new Map(generated.documents.map(d => [d.doc_id, d]));
+  const docMap = new Map(generated.documents.map((d) => [d.doc_id, d]));
   const drafts: ProposalDraft[] = [];
 
   for (const change of preview.changes) {
@@ -183,7 +200,7 @@ export function generateUpgradeProposals(
         break;
       }
       case 'new_edge': {
-        const edge = generated.edges.find(e => e.edge_id === change.edge_id);
+        const edge = generated.edges.find((e) => e.edge_id === change.edge_id);
         if (edge) {
           drafts.push({
             proposal_type: 'add_edge',

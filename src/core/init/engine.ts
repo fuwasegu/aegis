@@ -11,13 +11,21 @@ import type { Repository } from '../store/repository.js';
 import { AlreadyInitializedError } from '../store/repository.js';
 import type { CanonicalVersion } from '../types.js';
 import {
-  loadAllManifests, resolveTemplate,
-  type TemplateManifest, type ResolvedSeedDocument, type ResolvedSeedEdge, type ResolvedSeedLayerRule,
-} from './template-loader.js';
-import {
-  detectStack, scoreProfile, resolvePlaceholders,
-  type StackDetection, type ProfileCandidate, type DetectionEvidence, type InitWarning,
+  type DetectionEvidence,
+  detectStack,
+  type InitWarning,
+  type ProfileCandidate,
+  resolvePlaceholders,
+  type StackDetection,
+  scoreProfile,
 } from './detector.js';
+import {
+  loadAllManifests,
+  type ResolvedSeedDocument,
+  type ResolvedSeedEdge,
+  type ResolvedSeedLayerRule,
+  resolveTemplate,
+} from './template-loader.js';
 
 // ── InitPreview (mirrors v2 §8.3) ──
 
@@ -49,11 +57,7 @@ export interface InitPreview {
 /**
  * init_detect — Stage 1+2: detect stack, score profiles, generate preview.
  */
-export function initDetect(
-  projectRoot: string,
-  templatesRoot: string,
-  extraTemplateDirs?: string[],
-): InitPreview {
+export function initDetect(projectRoot: string, templatesRoot: string, extraTemplateDirs?: string[]): InitPreview {
   // ── Stage 1: detect ──
   const stack = detectStack(projectRoot);
   const manifests = loadAllManifests(templatesRoot, extraTemplateDirs);
@@ -61,7 +65,7 @@ export function initDetect(
   const allEvidence: DetectionEvidence[] = [];
   const profiles: ProfileCandidate[] = [];
 
-  for (const { dir, manifest } of manifests) {
+  for (const { manifest } of manifests) {
     const result = scoreProfile(manifest, projectRoot);
     if (result) {
       profiles.push(result.candidate);
@@ -89,7 +93,7 @@ export function initDetect(
     return emptyPreview(stack, profiles, allEvidence, warnings);
   }
 
-  const selectedEntry = manifests.find(m => m.manifest.template_id === selectedProfile.profile_id);
+  const selectedEntry = manifests.find((m) => m.manifest.template_id === selectedProfile.profile_id);
   if (!selectedEntry) {
     warnings.push({ severity: 'block', message: `Template for profile '${selectedProfile.profile_id}' not found.` });
     return emptyPreview(stack, profiles, allEvidence, warnings);
@@ -109,22 +113,32 @@ export function initDetect(
     template_id: selectedManifest.template_id,
     template_version: selectedManifest.version,
     placeholders,
-    documents: generated.documents.map(d => ({
-      doc_id: d.doc_id, title: d.title, kind: d.kind, content_hash: d.content_hash,
+    documents: generated.documents.map((d) => ({
+      doc_id: d.doc_id,
+      title: d.title,
+      kind: d.kind,
+      content_hash: d.content_hash,
     })),
-    edges: generated.edges.map(e => ({
-      edge_id: e.edge_id, source_type: e.source_type, source_value: e.source_value,
-      target_doc_id: e.target_doc_id, edge_type: e.edge_type,
-      priority: e.priority, specificity: e.specificity,
+    edges: generated.edges.map((e) => ({
+      edge_id: e.edge_id,
+      source_type: e.source_type,
+      source_value: e.source_value,
+      target_doc_id: e.target_doc_id,
+      edge_type: e.edge_type,
+      priority: e.priority,
+      specificity: e.specificity,
     })),
-    layer_rules: generated.layer_rules.map(r => ({
-      rule_id: r.rule_id, path_pattern: r.path_pattern, layer_name: r.layer_name,
-      priority: r.priority, specificity: r.specificity,
+    layer_rules: generated.layer_rules.map((r) => ({
+      rule_id: r.rule_id,
+      path_pattern: r.path_pattern,
+      layer_name: r.layer_name,
+      priority: r.priority,
+      specificity: r.specificity,
     })),
   });
   const previewHash = createHash('sha256').update(previewContent).digest('hex');
 
-  const hasBlocking = warnings.some(w => w.severity === 'block');
+  const hasBlocking = warnings.some((w) => w.severity === 'block');
 
   return {
     preview_hash: previewHash,
@@ -147,18 +161,15 @@ export function initDetect(
  * - If top candidate is 'low' confidence → warn (proceed but inform human)
  * - If no candidates at all → return null
  */
-function selectProfile(
-  profiles: ProfileCandidate[],
-  warnings: InitWarning[],
-): ProfileCandidate | null {
+function selectProfile(profiles: ProfileCandidate[], warnings: InitWarning[]): ProfileCandidate | null {
   if (profiles.length === 0) return null;
 
   const top = profiles[0];
 
   // Check for same-score tie among top candidates
-  const tied = profiles.filter(p => p.score === top.score);
+  const tied = profiles.filter((p) => p.score === top.score);
   if (tied.length > 1) {
-    const tiedIds = tied.map(p => p.profile_id).join(', ');
+    const tiedIds = tied.map((p) => p.profile_id).join(', ');
     if (top.confidence === 'high') {
       // Multiple high-confidence profiles at same score — ambiguous, block
       warnings.push({
@@ -211,11 +222,7 @@ function emptyPreview(
  *
  * Reuses repo.approveProposal() — no Canonical bypass.
  */
-export function initConfirm(
-  repo: Repository,
-  preview: InitPreview,
-  confirmPreviewHash: string,
-): CanonicalVersion {
+export function initConfirm(repo: Repository, preview: InitPreview, confirmPreviewHash: string): CanonicalVersion {
   // Guard: already initialized
   if (repo.isInitialized()) {
     throw new AlreadyInitializedError();
@@ -277,7 +284,9 @@ export function initConfirm(
 
 export class PreviewHashMismatchError extends Error {
   constructor(provided: string, expected: string) {
-    super(`Preview hash mismatch: provided '${provided.slice(0, 12)}...' does not match expected '${expected.slice(0, 12)}...'`);
+    super(
+      `Preview hash mismatch: provided '${provided.slice(0, 12)}...' does not match expected '${expected.slice(0, 12)}...'`,
+    );
     this.name = 'PreviewHashMismatchError';
   }
 }

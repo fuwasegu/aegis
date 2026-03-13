@@ -56,19 +56,22 @@ export class OllamaClient {
         signal: AbortSignal.timeout(5_000),
       });
       if (!response.ok) return false;
-      const data = await response.json() as { models?: Array<{ name: string }> };
-      return data.models?.some(m => m.name.startsWith(this.config.model)) ?? false;
+      const data = (await response.json()) as { models?: Array<{ name: string }> };
+      return data.models?.some((m) => m.name.startsWith(this.config.model)) ?? false;
     } catch {
       return false;
     }
   }
 
-  async generate(prompt: string, options?: {
-    system?: string;
-    jsonMode?: boolean;
-    temperature?: number;
-    maxTokens?: number;
-  }): Promise<string> {
+  async generate(
+    prompt: string,
+    options?: {
+      system?: string;
+      jsonMode?: boolean;
+      temperature?: number;
+      maxTokens?: number;
+    },
+  ): Promise<string> {
     const body: OllamaGenerateRequest = {
       model: this.config.model,
       prompt,
@@ -96,19 +99,17 @@ export class OllamaClient {
           throw new OllamaError(`Ollama API error ${response.status}: ${text}`);
         }
 
-        const data = await response.json() as OllamaGenerateResponse;
+        const data = (await response.json()) as OllamaGenerateResponse;
         return data.response;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         if (attempt < this.config.maxRetries) {
-          await sleep(Math.pow(2, attempt) * 500);
+          await sleep(2 ** attempt * 500);
         }
       }
     }
 
-    throw new OllamaError(
-      `Ollama request failed after ${this.config.maxRetries + 1} attempts: ${lastError?.message}`,
-    );
+    throw new OllamaError(`Ollama request failed after ${this.config.maxRetries + 1} attempts: ${lastError?.message}`);
   }
 
   get modelName(): string {
@@ -124,5 +125,5 @@ export class OllamaError extends Error {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

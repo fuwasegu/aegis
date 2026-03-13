@@ -20,7 +20,10 @@
     "start:agent": "node dist/main.js --surface agent",
     "start:admin": "node dist/main.js --surface admin",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write src/",
+    "check": "tsc --noEmit && biome check src/"
   },
   "keywords": [
     "mcp",
@@ -54,13 +57,14 @@
     "node-llama-cpp": "^3.17.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.6",
     "@types/better-sqlite3": "^7.6.13",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.4.0",
     "@types/picomatch": "^4.0.2",
     "@types/uuid": "^10.0.0",
-    "typescript": "^5.9.3",
     "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   }
 }

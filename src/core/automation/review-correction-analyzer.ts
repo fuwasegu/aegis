@@ -12,9 +12,9 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { ObservationAnalyzer } from './analyzer.js';
 import type { Repository } from '../store/repository.js';
 import type { AnalysisContext, AnalysisResult, ProposalDraft } from '../types.js';
+import type { ObservationAnalyzer } from './analyzer.js';
 
 export class ReviewCorrectionAnalyzer implements ObservationAnalyzer {
   constructor(private repo: Repository) {}
@@ -65,9 +65,7 @@ export class ReviewCorrectionAnalyzer implements ObservationAnalyzer {
       return null;
     }
 
-    const contentHash = createHash('sha256')
-      .update(payload.proposed_content)
-      .digest('hex');
+    const contentHash = createHash('sha256').update(payload.proposed_content).digest('hex');
 
     return {
       proposal_type: 'update_doc',

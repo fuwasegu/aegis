@@ -14,7 +14,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { AegisService, SurfaceViolationError, ObserveValidationError, type Surface } from './services.js';
+import { type AegisService, ObserveValidationError, type Surface } from './services.js';
 
 const WORKFLOW_GUIDE = `# Aegis Workflow Guide
 
@@ -61,17 +61,23 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
     'Compile deterministic context for target files. Returns base documents, resolution path, and templates.',
     {
       target_files: z.array(z.string()).describe('File paths being edited (required)'),
-      target_layers: z.array(z.string()).optional().describe('Explicit layer names (optional, inferred from path if omitted)'),
+      target_layers: z
+        .array(z.string())
+        .optional()
+        .describe('Explicit layer names (optional, inferred from path if omitted)'),
       command: z.string().optional().describe('Command name: scaffold, refactor, review, etc.'),
       plan: z.string().optional().describe('Natural-language plan text for expanded context (requires IntentTagger)'),
     },
     async (params) => {
-      const result = await service.compileContext({
-        target_files: params.target_files,
-        target_layers: params.target_layers,
-        command: params.command,
-        plan: params.plan,
-      }, surface);
+      const result = await service.compileContext(
+        {
+          target_files: params.target_files,
+          target_layers: params.target_layers,
+          command: params.command,
+          plan: params.plan,
+        },
+        surface,
+      );
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
   );
@@ -80,7 +86,9 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
     'aegis_observe',
     'Record an observation event. Writes to Observation Layer only (never Canonical).',
     {
-      event_type: z.enum(['compile_miss', 'review_correction', 'pr_merged', 'manual_note', 'document_import']).describe('Event type'),
+      event_type: z
+        .enum(['compile_miss', 'review_correction', 'pr_merged', 'manual_note', 'document_import'])
+        .describe('Event type'),
       related_compile_id: z.string().optional().describe('Required for compile_miss'),
       related_snapshot_id: z.string().optional().describe('Required for compile_miss, optional for review_correction'),
       payload: z.record(z.string(), z.unknown()).describe('Event-specific payload (JSON object)'),
@@ -113,7 +121,10 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
     async (params) => {
       const result = service.getCompileAudit(params.compile_id, surface);
       if (!result) {
-        return { content: [{ type: 'text', text: `Compile log not found for compile_id: ${params.compile_id}` }], isError: true };
+        return {
+          content: [{ type: 'text', text: `Compile log not found for compile_id: ${params.compile_id}` }],
+          isError: true,
+        };
       }
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
@@ -175,7 +186,10 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       'Approve a pending proposal, applying it to Canonical Knowledge.',
       {
         proposal_id: z.string().describe('The proposal ID to approve'),
-        modifications: z.record(z.string(), z.unknown()).optional().describe('Optional modifications to the proposal payload before approval'),
+        modifications: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe('Optional modifications to the proposal payload before approval'),
       },
       async (params) => {
         const result = service.approveProposal(params.proposal_id, params.modifications, surface);
@@ -204,7 +218,8 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       },
       async (params) => {
         const result = service.initConfirm(params.preview_hash, surface);
-        const hint = '\n\nNext: run `npx @fuwasegu/aegis deploy-adapters` in the terminal to generate IDE adapter rules (Cursor .mdc, CLAUDE.md, AGENTS.md).';
+        const hint =
+          '\n\nNext: run `npx @fuwasegu/aegis deploy-adapters` in the terminal to generate IDE adapter rules (Cursor .mdc, CLAUDE.md, AGENTS.md).';
         return { content: [{ type: 'text', text: JSON.stringify(result) + hint }] };
       },
     );
@@ -236,7 +251,12 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       'aegis_archive_observations',
       'Archive observations older than the specified number of days (default: 90).',
       {
-        days: z.number().int().min(1).optional().describe('Archive observations older than this many days (default: 90)'),
+        days: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe('Archive observations older than this many days (default: 90)'),
       },
       async (params) => {
         const result = service.archiveObservations(params.days ?? 90, surface);
@@ -252,12 +272,17 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
         doc_id: z.string().describe('Document ID (lowercase alphanumeric, hyphens, underscores)'),
         title: z.string().describe('Document title'),
         kind: z.enum(['guideline', 'pattern', 'constraint', 'template', 'reference']).describe('Document kind'),
-        edge_hints: z.array(z.object({
-          source_type: z.enum(['path', 'layer', 'command', 'doc']),
-          source_value: z.string(),
-          edge_type: z.enum(['path_requires', 'layer_requires', 'command_requires', 'doc_depends_on']),
-          priority: z.number().int().optional(),
-        })).optional().describe('DAG edge hints for connecting the document'),
+        edge_hints: z
+          .array(
+            z.object({
+              source_type: z.enum(['path', 'layer', 'command', 'doc']),
+              source_value: z.string(),
+              edge_type: z.enum(['path_requires', 'layer_requires', 'command_requires', 'doc_depends_on']),
+              priority: z.number().int().optional(),
+            }),
+          )
+          .optional()
+          .describe('DAG edge hints for connecting the document'),
         tags: z.array(z.string()).optional().describe('Tags for tag_mappings (applied on approve)'),
         source_path: z.string().optional().describe('Original file path (provenance metadata)'),
       },
@@ -275,7 +300,10 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       'aegis_process_observations',
       'Process pending observations through the analyzer pipeline, generating proposals. Per ADR-003: admin-only explicit operation.',
       {
-        event_type: z.enum(['compile_miss', 'review_correction', 'pr_merged', 'manual_note', 'document_import']).optional().describe('Process only this event type (default: all types)'),
+        event_type: z
+          .enum(['compile_miss', 'review_correction', 'pr_merged', 'manual_note', 'document_import'])
+          .optional()
+          .describe('Process only this event type (default: all types)'),
       },
       async (params) => {
         try {
@@ -286,25 +314,21 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
         }
       },
     );
-
   }
 
   // ============================================================
   // MCP Resources — Aegis usage guides (ADR-005 D-2)
   // ============================================================
 
-  server.resource(
-    'aegis-workflow',
-    'aegis://guide/workflow',
-    { mimeType: 'text/markdown' },
-    async () => ({
-      contents: [{
+  server.resource('aegis-workflow', 'aegis://guide/workflow', { mimeType: 'text/markdown' }, async () => ({
+    contents: [
+      {
         uri: 'aegis://guide/workflow',
         mimeType: 'text/markdown',
         text: WORKFLOW_GUIDE,
-      }],
-    }),
-  );
+      },
+    ],
+  }));
 
   return server;
 }

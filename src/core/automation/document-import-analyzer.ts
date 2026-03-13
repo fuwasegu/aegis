@@ -7,9 +7,9 @@
 
 import { createHash } from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
-import type { ObservationAnalyzer } from './analyzer.js';
 import type { Repository } from '../store/repository.js';
-import type { AnalysisContext, AnalysisResult, ProposalDraft, DocumentKind, EdgeSpec } from '../types.js';
+import type { AnalysisContext, AnalysisResult, DocumentKind, EdgeSpec, ProposalDraft } from '../types.js';
+import type { ObservationAnalyzer } from './analyzer.js';
 
 const VALID_KINDS: DocumentKind[] = ['guideline', 'pattern', 'constraint', 'template', 'reference'];
 const DOC_ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;

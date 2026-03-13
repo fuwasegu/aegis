@@ -10,8 +10,8 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import type { ObservationAnalyzer } from './analyzer.js';
 import type { AnalysisContext, AnalysisResult, ProposalDraft } from '../types.js';
+import type { ObservationAnalyzer } from './analyzer.js';
 
 export class RuleBasedAnalyzer implements ObservationAnalyzer {
   async analyze(contexts: AnalysisContext[]): Promise<AnalysisResult> {
@@ -59,7 +59,7 @@ export class RuleBasedAnalyzer implements ObservationAnalyzer {
       patterns.add(this.derivePathPattern(file));
     }
 
-    return [...patterns].map(sourceValue => ({
+    return [...patterns].map((sourceValue) => ({
       proposal_type: 'add_edge' as const,
       payload: {
         edge_id: uuidv4(),
@@ -84,10 +84,10 @@ export class RuleBasedAnalyzer implements ObservationAnalyzer {
     if (parts.length <= 1) {
       return '**';
     }
-    return parts.slice(0, -1).join('/') + '/**';
+    return `${parts.slice(0, -1).join('/')}/**`;
   }
 
   private calculateSpecificity(pattern: string): number {
-    return pattern.split('/').filter(s => s !== '**' && s !== '*').length;
+    return pattern.split('/').filter((s) => s !== '**' && s !== '*').length;
   }
 }

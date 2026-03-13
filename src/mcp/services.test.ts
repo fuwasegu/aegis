@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type Database from 'better-sqlite3';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createInMemoryDatabase, Repository } from '../core/store/index.js';
-import { AegisService, SurfaceViolationError, ObserveValidationError } from './services.js';
+import { AegisService, ObserveValidationError, SurfaceViolationError } from './services.js';
 
 const TEMPLATES_ROOT = join(import.meta.dirname, '../../templates');
 
@@ -14,9 +14,12 @@ function hash(content: string): string {
 }
 
 function createLaravelProject(root: string): void {
-  writeFileSync(join(root, 'composer.json'), JSON.stringify({
-    require: { 'laravel/framework': '^11.0' },
-  }));
+  writeFileSync(
+    join(root, 'composer.json'),
+    JSON.stringify({
+      require: { 'laravel/framework': '^11.0' },
+    }),
+  );
   mkdirSync(join(root, 'app/Domain/User/Entities'), { recursive: true });
   mkdirSync(join(root, 'app/UseCases'), { recursive: true });
 }
@@ -86,10 +89,13 @@ describe('AegisService — Surface Authorization', () => {
   });
 
   it('agent surface can call observe', () => {
-    const result = service.observe({
-      event_type: 'manual_note',
-      payload: { content: 'test note' },
-    }, 'agent');
+    const result = service.observe(
+      {
+        event_type: 'manual_note',
+        payload: { content: 'test note' },
+      },
+      'agent',
+    );
     expect(result.observation_id).toBeTruthy();
   });
 
@@ -127,9 +133,12 @@ describe('AegisService — compile_context v2 contract', () => {
     service.initConfirm(preview.preview_hash, 'admin');
 
     // Now compile
-    const result = await service.compileContext({
-      target_files: ['app/Domain/User/UserEntity.php'],
-    }, 'agent');
+    const result = await service.compileContext(
+      {
+        target_files: ['app/Domain/User/UserEntity.php'],
+      },
+      'agent',
+    );
 
     // v2 contract fields
     expect(result.compile_id).toBeTruthy();
@@ -178,19 +187,21 @@ describe('AegisService — observe discriminated union', () => {
   // ── 3. observe の discriminated union が崩れない ──
 
   it('compile_miss stores related_compile_id and related_snapshot_id', () => {
-    const result = service.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-001',
-      related_snapshot_id: 'snap-001',
-      payload: {
-        target_files: ['src/a.ts'],
-        review_comment: 'missing DDD guide',
+    const result = service.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-001',
+        related_snapshot_id: 'snap-001',
+        payload: {
+          target_files: ['src/a.ts'],
+          review_comment: 'missing DDD guide',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     // Verify stored observation
-    const obs = db.prepare('SELECT * FROM observations WHERE observation_id = ?')
-      .get(result.observation_id) as any;
+    const obs = db.prepare('SELECT * FROM observations WHERE observation_id = ?').get(result.observation_id) as any;
     expect(obs.event_type).toBe('compile_miss');
     expect(obs.related_compile_id).toBe('cmp-001');
     expect(obs.related_snapshot_id).toBe('snap-001');
@@ -198,27 +209,31 @@ describe('AegisService — observe discriminated union', () => {
   });
 
   it('manual_note stores without related_compile_id', () => {
-    const result = service.observe({
-      event_type: 'manual_note',
-      payload: { content: 'Remember to add validation docs' },
-    }, 'agent');
+    const result = service.observe(
+      {
+        event_type: 'manual_note',
+        payload: { content: 'Remember to add validation docs' },
+      },
+      'agent',
+    );
 
-    const obs = db.prepare('SELECT * FROM observations WHERE observation_id = ?')
-      .get(result.observation_id) as any;
+    const obs = db.prepare('SELECT * FROM observations WHERE observation_id = ?').get(result.observation_id) as any;
     expect(obs.event_type).toBe('manual_note');
     expect(obs.related_compile_id).toBeNull();
     expect(obs.related_snapshot_id).toBeNull();
   });
 
   it('review_correction stores with optional related_snapshot_id', () => {
-    const result = service.observe({
-      event_type: 'review_correction',
-      related_snapshot_id: 'snap-002',
-      payload: { file_path: 'src/User.ts', correction: 'Use value object for email' },
-    }, 'agent');
+    const result = service.observe(
+      {
+        event_type: 'review_correction',
+        related_snapshot_id: 'snap-002',
+        payload: { file_path: 'src/User.ts', correction: 'Use value object for email' },
+      },
+      'agent',
+    );
 
-    const obs = db.prepare('SELECT * FROM observations WHERE observation_id = ?')
-      .get(result.observation_id) as any;
+    const obs = db.prepare('SELECT * FROM observations WHERE observation_id = ?').get(result.observation_id) as any;
     expect(obs.event_type).toBe('review_correction');
     expect(obs.related_compile_id).toBeNull();
     expect(obs.related_snapshot_id).toBe('snap-002');
@@ -274,7 +289,7 @@ describe('AegisService — Admin delegation', () => {
 
     // Verify document is now in Canonical
     const docs = repo.getApprovedDocuments();
-    const extraDoc = docs.find(d => d.doc_id === 'extra-doc');
+    const extraDoc = docs.find((d) => d.doc_id === 'extra-doc');
     expect(extraDoc).toBeDefined();
     expect(extraDoc!.title).toBe('Extra Guidelines');
   });
@@ -284,7 +299,11 @@ describe('AegisService — Admin delegation', () => {
       proposal_id: 'p-rej',
       proposal_type: 'new_doc',
       payload: JSON.stringify({
-        doc_id: 'd1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c'),
+        doc_id: 'd1',
+        title: 'T',
+        kind: 'guideline',
+        content: 'c',
+        content_hash: hash('c'),
       }),
       status: 'pending',
       review_comment: null,
@@ -302,7 +321,13 @@ describe('AegisService — Admin delegation', () => {
     repo.insertProposal({
       proposal_id: 'p1',
       proposal_type: 'new_doc',
-      payload: JSON.stringify({ doc_id: 'd1', title: 'My Doc', kind: 'guideline', content: 'c', content_hash: hash('c') }),
+      payload: JSON.stringify({
+        doc_id: 'd1',
+        title: 'My Doc',
+        kind: 'guideline',
+        content: 'c',
+        content_hash: hash('c'),
+      }),
       status: 'pending',
       review_comment: null,
     });
@@ -327,7 +352,13 @@ describe('AegisService — Admin delegation', () => {
     repo.insertProposal({
       proposal_id: 'p1',
       proposal_type: 'add_edge',
-      payload: JSON.stringify({ source_type: 'path', source_value: 'src/**', target_doc_id: 'd1', edge_type: 'path_requires', priority: 100 }),
+      payload: JSON.stringify({
+        source_type: 'path',
+        source_value: 'src/**',
+        target_doc_id: 'd1',
+        edge_type: 'path_requires',
+        priority: 100,
+      }),
       status: 'pending',
       review_comment: null,
     });
@@ -379,9 +410,12 @@ describe('AegisService — Integration: separate admin/agent instances', () => {
     expect(initResult.snapshot_id).toBeTruthy();
 
     // ── Step 3: compile_context (Agent Surface — separate instance) ──
-    const compiled = await agentService.compileContext({
-      target_files: ['app/Domain/User/UserEntity.php'],
-    }, 'agent');
+    const compiled = await agentService.compileContext(
+      {
+        target_files: ['app/Domain/User/UserEntity.php'],
+      },
+      'agent',
+    );
 
     expect(compiled.compile_id).toBeTruthy();
     expect(compiled.snapshot_id).toBe(initResult.snapshot_id);
@@ -396,7 +430,7 @@ describe('AegisService — Integration: separate admin/agent instances', () => {
     expect(audit!.compile_id).toBe(compiled.compile_id);
     expect(audit!.knowledge_version).toBe(1);
 
-    const compiledDocIds = compiled.base.documents.map(d => d.doc_id).sort();
+    const compiledDocIds = compiled.base.documents.map((d) => d.doc_id).sort();
     expect(audit!.base_doc_ids.sort()).toEqual(compiledDocIds);
   });
 
@@ -442,9 +476,12 @@ describe('AegisService — Integration: separate admin/agent instances', () => {
     adminService.approveProposal('p-extra', undefined, 'admin');
 
     // Agent: compile should reflect version 2
-    const compiled = await agentService.compileContext({
-      target_files: ['app/Domain/User/UserEntity.php'],
-    }, 'agent');
+    const compiled = await agentService.compileContext(
+      {
+        target_files: ['app/Domain/User/UserEntity.php'],
+      },
+      'agent',
+    );
     expect(compiled.knowledge_version).toBe(2);
   });
 
@@ -456,24 +493,29 @@ describe('AegisService — Integration: separate admin/agent instances', () => {
     adminService.initConfirm(preview.preview_hash, 'admin');
 
     // Agent: compile
-    const compiled = await agentService.compileContext({
-      target_files: ['app/Domain/User/UserEntity.php'],
-    }, 'agent');
+    const compiled = await agentService.compileContext(
+      {
+        target_files: ['app/Domain/User/UserEntity.php'],
+      },
+      'agent',
+    );
 
     // Agent: observe compile miss
-    const obs = agentService.observe({
-      event_type: 'compile_miss',
-      related_compile_id: compiled.compile_id,
-      related_snapshot_id: compiled.snapshot_id,
-      payload: {
-        target_files: ['app/Domain/User/UserEntity.php'],
-        review_comment: 'Missing validation rules document',
+    const obs = agentService.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: compiled.compile_id,
+        related_snapshot_id: compiled.snapshot_id,
+        payload: {
+          target_files: ['app/Domain/User/UserEntity.php'],
+          review_comment: 'Missing validation rules document',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     expect(obs.observation_id).toBeTruthy();
-    const stored = db.prepare('SELECT * FROM observations WHERE observation_id = ?')
-      .get(obs.observation_id) as any;
+    const stored = db.prepare('SELECT * FROM observations WHERE observation_id = ?').get(obs.observation_id) as any;
     expect(stored.related_compile_id).toBe(compiled.compile_id);
     expect(stored.related_snapshot_id).toBe(compiled.snapshot_id);
   });
@@ -495,36 +537,52 @@ describe('AegisService — observe validation', () => {
   });
 
   it('compile_miss without related_compile_id throws ObserveValidationError', () => {
-    expect(() => service.observe({
-      event_type: 'compile_miss',
-      related_snapshot_id: 'snap-001',
-      payload: { target_files: ['src/a.ts'] },
-    } as any, 'agent')).toThrow(ObserveValidationError);
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'compile_miss',
+          related_snapshot_id: 'snap-001',
+          payload: { target_files: ['src/a.ts'] },
+        } as any,
+        'agent',
+      ),
+    ).toThrow(ObserveValidationError);
   });
 
   it('compile_miss without related_snapshot_id throws ObserveValidationError', () => {
-    expect(() => service.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-001',
-      payload: { target_files: ['src/a.ts'] },
-    } as any, 'agent')).toThrow(ObserveValidationError);
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'compile_miss',
+          related_compile_id: 'cmp-001',
+          payload: { target_files: ['src/a.ts'] },
+        } as any,
+        'agent',
+      ),
+    ).toThrow(ObserveValidationError);
   });
 
   it('compile_miss with both IDs and valid payload succeeds', () => {
-    const result = service.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-001',
-      related_snapshot_id: 'snap-001',
-      payload: { target_files: ['src/a.ts'], review_comment: 'missing doc' },
-    }, 'agent');
+    const result = service.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: 'cmp-001',
+        related_snapshot_id: 'snap-001',
+        payload: { target_files: ['src/a.ts'], review_comment: 'missing doc' },
+      },
+      'agent',
+    );
     expect(result.observation_id).toBeTruthy();
   });
 
   it('manual_note without IDs succeeds', () => {
-    const result = service.observe({
-      event_type: 'manual_note',
-      payload: { content: 'just a note' },
-    }, 'agent');
+    const result = service.observe(
+      {
+        event_type: 'manual_note',
+        payload: { content: 'just a note' },
+      },
+      'agent',
+    );
     expect(result.observation_id).toBeTruthy();
   });
 });
@@ -571,12 +629,16 @@ describe('AegisService — approve with modifications', () => {
       review_comment: null,
     });
 
-    service.approveProposal('p-mod', {
-      title: 'Corrected Title',
-      content: modifiedContent,
-    }, 'admin');
+    service.approveProposal(
+      'p-mod',
+      {
+        title: 'Corrected Title',
+        content: modifiedContent,
+      },
+      'admin',
+    );
 
-    const doc = repo.getApprovedDocuments().find(d => d.doc_id === 'mod-doc');
+    const doc = repo.getApprovedDocuments().find((d) => d.doc_id === 'mod-doc');
     expect(doc).toBeDefined();
     expect(doc!.title).toBe('Corrected Title');
     expect(doc!.content).toBe(modifiedContent);
@@ -609,9 +671,15 @@ describe('AegisService — approve with modifications', () => {
       review_comment: null,
     });
 
-    expect(() => service.approveProposal('p-bad', {
-      doc_id: 'injected-id',
-    }, 'admin')).toThrow("Modification field 'doc_id' is not allowed");
+    expect(() =>
+      service.approveProposal(
+        'p-bad',
+        {
+          doc_id: 'injected-id',
+        },
+        'admin',
+      ),
+    ).toThrow("Modification field 'doc_id' is not allowed");
   });
 
   it('bootstrap proposal does not accept modifications', () => {
@@ -624,9 +692,15 @@ describe('AegisService — approve with modifications', () => {
       review_comment: null,
     });
 
-    expect(() => service.approveProposal('p-boot', {
-      title: 'hacked',
-    }, 'admin')).toThrow("not allowed for proposal type 'bootstrap'");
+    expect(() =>
+      service.approveProposal(
+        'p-boot',
+        {
+          title: 'hacked',
+        },
+        'admin',
+      ),
+    ).toThrow("not allowed for proposal type 'bootstrap'");
   });
 
   it('content_hash cannot be set directly via modifications', () => {
@@ -648,9 +722,15 @@ describe('AegisService — approve with modifications', () => {
       review_comment: null,
     });
 
-    expect(() => service.approveProposal('p-hash', {
-      content_hash: 'deadbeef',
-    }, 'admin')).toThrow("Modification field 'content_hash' is not allowed");
+    expect(() =>
+      service.approveProposal(
+        'p-hash',
+        {
+          content_hash: 'deadbeef',
+        },
+        'admin',
+      ),
+    ).toThrow("Modification field 'content_hash' is not allowed");
   });
 });
 
@@ -670,118 +750,177 @@ describe('AegisService — observe payload validation', () => {
   });
 
   it('compile_miss without review_comment rejects', () => {
-    expect(() => service.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-1',
-      related_snapshot_id: 'snap-1',
-      payload: { target_files: ['src/a.ts'] },
-    } as any, 'agent')).toThrow('compile_miss payload requires review_comment');
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'compile_miss',
+          related_compile_id: 'cmp-1',
+          related_snapshot_id: 'snap-1',
+          payload: { target_files: ['src/a.ts'] },
+        } as any,
+        'agent',
+      ),
+    ).toThrow('compile_miss payload requires review_comment');
   });
 
   it('compile_miss without target_files rejects', () => {
-    expect(() => service.observe({
-      event_type: 'compile_miss',
-      related_compile_id: 'cmp-1',
-      related_snapshot_id: 'snap-1',
-      payload: { review_comment: 'missing doc' },
-    } as any, 'agent')).toThrow('compile_miss payload requires non-empty target_files');
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'compile_miss',
+          related_compile_id: 'cmp-1',
+          related_snapshot_id: 'snap-1',
+          payload: { review_comment: 'missing doc' },
+        } as any,
+        'agent',
+      ),
+    ).toThrow('compile_miss payload requires non-empty target_files');
   });
 
   it('review_correction without file_path rejects', () => {
-    expect(() => service.observe({
-      event_type: 'review_correction',
-      payload: { correction: 'Use value object' },
-    } as any, 'agent')).toThrow('review_correction payload requires file_path');
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'review_correction',
+          payload: { correction: 'Use value object' },
+        } as any,
+        'agent',
+      ),
+    ).toThrow('review_correction payload requires file_path');
   });
 
   it('review_correction without correction rejects', () => {
-    expect(() => service.observe({
-      event_type: 'review_correction',
-      payload: { file_path: 'src/User.ts' },
-    } as any, 'agent')).toThrow('review_correction payload requires correction');
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'review_correction',
+          payload: { file_path: 'src/User.ts' },
+        } as any,
+        'agent',
+      ),
+    ).toThrow('review_correction payload requires correction');
   });
 
   it('pr_merged without pr_id rejects', () => {
-    expect(() => service.observe({
-      event_type: 'pr_merged',
-      payload: { summary: 'Added auth', files_changed: ['src/auth.ts'] },
-    } as any, 'agent')).toThrow('pr_merged payload requires pr_id');
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'pr_merged',
+          payload: { summary: 'Added auth', files_changed: ['src/auth.ts'] },
+        } as any,
+        'agent',
+      ),
+    ).toThrow('pr_merged payload requires pr_id');
   });
 
   it('pr_merged without files_changed rejects', () => {
-    expect(() => service.observe({
-      event_type: 'pr_merged',
-      payload: { pr_id: 'PR-1', summary: 'Added auth' },
-    } as any, 'agent')).toThrow('pr_merged payload requires non-empty files_changed');
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'pr_merged',
+          payload: { pr_id: 'PR-1', summary: 'Added auth' },
+        } as any,
+        'agent',
+      ),
+    ).toThrow('pr_merged payload requires non-empty files_changed');
   });
 
   it('manual_note without content rejects', () => {
-    expect(() => service.observe({
-      event_type: 'manual_note',
-      payload: {},
-    } as any, 'agent')).toThrow('manual_note payload requires content');
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'manual_note',
+          payload: {},
+        } as any,
+        'agent',
+      ),
+    ).toThrow('manual_note payload requires content');
   });
 
   it('valid pr_merged observation succeeds', () => {
-    const result = service.observe({
-      event_type: 'pr_merged',
-      payload: { pr_id: 'PR-42', summary: 'Refactored auth', files_changed: ['src/auth.ts'] },
-    } as any, 'agent');
+    const result = service.observe(
+      {
+        event_type: 'pr_merged',
+        payload: { pr_id: 'PR-42', summary: 'Refactored auth', files_changed: ['src/auth.ts'] },
+      } as any,
+      'agent',
+    );
     expect(result.observation_id).toBeTruthy();
   });
 
   it('valid review_correction observation succeeds', () => {
-    const result = service.observe({
-      event_type: 'review_correction',
-      payload: { file_path: 'src/User.ts', correction: 'Use value object for email' },
-    } as any, 'agent');
+    const result = service.observe(
+      {
+        event_type: 'review_correction',
+        payload: { file_path: 'src/User.ts', correction: 'Use value object for email' },
+      } as any,
+      'agent',
+    );
     expect(result.observation_id).toBeTruthy();
   });
 
   it('review_correction with both target_doc_id and proposed_content succeeds', () => {
-    const result = service.observe({
-      event_type: 'review_correction',
-      payload: {
-        file_path: 'src/User.ts',
-        correction: 'Use value object for email',
-        target_doc_id: 'auth-guide',
-        proposed_content: 'Updated auth guide content',
-      },
-    } as any, 'agent');
+    const result = service.observe(
+      {
+        event_type: 'review_correction',
+        payload: {
+          file_path: 'src/User.ts',
+          correction: 'Use value object for email',
+          target_doc_id: 'auth-guide',
+          proposed_content: 'Updated auth guide content',
+        },
+      } as any,
+      'agent',
+    );
     expect(result.observation_id).toBeTruthy();
   });
 
   it('review_correction with target_doc_id but no proposed_content rejects', () => {
-    expect(() => service.observe({
-      event_type: 'review_correction',
-      payload: {
-        file_path: 'src/User.ts',
-        correction: 'Fix auth guide',
-        target_doc_id: 'auth-guide',
-      },
-    } as any, 'agent')).toThrow('proposed_content required when target_doc_id is provided');
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'review_correction',
+          payload: {
+            file_path: 'src/User.ts',
+            correction: 'Fix auth guide',
+            target_doc_id: 'auth-guide',
+          },
+        } as any,
+        'agent',
+      ),
+    ).toThrow('proposed_content required when target_doc_id is provided');
   });
 
   it('review_correction with proposed_content but no target_doc_id rejects', () => {
-    expect(() => service.observe({
-      event_type: 'review_correction',
-      payload: {
-        file_path: 'src/User.ts',
-        correction: 'Fix something',
-        proposed_content: 'New content',
-      },
-    } as any, 'agent')).toThrow('target_doc_id required when proposed_content is provided');
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'review_correction',
+          payload: {
+            file_path: 'src/User.ts',
+            correction: 'Fix something',
+            proposed_content: 'New content',
+          },
+        } as any,
+        'agent',
+      ),
+    ).toThrow('target_doc_id required when proposed_content is provided');
   });
 
   it('review_correction with empty target_doc_id rejects', () => {
-    expect(() => service.observe({
-      event_type: 'review_correction',
-      payload: {
-        file_path: 'src/User.ts',
-        correction: 'Fix something',
-        target_doc_id: '',
-        proposed_content: 'New content',
-      },
-    } as any, 'agent')).toThrow('target_doc_id required when proposed_content is provided');
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'review_correction',
+          payload: {
+            file_path: 'src/User.ts',
+            correction: 'Fix something',
+            target_doc_id: '',
+            proposed_content: 'New content',
+          },
+        } as any,
+        'agent',
+      ),
+    ).toThrow('target_doc_id required when proposed_content is provided');
   });
 });

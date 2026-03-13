@@ -5,19 +5,19 @@
  * init → compile_context → observe → analyzeAndPropose → approve
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { ManualNoteAnalyzer } from '../core/automation/manual-note-analyzer.js';
+import { PrMergedAnalyzer } from '../core/automation/pr-merged-analyzer.js';
+import { ReviewCorrectionAnalyzer } from '../core/automation/review-correction-analyzer.js';
+import { RuleBasedAnalyzer } from '../core/automation/rule-analyzer.js';
 import { createInMemoryDatabase } from '../core/store/database.js';
 import { Repository } from '../core/store/repository.js';
-import { AegisService } from '../mcp/services.js';
-import { RuleBasedAnalyzer } from '../core/automation/rule-analyzer.js';
-import { ReviewCorrectionAnalyzer } from '../core/automation/review-correction-analyzer.js';
-import { PrMergedAnalyzer } from '../core/automation/pr-merged-analyzer.js';
-import { ManualNoteAnalyzer } from '../core/automation/manual-note-analyzer.js';
 import type { IntentTagger } from '../core/tagging/tagger.js';
 import type { IntentTag } from '../core/types.js';
+import { AegisService } from '../mcp/services.js';
 
 const TEMPLATES_ROOT = join(import.meta.dirname, '../../templates');
 
@@ -49,9 +49,12 @@ describe('E2E: Full Lifecycle', () => {
     tmpDir = makeTmpProject();
 
     // Create a Laravel-like project for detection
-    writeFileSync(join(tmpDir, 'composer.json'), JSON.stringify({
-      require: { 'laravel/framework': '^11.0' },
-    }));
+    writeFileSync(
+      join(tmpDir, 'composer.json'),
+      JSON.stringify({
+        require: { 'laravel/framework': '^11.0' },
+      }),
+    );
     mkdirSync(join(tmpDir, 'app/Domain'), { recursive: true });
     mkdirSync(join(tmpDir, 'app/UseCases'), { recursive: true });
   });
@@ -69,9 +72,12 @@ describe('E2E: Full Lifecycle', () => {
     expect(initResult.snapshot_id).toBeTruthy();
 
     // ── Step 3: Agent compiles context for a domain file ──
-    const compiled = await agentService.compileContext({
-      target_files: ['app/Domain/User/UserEntity.php'],
-    }, 'agent');
+    const compiled = await agentService.compileContext(
+      {
+        target_files: ['app/Domain/User/UserEntity.php'],
+      },
+      'agent',
+    );
 
     expect(compiled.knowledge_version).toBe(1);
     expect(compiled.base.documents.length).toBeGreaterThan(0);
@@ -79,20 +85,23 @@ describe('E2E: Full Lifecycle', () => {
     expect(compiled.snapshot_id).toBeTruthy();
 
     // Verify resolution path includes path_requires edges
-    const pathEdges = compiled.base.resolution_path.filter(e => e.edge_type === 'path_requires');
+    const pathEdges = compiled.base.resolution_path.filter((e) => e.edge_type === 'path_requires');
     expect(pathEdges.length).toBeGreaterThan(0);
 
     // ── Step 4: Agent reports a compile miss ──
-    const observation = agentService.observe({
-      event_type: 'compile_miss',
-      related_compile_id: compiled.compile_id,
-      related_snapshot_id: compiled.snapshot_id,
-      payload: {
-        target_files: ['app/Domain/User/UserEntity.php'],
-        missing_doc: 'laravel-ddd-entity',
-        review_comment: 'Entity guidelines were not specific enough',
+    const observation = agentService.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: compiled.compile_id,
+        related_snapshot_id: compiled.snapshot_id,
+        payload: {
+          target_files: ['app/Domain/User/UserEntity.php'],
+          missing_doc: 'laravel-ddd-entity',
+          review_comment: 'Entity guidelines were not specific enough',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
     expect(observation.observation_id).toBeTruthy();
 
     // ── Step 5: Admin runs automation ──
@@ -125,15 +134,18 @@ describe('E2E: Full Lifecycle', () => {
     const targetDoc = docs[0];
 
     // Agent observes a correction
-    const obs = agentService.observe({
-      event_type: 'review_correction',
-      payload: {
-        file_path: 'app/Domain/User/UserEntity.php',
-        correction: 'Entity should use factory methods',
-        target_doc_id: targetDoc.doc_id,
-        proposed_content: '# Updated Entity Guidelines\n\nUse factory methods.',
+    const _obs = agentService.observe(
+      {
+        event_type: 'review_correction',
+        payload: {
+          file_path: 'app/Domain/User/UserEntity.php',
+          correction: 'Entity should use factory methods',
+          target_doc_id: targetDoc.doc_id,
+          proposed_content: '# Updated Entity Guidelines\n\nUse factory methods.',
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     // Admin runs analyzer
     const analyzer = new ReviewCorrectionAnalyzer(repo);
@@ -156,14 +168,17 @@ describe('E2E: Full Lifecycle', () => {
     adminService.initConfirm(preview.preview_hash, 'admin');
 
     // Agent observes a PR merge with files in an uncovered directory
-    agentService.observe({
-      event_type: 'pr_merged',
-      payload: {
-        pr_id: 'PR-42',
-        summary: 'Add new API controller',
-        files_changed: ['app/Http/Controllers/ApiController.php', 'app/Http/Controllers/AuthController.php'],
+    agentService.observe(
+      {
+        event_type: 'pr_merged',
+        payload: {
+          pr_id: 'PR-42',
+          summary: 'Add new API controller',
+          files_changed: ['app/Http/Controllers/ApiController.php', 'app/Http/Controllers/AuthController.php'],
+        },
       },
-    }, 'agent');
+      'agent',
+    );
 
     // Admin runs pr_merged analyzer
     const analyzer = new PrMergedAnalyzer(repo);
@@ -179,17 +194,20 @@ describe('E2E: Full Lifecycle', () => {
     adminService.initConfirm(preview.preview_hash, 'admin');
 
     // Agent observes a manual note with new_doc_hint
-    agentService.observe({
-      event_type: 'manual_note',
-      payload: {
-        content: '# Error Handling\n\nAll domain operations should return Result types.',
-        new_doc_hint: {
-          doc_id: 'error-handling-guide',
-          title: 'Error Handling Guidelines',
-          kind: 'guideline',
+    agentService.observe(
+      {
+        event_type: 'manual_note',
+        payload: {
+          content: '# Error Handling\n\nAll domain operations should return Result types.',
+          new_doc_hint: {
+            doc_id: 'error-handling-guide',
+            title: 'Error Handling Guidelines',
+            kind: 'guideline',
+          },
         },
       },
-    }, 'agent');
+      'agent',
+    );
 
     // Admin runs manual_note analyzer
     const analyzer = new ManualNoteAnalyzer(repo);
@@ -211,11 +229,12 @@ describe('E2E: Full Lifecycle', () => {
     const preview = agentService.initDetect(tmpDir, 'agent');
     expect(preview.template_id).toBe('laravel-ddd');
 
-    expect(() => agentService.initConfirm(preview.preview_hash, 'agent'))
-      .toThrow('not available');
+    expect(() => agentService.initConfirm(preview.preview_hash, 'agent')).toThrow('not available');
   });
 
   afterEach(() => {
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
   });
 });

@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { deployCursorAdapter } from './cursor/generate.js';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { deployClaudeAdapter } from './claude/generate.js';
 import { deployCodexAdapter } from './codex/generate.js';
+import { deployCursorAdapter } from './cursor/generate.js';
 import type { AdapterConfig } from './types.js';
 
 function makeTmpDir(): string {

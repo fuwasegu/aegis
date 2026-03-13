@@ -4,9 +4,9 @@
  * and auto-calculates specificity.
  */
 
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import yaml from 'js-yaml';
 
 // ── Manifest schema types (mirrors v2 §8.4) ──
@@ -139,17 +139,14 @@ export function loadAllManifests(
  * Evaluate a `when` condition against resolved placeholders.
  * Per ADR-006 D-9: supports boolean combinators (all, any, not).
  */
-export function evaluateWhen(
-  when: WhenCondition | undefined,
-  placeholders: Record<string, string | null>,
-): boolean {
+export function evaluateWhen(when: WhenCondition | undefined, placeholders: Record<string, string | null>): boolean {
   if (!when) return true;
 
   if ('all' in when) {
-    return when.all.every(sub => evaluateWhen(sub, placeholders));
+    return when.all.every((sub) => evaluateWhen(sub, placeholders));
   }
   if ('any' in when) {
-    return when.any.some(sub => evaluateWhen(sub, placeholders));
+    return when.any.some((sub) => evaluateWhen(sub, placeholders));
   }
   if ('not' in when) {
     return !evaluateWhen(when.not, placeholders);
@@ -157,10 +154,14 @@ export function evaluateWhen(
 
   const val = placeholders[when.placeholder] ?? null;
   switch (when.operator) {
-    case 'is_not_null': return val !== null;
-    case 'is_null': return val === null;
-    case 'equals': return val === when.value;
-    default: return false;
+    case 'is_not_null':
+      return val !== null;
+    case 'is_null':
+      return val === null;
+    case 'equals':
+      return val === when.value;
+    default:
+      return false;
   }
 }
 
@@ -184,8 +185,6 @@ export function calculateSpecificity(globPattern: string): number {
   let score = 0;
   for (const seg of segments) {
     if (seg === '**') {
-      // Wildcard — doesn't add specificity
-      continue;
     } else if (seg.includes('*')) {
       // Partial wildcard — partial specificity
       score += 1;
@@ -233,9 +232,7 @@ export function resolveTemplate(
     if (!evaluateWhen(edgeDef.when, placeholders)) continue;
 
     const sourceValue = expandPlaceholders(edgeDef.source_value, placeholders);
-    const specificity = edgeDef.source_type === 'path'
-      ? calculateSpecificity(sourceValue)
-      : 0;
+    const specificity = edgeDef.source_type === 'path' ? calculateSpecificity(sourceValue) : 0;
 
     edgeCounter++;
     edges.push({
