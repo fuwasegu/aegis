@@ -1,12 +1,19 @@
 # ADR-005: Adapter は opt-in の配布レイヤとし、自動デプロイしない
 
-**ステータス:** Implemented
+**ステータス:** Amended by ADR-007
 **日付:** 2026-03-13
 
 ## 関連議題
 
 - [Adapter 戦略と IDE 統合](../議題_Adapter戦略とIDE統合.md)
 - [SLM の役割と活用戦略](./004-slm-role-and-strategy.md)
+
+## 注記
+
+この ADR は、Adapter を opt-in の convenience layer とする基本方針を記録している。
+ただし配布インターフェースについては、
+[ADR-007](./007-adapter-deployment-via-cli-not-mcp-tool.md) が D-3 を supersede し、
+明示トリガーの実体を MCP ツールから CLI / setup flow へ移す。
 
 ---
 

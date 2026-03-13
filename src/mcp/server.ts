@@ -37,7 +37,6 @@ const WORKFLOW_GUIDE = `# Aegis Workflow Guide
 - \`aegis_init_detect\` + \`aegis_init_confirm\`: Initialize a project
 - \`aegis_import_doc\`: Import existing documents with explicit metadata
 - \`aegis_process_observations\`: Run the analyzer pipeline on pending observations
-- \`aegis_deploy_adapters\`: Generate IDE-specific configurations (Cursor rules, Claude config)
 - \`aegis_check_upgrade\` + \`aegis_apply_upgrade\`: Template version upgrades
 
 ## Key Principles
@@ -205,7 +204,8 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       },
       async (params) => {
         const result = service.initConfirm(params.preview_hash, surface);
-        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+        const hint = '\n\nNext: run `npx @fuwasegu/aegis deploy-adapters` in the terminal to generate IDE adapter rules (Cursor .mdc, CLAUDE.md, AGENTS.md).';
+        return { content: [{ type: 'text', text: JSON.stringify(result) + hint }] };
       },
     );
 
@@ -287,22 +287,6 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       },
     );
 
-    server.tool(
-      'aegis_deploy_adapters',
-      'Explicitly deploy IDE adapter configurations (Cursor rules, Claude Code config). Per ADR-005: not auto-deployed from init.',
-      {
-        project_root: z.string().describe('Absolute path to the project root directory'),
-        targets: z.array(z.enum(['cursor', 'claude'])).optional().describe('Adapter targets to deploy (default: all)'),
-      },
-      async (params) => {
-        try {
-          const result = service.deployAdapters(params.project_root, params.targets, surface);
-          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-        } catch (e: any) {
-          return { content: [{ type: 'text', text: `Deploy failed: ${e.message}` }], isError: true };
-        }
-      },
-    );
   }
 
   // ============================================================

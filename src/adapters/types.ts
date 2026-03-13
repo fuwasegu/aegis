@@ -8,8 +8,10 @@ export interface AdapterConfig {
   };
 }
 
+export type AdapterStatus = 'created' | 'updated' | 'skipped' | 'conflict' | 'failed';
+
 export interface AdapterResult {
   filePath: string;
-  created: boolean;
+  status: AdapterStatus;
   content: string;
 }

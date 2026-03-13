@@ -22,6 +22,7 @@ import { ProposeService, type ProposeResult } from '../core/automation/propose.j
 import type { IntentTagger } from '../core/tagging/tagger.js';
 import { deployCursorAdapter } from '../adapters/cursor/generate.js';
 import { deployClaudeAdapter } from '../adapters/claude/generate.js';
+import { deployCodexAdapter } from '../adapters/codex/generate.js';
 import type { AdapterConfig, AdapterResult } from '../adapters/types.js';
 import { RuleBasedAnalyzer } from '../core/automation/rule-analyzer.js';
 import { ReviewCorrectionAnalyzer } from '../core/automation/review-correction-analyzer.js';
@@ -479,17 +480,13 @@ export class AegisService {
   }
 
   /**
-   * Per ADR-005: explicit adapter deployment (not auto from initConfirm).
-   * projectRoot is stored during initDetect and retrieved from the preview cache
-   * or must be provided explicitly.
+   * Per ADR-007: adapter deployment is provided via CLI, not MCP tool.
+   * Called from the `deploy-adapters` CLI subcommand.
    */
   deployAdapters(
     projectRoot: string,
-    targets: string[] | undefined,
-    surface: Surface,
+    targets?: string[],
   ): AdapterResult[] {
-    this.assertAdmin('aegis_deploy_adapters', surface);
-
     const manifest = this.repo.getInitManifest();
     const templateId = manifest?.template_id ?? 'unknown';
 
@@ -503,7 +500,7 @@ export class AegisService {
       },
     };
 
-    const validTargets = targets ?? ['cursor', 'claude'];
+    const validTargets = targets ?? ['cursor', 'claude', 'codex'];
     const results: AdapterResult[] = [];
 
     for (const target of validTargets) {
@@ -512,9 +509,15 @@ export class AegisService {
           results.push(deployCursorAdapter(config));
         } else if (target === 'claude') {
           results.push(deployClaudeAdapter(config));
+        } else if (target === 'codex') {
+          results.push(deployCodexAdapter(config));
         }
-      } catch {
-        // Non-fatal per ADR-005 D-4
+      } catch (e) {
+        results.push({
+          filePath: target,
+          status: 'failed',
+          content: e instanceof Error ? e.message : String(e),
+        });
       }
     }
     return results;

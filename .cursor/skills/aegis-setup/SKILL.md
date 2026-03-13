@@ -40,10 +40,10 @@ Using the **admin** surface tools:
    aegis_init_confirm({ preview_hash: "<hash from step 1>" })
    → Creates seed documents, edges, layer rules
 
-3. Deploy adapter rules:
-   aegis_deploy_adapters({ project_root: "<absolute path to project>" })
+3. Deploy adapter rules (run in terminal, not an MCP tool):
+   npx @fuwasegu/aegis deploy-adapters
    → Generates .cursor/rules/aegis-process.mdc
-   → Generates CLAUDE.md section (if Claude Code project)
+   → Generates CLAUDE.md / AGENTS.md sections
 ```
 
 After init, `.aegis/` directory is created with the database. It self-manages its `.gitignore`.
