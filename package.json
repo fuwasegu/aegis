@@ -10,6 +10,7 @@
   "files": [
     "dist/",
     "templates/",
+    "skills/",
     "README.md",
     "README.ja.md"
   ],
