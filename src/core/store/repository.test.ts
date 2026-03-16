@@ -1,18 +1,23 @@
 import { createHash } from 'node:crypto';
-import type Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { AlreadyInitializedError, CycleDetectedError, createInMemoryDatabase, Repository } from './index.js';
+import {
+  type AegisDatabase,
+  AlreadyInitializedError,
+  CycleDetectedError,
+  createInMemoryDatabase,
+  Repository,
+} from './index.js';
 
 function hash(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
 describe('Repository', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
   });
 

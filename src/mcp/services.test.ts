@@ -2,9 +2,8 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createInMemoryDatabase, Repository } from '../core/store/index.js';
+import { type AegisDatabase, createInMemoryDatabase, Repository } from '../core/store/index.js';
 import { buildObserveContent } from './server.js';
 import { AegisService, ObserveValidationError, SurfaceViolationError } from './services.js';
 
@@ -26,12 +25,12 @@ function createLaravelProject(root: string): void {
 }
 
 describe('AegisService — Surface Authorization', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let service: AegisService;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     service = new AegisService(repo, TEMPLATES_ROOT);
   });
@@ -109,13 +108,13 @@ describe('AegisService — Surface Authorization', () => {
 
 describe('AegisService — compile_context v2 contract', () => {
   let tmpDir: string;
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let service: AegisService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'aegis-svc-'));
-    db = createInMemoryDatabase();
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     service = new AegisService(repo, TEMPLATES_ROOT);
   });
@@ -175,12 +174,12 @@ describe('AegisService — compile_context v2 contract', () => {
 });
 
 describe('AegisService — observe discriminated union', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let service: AegisService;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     service = new AegisService(repo, TEMPLATES_ROOT);
   });
@@ -243,13 +242,13 @@ describe('AegisService — observe discriminated union', () => {
 
 describe('AegisService — Admin delegation', () => {
   let tmpDir: string;
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let service: AegisService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'aegis-admin-'));
-    db = createInMemoryDatabase();
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     service = new AegisService(repo, TEMPLATES_ROOT);
   });
@@ -380,14 +379,14 @@ describe('AegisService — Admin delegation', () => {
 
 describe('AegisService — Integration: separate admin/agent instances', () => {
   let tmpDir: string;
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let adminService: AegisService;
   let agentService: AegisService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'aegis-e2e-'));
-    db = createInMemoryDatabase();
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     // Simulate separate processes: distinct AegisService instances sharing same DB
     adminService = new AegisService(repo, TEMPLATES_ROOT);
@@ -527,12 +526,12 @@ describe('AegisService — Integration: separate admin/agent instances', () => {
 // ============================================================
 
 describe('AegisService — observe validation', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let service: AegisService;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     service = new AegisService(repo, TEMPLATES_ROOT);
   });
@@ -594,13 +593,13 @@ describe('AegisService — observe validation', () => {
 
 describe('AegisService — approve with modifications', () => {
   let tmpDir: string;
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let service: AegisService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'aegis-mod-'));
-    db = createInMemoryDatabase();
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     service = new AegisService(repo, TEMPLATES_ROOT);
   });
@@ -740,12 +739,12 @@ describe('AegisService — approve with modifications', () => {
 // ============================================================
 
 describe('AegisService — observe payload validation', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let service: AegisService;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     service = new AegisService(repo, TEMPLATES_ROOT);
   });
@@ -931,12 +930,12 @@ describe('AegisService — observe payload validation', () => {
 // ============================================================
 
 describe('AegisService — compile_miss target_doc_id (ADR-008)', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let service: AegisService;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     service = new AegisService(repo, TEMPLATES_ROOT);
   });
@@ -998,12 +997,12 @@ describe('AegisService — compile_miss target_doc_id (ADR-008)', () => {
 });
 
 describe('AegisService — list_observations (ADR-008)', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let service: AegisService;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     service = new AegisService(repo, TEMPLATES_ROOT);
   });
