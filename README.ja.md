@@ -21,6 +21,13 @@ Aegis は、AIコーディングエージェントにアーキテクチャガイ
 
 ## インストール
 
+> [!NOTE]
+> Aegis は `better-sqlite3`（ネイティブバイナリ）に依存しています。`npx` で `command not found` やバインディングエラーが出る場合は、グローバルインストールしてください:
+> ```bash
+> npm install -g @fuwasegu/aegis
+> ```
+> 以降、MCP 設定の `npx -y @fuwasegu/aegis` を `aegis` に置き換えてください。
+
 Aegis は 2 つの MCP surface を使います — 両方が必要です:
 
 | Surface | 役割 | ツール数 |
