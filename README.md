@@ -11,59 +11,28 @@
 
 Aegis is an MCP server that enforces architecture guidelines on AI coding agents. Instead of RAG, it uses a DAG of dependency edges to deterministically compile exactly which documents an agent needs for a given set of target files. No search. No ranking. Deterministic.
 
-## Installation
+## Quick Start
 
-### via npx (recommended)
-
-No cloning or building needed. Just add Aegis to your MCP config:
-
-```json
-{
-  "mcpServers": {
-    "aegis": {
-      "command": "npx",
-      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent"]
-    }
-  }
-}
-```
+1. Add Aegis to your IDE's MCP config (see [Installation](#installation))
+2. Ask your AI agent: *"Initialize Aegis for this project and deploy the adapter rules."*
+3. The agent runs `aegis_init_detect` → `aegis_init_confirm` → `npx @fuwasegu/aegis deploy-adapters` automatically
 
 The database is stored at `.aegis/aegis.db` in the project root. The `.aegis/` directory includes its own `.gitignore` — no manual configuration needed.
 
-> **Getting started:** After adding Aegis to your MCP config, ask your AI agent: *"Initialize Aegis for this project and deploy the adapter rules."* The agent will run `aegis_init_detect` → `aegis_init_confirm` → `npx @fuwasegu/aegis deploy-adapters` automatically.
+## Installation
 
-### From source
+Aegis uses two MCP surfaces — both are required:
 
-```bash
-git clone https://github.com/fuwasegu/aegis.git
-cd aegis
-npm install && npm run build
-```
+| Surface | Role | Tools |
+|---------|------|-------|
+| **agent** | Read-only tools for AI coding agents | 4 tools (compile, observe, audit, detect) |
+| **admin** | Initialization, approval, triage | 15 tools (4 shared + 11 admin-only) |
 
-### Add to Cursor
+> The agent surface alone cannot initialize a project or approve proposals. This separation ensures AI agents cannot modify architecture rules without human approval. ([INV-6](docs/technical-guide.md))
 
-Add to your project's `.cursor/mcp.json`:
+### Cursor
 
-```json
-{
-  "mcpServers": {
-    "aegis": {
-      "command": "npx",
-      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent"]
-    }
-  }
-}
-```
-
-After initialization, run `npx @fuwasegu/aegis deploy-adapters` to generate `.cursor/rules/aegis-process.mdc` — a Cursor rule that instructs the agent to consult Aegis before writing code and report violations afterward.
-
-### Add to Claude Code
-
-```bash
-claude mcp add aegis -- npx -y @fuwasegu/aegis --surface agent
-```
-
-Or add to your project's `.mcp.json`:
+Add to `.cursor/mcp.json`:
 
 ```json
 {
@@ -71,43 +40,7 @@ Or add to your project's `.mcp.json`:
     "aegis": {
       "command": "npx",
       "args": ["-y", "@fuwasegu/aegis", "--surface", "agent"]
-    }
-  }
-}
-```
-
-After initialization, run `npx @fuwasegu/aegis deploy-adapters` to append an `<!-- aegis:start -->` section to your `CLAUDE.md` that instructs Claude Code to follow the Aegis workflow. If `CLAUDE.md` doesn't exist, it creates one.
-
-### Add to Codex
-
-```bash
-codex mcp add aegis -- npx -y @fuwasegu/aegis --surface agent
-```
-
-Or add to your project's `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "aegis": {
-      "command": "npx",
-      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent"]
-    }
-  }
-}
-```
-
-After initialization, run `npx @fuwasegu/aegis deploy-adapters` to append an `<!-- aegis:start -->` section to your `AGENTS.md` that instructs Codex to follow the Aegis workflow. If `AGENTS.md` doesn't exist, it creates one.
-
-> **Note:** Codex MCP support depends on the CLI version. If MCP is not available, agents can still follow Aegis guidelines via the generated `AGENTS.md` instructions.
-
-### Admin Surface (for initialization & approval)
-
-For operations that modify Canonical Knowledge (init, approve/reject proposals), add a separate admin instance:
-
-```json
-{
-  "mcpServers": {
+    },
     "aegis-admin": {
       "command": "npx",
       "args": ["-y", "@fuwasegu/aegis", "--surface", "admin"]
@@ -116,35 +49,67 @@ For operations that modify Canonical Knowledge (init, approve/reject proposals),
 }
 ```
 
-> **Surface separation (INV-6):** The agent surface provides 4 read-only tools. The admin surface provides all 14 tools (4 shared + 10 admin-only) including Canonical-mutating operations. AI agents cannot modify architecture rules without human approval.
+After initialization, `deploy-adapters` generates `.cursor/rules/aegis-process.mdc` — a Cursor rule that instructs the agent to consult Aegis before writing code and report violations afterward.
 
-### SLM for Expanded Context (Intent Tagging) — Opt-in
+### Claude Code
 
-Aegis includes a built-in llama.cpp engine for optional SLM inference. SLM is **disabled by default** — the deterministic DAG-based context works perfectly without it. To enable, add `--slm`:
+```bash
+claude mcp add aegis -- npx -y @fuwasegu/aegis --surface agent
+claude mcp add aegis-admin -- npx -y @fuwasegu/aegis --surface admin
+```
+
+<details>
+<summary>Or add to <code>.mcp.json</code> manually</summary>
 
 ```json
 {
   "mcpServers": {
     "aegis": {
       "command": "npx",
-      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent", "--slm", "--model", "qwen3.5-4b"]
+      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent"]
+    },
+    "aegis-admin": {
+      "command": "npx",
+      "args": ["-y", "@fuwasegu/aegis", "--surface", "admin"]
     }
   }
 }
 ```
 
-On first SLM-enabled startup, the selected model is downloaded to `~/.aegis/models/` (shared across all projects).
+</details>
 
-Available models (`--list-models` to see all):
+After initialization, `deploy-adapters` appends an `<!-- aegis:start -->` section to `CLAUDE.md` (creates it if missing).
 
-| Name | Size | Description |
-|------|------|-------------|
-| `qwen3.5-4b` | ~2.5 GB | Recommended default — fast and lightweight |
-| `qwen3.5-9b` | ~5.5 GB | Higher quality — benchmark-topping |
+### Codex
 
-You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
+```bash
+codex mcp add aegis -- npx -y @fuwasegu/aegis --surface agent
+codex mcp add aegis-admin -- npx -y @fuwasegu/aegis --surface admin
+```
 
-> **Legacy:** `--ollama` flag is available for Ollama-based inference if preferred. Using `--ollama` implicitly enables SLM.
+<details>
+<summary>Or add to <code>.mcp.json</code> manually</summary>
+
+```json
+{
+  "mcpServers": {
+    "aegis": {
+      "command": "npx",
+      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent"]
+    },
+    "aegis-admin": {
+      "command": "npx",
+      "args": ["-y", "@fuwasegu/aegis", "--surface", "admin"]
+    }
+  }
+}
+```
+
+</details>
+
+After initialization, `deploy-adapters` appends an `<!-- aegis:start -->` section to `AGENTS.md` (creates it if missing).
+
+> **Note:** Codex MCP support depends on the CLI version. If MCP is not available, agents can still follow Aegis guidelines via the generated `AGENTS.md` instructions.
 
 ## Usage
 
@@ -159,13 +124,12 @@ aegis_init_confirm({ preview_hash: "<hash from detect>" })
 
 This creates seed documents, DAG edges, and layer rules based on your project structure.
 
-Then deploy adapter rules for your AI coding tool via CLI:
+Then deploy adapter rules and Agent Skills for your AI coding tool via CLI:
 
 ```bash
 npx @fuwasegu/aegis deploy-adapters
+npx @fuwasegu/aegis deploy-adapters --targets cursor,codex  # specific adapters only
 ```
-
-This generates `.cursor/rules/aegis-process.mdc`, `CLAUDE.md`, and/or `AGENTS.md` sections to enforce the Aegis workflow. You can target specific adapters with `--targets cursor,claude,codex`.
 
 ### 2. Use during development
 
@@ -202,9 +166,51 @@ aegis_list_proposals({ status: "pending" })
 aegis_approve_proposal({ proposal_id: "<id>" })
 ```
 
-## MCP Tools Reference
+## SLM for Expanded Context — Opt-in
 
-### Agent Surface (4 tools)
+Aegis includes a built-in llama.cpp engine for optional SLM-based intent tagging. SLM is **disabled by default** — the deterministic DAG-based context works perfectly without it.
+
+To enable, add `--slm` to the **agent** surface:
+
+```json
+{
+  "mcpServers": {
+    "aegis": {
+      "command": "npx",
+      "args": ["-y", "@fuwasegu/aegis", "--surface", "agent", "--slm", "--model", "qwen3.5-4b"]
+    },
+    "aegis-admin": {
+      "command": "npx",
+      "args": ["-y", "@fuwasegu/aegis", "--surface", "admin"]
+    }
+  }
+}
+```
+
+On first SLM-enabled startup, the selected model is downloaded to `~/.aegis/models/` (shared across all projects).
+
+| Model | Size | Description |
+|-------|------|-------------|
+| `qwen3.5-4b` | ~2.5 GB | Recommended default — fast and lightweight |
+| `qwen3.5-9b` | ~5.5 GB | Higher quality — benchmark-topping |
+
+You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
+
+> **Legacy:** `--ollama` flag is available for Ollama-based inference if preferred. Using `--ollama` implicitly enables SLM.
+
+## Templates
+
+Aegis ships with pre-built architecture templates. The template is auto-detected during `aegis_init_detect`:
+
+| Template | Detection | Description |
+|----------|-----------|-------------|
+| `laravel-ddd` | `composer.json` + Laravel | Domain-Driven Design with Clean Architecture |
+| `generic-layered` | Any `src/` project | Language-agnostic layered architecture |
+| `typescript-mcp` | `package.json` + `tsconfig.json` + MCP SDK | TypeScript MCP server with layered architecture |
+
+## Reference
+
+### MCP Tools — Agent Surface (4 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -213,7 +219,7 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `aegis_get_compile_audit` | Retrieve audit log of a past compile |
 | `aegis_init_detect` | Analyze a project to generate initialization preview |
 
-### Admin Surface (additional 11 tools)
+### MCP Tools — Admin Surface (additional 11 tools, 15 total)
 
 | Tool | Description |
 |------|-------------|
@@ -229,9 +235,11 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `aegis_import_doc` | Import existing document content as a new_doc proposal (content-based, no file path) |
 | `aegis_process_observations` | Trigger observation analysis pipeline for pending observations |
 
-## CLI Subcommands
+### CLI Subcommands
 
-Aegis provides CLI subcommands for setup tasks that don't belong in the MCP tool surface (per [ADR-007](docs/adr/007-adapter-deployment-via-cli-not-mcp-tool.md)):
+| Subcommand | Description |
+|------------|-------------|
+| `deploy-adapters` | Deploy IDE adapter configurations (Cursor rules, CLAUDE.md, AGENTS.md) and Agent Skills |
 
 ```bash
 npx @fuwasegu/aegis deploy-adapters                         # Deploy all adapters
@@ -240,11 +248,7 @@ npx @fuwasegu/aegis deploy-adapters --project-root /path    # Specify project ro
 npx @fuwasegu/aegis --list-models                           # List available SLM models
 ```
 
-| Subcommand | Description |
-|------------|-------------|
-| `deploy-adapters` | Deploy IDE adapter configurations (Cursor rules, CLAUDE.md, AGENTS.md) and Agent Skills |
-
-## CLI Flags (MCP server mode)
+### CLI Flags (MCP server mode)
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -258,16 +262,6 @@ npx @fuwasegu/aegis --list-models                           # List available SLM
 | `--ollama` | false | Use Ollama instead of built-in llama.cpp (implies `--slm`) |
 | `--ollama-url` | `http://localhost:11434` | Ollama API URL (with `--ollama`) |
 
-## Templates
-
-Aegis ships with pre-built architecture templates:
-
-| Template | Detection | Description |
-|----------|-----------|-------------|
-| `laravel-ddd` | `composer.json` + Laravel | Domain-Driven Design with Clean Architecture |
-| `generic-layered` | Any `src/` project | Language-agnostic layered architecture |
-| `typescript-mcp` | `package.json` + `tsconfig.json` + MCP SDK | TypeScript MCP server with layered architecture |
-
 ---
 
 ## Development
@@ -276,9 +270,20 @@ Aegis ships with pre-built architecture templates:
 
 ```bash
 npm run build    # Compile TypeScript
-npm test         # Run all tests (230+)
+npm test         # Run all tests (250+)
 npm run test:watch
 ```
+
+<details>
+<summary>From source</summary>
+
+```bash
+git clone https://github.com/fuwasegu/aegis.git
+cd aegis
+npm install && npm run build
+```
+
+</details>
 
 ### Architecture
 

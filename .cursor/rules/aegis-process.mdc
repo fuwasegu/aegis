@@ -30,10 +30,15 @@ You MUST follow this process for every coding task. No exceptions.
      related_snapshot_id: "<from step 2>",
      payload: {
        target_files: ["<files you edited>"],
-       review_comment: "<what guideline was missing>"
+       review_comment: "<what guideline was missing or insufficient>",
+       target_doc_id: "<optional: base.documents[*].doc_id whose content was insufficient>",
+       missing_doc: "<optional: doc_id that should have been returned but was not>"
      }
    })
    ```
+   - `target_doc_id`: A doc_id from the **base.documents** section of the compile result whose content was insufficient. Do NOT use expanded or template doc_ids.
+   - `missing_doc`: A doc_id that should have been included in the compile result but was absent.
+   - If neither can be identified, `review_comment` alone is sufficient.
 
 ## Rules
 
