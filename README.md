@@ -21,13 +21,6 @@ The database is stored at `.aegis/aegis.db` in the project root. The `.aegis/` d
 
 ## Installation
 
-> [!NOTE]
-> Aegis depends on `better-sqlite3`, which requires a native binary. If `npx` fails with `command not found` or a bindings error, install globally instead:
-> ```bash
-> npm install -g @fuwasegu/aegis
-> ```
-> Then replace `npx -y @fuwasegu/aegis` with `aegis` in the MCP config below.
-
 Aegis uses two MCP surfaces — both are required:
 
 | Surface | Role | Tools |

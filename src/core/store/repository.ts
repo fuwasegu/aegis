@@ -4,7 +4,6 @@
  */
 
 import { createHash } from 'node:crypto';
-import type Database from 'better-sqlite3';
 import type {
   CanonicalVersion,
   CompileLog,
@@ -23,6 +22,7 @@ import type {
   Snapshot,
   TagMapping,
 } from '../types.js';
+import type { AegisDatabase } from './database.js';
 
 export class CycleDetectedError extends Error {
   constructor(sourceDocId: string, targetDocId: string) {
@@ -39,7 +39,7 @@ export class AlreadyInitializedError extends Error {
 }
 
 export class Repository {
-  constructor(private db: Database.Database) {}
+  constructor(private db: AegisDatabase) {}
 
   runInTransaction(fn: () => void): void {
     this.db.transaction(fn)();

@@ -169,7 +169,7 @@ function printModels(): void {
   console.error('  --model hf:user/repo:filename.gguf\n');
 }
 
-function handleDeployAdapters(): void {
+async function handleDeployAdapters(): Promise<void> {
   const args = process.argv.slice(3);
   let projectRoot = process.cwd();
   let targets: string[] | undefined;
@@ -192,7 +192,7 @@ function handleDeployAdapters(): void {
     process.exit(1);
   }
 
-  const db = createDatabase(dbPath);
+  const db = await createDatabase(dbPath);
   const repo = new Repository(db);
   const templatesRoot = join(import.meta.dirname, '../templates');
   const service = new AegisService(repo, templatesRoot, null);
@@ -238,7 +238,7 @@ async function main() {
     writeFileSync(gitignorePath, '*\n');
   }
 
-  const db = createDatabase(dbPath);
+  const db = await createDatabase(dbPath);
   const repo = new Repository(db);
   const tagger = await createTagger(cliArgs);
   const service = new AegisService(repo, templatesRoot, tagger, cliArgs.extraTemplateDirs);

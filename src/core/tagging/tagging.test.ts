@@ -1,6 +1,5 @@
-import type Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createInMemoryDatabase, Repository } from '../store/index.js';
+import { type AegisDatabase, createInMemoryDatabase, Repository } from '../store/index.js';
 import type { IntentTag } from '../types.js';
 import type { IntentTagger } from './tagger.js';
 
@@ -21,11 +20,11 @@ class FakeTagger implements IntentTagger {
 // ============================================================
 
 describe('Repository - Tag Mappings', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
 
     repo.insertDocument({
@@ -296,12 +295,12 @@ describe('IntentTagger Port', () => {
 // ============================================================
 
 describe('Tagger + Repository Integration', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let tagger: IntentTagger;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
 
     repo.insertDocument({

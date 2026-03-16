@@ -1,9 +1,8 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AlreadyInitializedError, createInMemoryDatabase, Repository } from '../store/index.js';
+import { type AegisDatabase, AlreadyInitializedError, createInMemoryDatabase, Repository } from '../store/index.js';
 import { initConfirm, initDetect, PreviewHashMismatchError } from './engine.js';
 import { calculateSpecificity, evaluateWhen } from './template-loader.js';
 
@@ -35,12 +34,12 @@ function createGenericProject(root: string): void {
 
 describe('Init Engine', () => {
   let tmpDir: string;
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'aegis-test-'));
-    db = createInMemoryDatabase();
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
   });
 

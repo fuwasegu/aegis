@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
-import type Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createInMemoryDatabase, Repository } from '../store/index.js';
+import { type AegisDatabase, createInMemoryDatabase, Repository } from '../store/index.js';
 import type { IntentTagger } from '../tagging/tagger.js';
 import type { IntentTag } from '../types.js';
 import { ContextCompiler } from './compiler.js';
@@ -78,12 +77,12 @@ class FailingTagger implements IntentTagger {
 }
 
 describe('ContextCompiler', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let compiler: ContextCompiler;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     compiler = new ContextCompiler(repo);
   });
@@ -495,11 +494,11 @@ describe('ContextCompiler', () => {
 // ============================================================
 
 describe('ContextCompiler — expanded context', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
   });
 

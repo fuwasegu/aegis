@@ -39,8 +39,8 @@ describe('E2E: Full Lifecycle', () => {
   let agentService: AegisService;
   let tmpDir: string;
 
-  beforeEach(() => {
-    const db = createInMemoryDatabase();
+  beforeEach(async () => {
+    const db = await createInMemoryDatabase();
     repo = new Repository(db);
     const tagger = new FakeTagger();
     adminService = new AegisService(repo, TEMPLATES_ROOT, tagger);

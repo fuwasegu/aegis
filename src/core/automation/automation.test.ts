@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import type Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AegisService, SurfaceViolationError } from '../../mcp/services.js';
-import { createInMemoryDatabase, Repository } from '../store/index.js';
+import { type AegisDatabase, createInMemoryDatabase, Repository } from '../store/index.js';
 import type { AnalysisContext, Observation } from '../types.js';
 import type { ObservationAnalyzer } from './analyzer.js';
 import { DocumentImportAnalyzer } from './document-import-analyzer.js';
@@ -216,12 +215,12 @@ describe('RuleBasedAnalyzer', () => {
 // ============================================================
 
 describe('ReviewCorrectionAnalyzer', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let analyzer: ReviewCorrectionAnalyzer;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     analyzer = new ReviewCorrectionAnalyzer(repo);
 
@@ -391,12 +390,12 @@ describe('ReviewCorrectionAnalyzer', () => {
 // ============================================================
 
 describe('ProposeService', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let proposeService: ProposeService;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     proposeService = new ProposeService(repo);
   });
@@ -659,11 +658,11 @@ describe('ProposeService', () => {
 // ============================================================
 
 describe('Repository — automation queries', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
   });
 
@@ -877,12 +876,12 @@ describe('Repository — automation queries', () => {
 // ============================================================
 
 describe('AegisService — analyzeAndPropose', () => {
-  let db: Database.Database;
+  let db: AegisDatabase;
   let repo: Repository;
   let adminService: AegisService;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     repo = new Repository(db);
     adminService = new AegisService(repo, TEMPLATES_ROOT);
   });
@@ -1534,8 +1533,8 @@ describe('AegisService — analyzeAndPropose', () => {
 describe('PrMergedAnalyzer', () => {
   let repo: Repository;
 
-  beforeEach(() => {
-    const db = createInMemoryDatabase();
+  beforeEach(async () => {
+    const db = await createInMemoryDatabase();
     repo = new Repository(db);
 
     // Seed an approved root document
@@ -1668,8 +1667,8 @@ describe('PrMergedAnalyzer', () => {
 describe('ManualNoteAnalyzer', () => {
   let repo: Repository;
 
-  beforeEach(() => {
-    const db = createInMemoryDatabase();
+  beforeEach(async () => {
+    const db = await createInMemoryDatabase();
     repo = new Repository(db);
 
     repo.insertDocument({
@@ -1806,8 +1805,8 @@ describe('DocumentImportAnalyzer', () => {
   let repo: Repository;
   let analyzer: DocumentImportAnalyzer;
 
-  beforeEach(() => {
-    const db = createInMemoryDatabase();
+  beforeEach(async () => {
+    const db = await createInMemoryDatabase();
     repo = new Repository(db);
     analyzer = new DocumentImportAnalyzer(repo);
   });
