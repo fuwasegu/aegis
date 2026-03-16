@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createInMemoryDatabase, Repository } from '../core/store/index.js';
+import { buildObserveContent } from './server.js';
 import { AegisService, ObserveValidationError, SurfaceViolationError } from './services.js';
 
 const TEMPLATES_ROOT = join(import.meta.dirname, '../../templates');
@@ -1047,6 +1048,44 @@ describe('AegisService — list_observations (ADR-008)', () => {
     expect(result.observations[0].target_doc_id).toBe('some-doc');
   });
 
+  it('returns related_compile_id, related_snapshot_id, and target_files', () => {
+    repo.insertObservation({
+      observation_id: 'obs-full',
+      event_type: 'compile_miss',
+      payload: JSON.stringify({
+        review_comment: 'needs more docs',
+        target_files: ['src/a.ts', 'src/b.ts'],
+        target_doc_id: 'my-doc',
+      }),
+      related_compile_id: 'cmp-full',
+      related_snapshot_id: 'snap-full',
+    });
+
+    const result = service.listObservations({}, 'admin');
+    expect(result.observations).toHaveLength(1);
+    const obs = result.observations[0];
+    expect(obs.related_compile_id).toBe('cmp-full');
+    expect(obs.related_snapshot_id).toBe('snap-full');
+    expect(obs.target_files).toEqual(['src/a.ts', 'src/b.ts']);
+    expect(obs.target_doc_id).toBe('my-doc');
+  });
+
+  it('returns null target_files when payload has no target_files', () => {
+    repo.insertObservation({
+      observation_id: 'obs-note',
+      event_type: 'manual_note',
+      payload: JSON.stringify({ content: 'a note' }),
+      related_compile_id: null,
+      related_snapshot_id: null,
+    });
+
+    const result = service.listObservations({}, 'admin');
+    const obs = result.observations[0];
+    expect(obs.target_files).toBeNull();
+    expect(obs.related_compile_id).toBeNull();
+    expect(obs.related_snapshot_id).toBeNull();
+  });
+
   it('returns proposed observations (analyzed with proposal evidence)', () => {
     repo.insertObservation({
       observation_id: 'obs-proposed',
@@ -1150,5 +1189,33 @@ describe('AegisService — list_observations (ADR-008)', () => {
 
     const page3 = service.listObservations({ limit: 2, offset: 4 }, 'admin');
     expect(page3.observations).toHaveLength(1);
+  });
+});
+
+// ============================================================
+// buildObserveContent (server.ts response shape)
+// ============================================================
+
+describe('buildObserveContent', () => {
+  it('returns single content block for non-compile_miss events', () => {
+    const result = { observation_id: 'obs-1' };
+    const content = buildObserveContent(result, 'manual_note');
+    expect(content).toHaveLength(1);
+    expect(JSON.parse(content[0].text)).toEqual(result);
+  });
+
+  it('returns two content blocks for compile_miss (JSON + hint)', () => {
+    const result = { observation_id: 'obs-2' };
+    const content = buildObserveContent(result, 'compile_miss');
+    expect(content).toHaveLength(2);
+    expect(JSON.parse(content[0].text)).toEqual(result);
+    expect(content[1].text).toContain('aegis_list_observations');
+  });
+
+  it('first block is always valid JSON regardless of event type', () => {
+    for (const eventType of ['compile_miss', 'review_correction', 'pr_merged', 'manual_note']) {
+      const content = buildObserveContent({ observation_id: 'x' }, eventType);
+      expect(() => JSON.parse(content[0].text)).not.toThrow();
+    }
   });
 });

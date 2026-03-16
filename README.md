@@ -213,7 +213,7 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `aegis_get_compile_audit` | Retrieve audit log of a past compile |
 | `aegis_init_detect` | Analyze a project to generate initialization preview |
 
-### Admin Surface (additional 10 tools)
+### Admin Surface (additional 11 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -225,6 +225,7 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `aegis_check_upgrade` | Check for template version upgrades |
 | `aegis_apply_upgrade` | Generate proposals for template upgrades |
 | `aegis_archive_observations` | Archive old observations |
+| `aegis_list_observations` | List observations with outcome-based filtering (proposed / skipped / pending) |
 | `aegis_import_doc` | Import existing document content as a new_doc proposal (content-based, no file path) |
 | `aegis_process_observations` | Trigger observation analysis pipeline for pending observations |
 
@@ -241,7 +242,7 @@ npx @fuwasegu/aegis --list-models                           # List available SLM
 
 | Subcommand | Description |
 |------------|-------------|
-| `deploy-adapters` | Deploy IDE adapter configurations (Cursor rules, CLAUDE.md, AGENTS.md) |
+| `deploy-adapters` | Deploy IDE adapter configurations (Cursor rules, CLAUDE.md, AGENTS.md) and Agent Skills |
 
 ## CLI Flags (MCP server mode)
 

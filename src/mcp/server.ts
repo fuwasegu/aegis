@@ -16,6 +16,20 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { type AegisService, ObserveValidationError, type Surface } from './services.js';
 
+type TextContent = { type: 'text'; text: string };
+
+/** Build MCP content blocks for aegis_observe response. Exported for testing. */
+export function buildObserveContent(result: { observation_id: string }, eventType: string): TextContent[] {
+  const content: TextContent[] = [{ type: 'text', text: JSON.stringify(result) }];
+  if (eventType === 'compile_miss') {
+    content.push({
+      type: 'text',
+      text: 'Hint: An admin should run `aegis_list_observations({ outcome: "skipped" })` periodically to triage compile misses that the analyzer could not automatically resolve.',
+    });
+  }
+  return content;
+}
+
 const WORKFLOW_GUIDE = `# Aegis Workflow Guide
 
 ## Core Workflow: Read → Write → Approve
@@ -103,7 +117,7 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       } as any;
       try {
         const result = service.observe(event, surface);
-        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+        return { content: buildObserveContent(result, params.event_type) };
       } catch (e) {
         if (e instanceof ObserveValidationError) {
           return { content: [{ type: 'text', text: e.message }], isError: true };

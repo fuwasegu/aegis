@@ -213,7 +213,7 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `aegis_get_compile_audit` | 過去のコンパイルの監査ログを取得 |
 | `aegis_init_detect` | プロジェクト分析と初期化プレビュー生成 |
 
-### Admin Surface（追加 10 ツール）
+### Admin Surface（追加 11 ツール）
 
 | ツール | 説明 |
 |--------|------|
@@ -225,6 +225,7 @@ aegis_approve_proposal({ proposal_id: "<id>" })
 | `aegis_check_upgrade` | テンプレートバージョンのアップグレード確認 |
 | `aegis_apply_upgrade` | テンプレートアップグレードのプロポーザル生成 |
 | `aegis_archive_observations` | 古いオブザベーションをアーカイブ |
+| `aegis_list_observations` | オブザベーション一覧（outcome フィルタ: proposed / skipped / pending） |
 | `aegis_import_doc` | 既存ドキュメントの内容を new_doc プロポーザルとしてインポート（コンテンツベース、ファイルパス不要） |
 | `aegis_process_observations` | 未分析のオブザベーションに対して分析パイプラインを実行 |
 
@@ -241,7 +242,7 @@ npx @fuwasegu/aegis --list-models                           # 利用可能な SL
 
 | サブコマンド | 説明 |
 |------------|------|
-| `deploy-adapters` | IDE アダプタ設定をデプロイ（Cursor ルール、CLAUDE.md、AGENTS.md） |
+| `deploy-adapters` | IDE アダプタ設定（Cursor ルール、CLAUDE.md、AGENTS.md）と Agent Skills をデプロイ |
 
 ## CLI フラグ（MCP サーバーモード）
 

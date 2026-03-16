@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { deployClaudeAdapter } from '../adapters/claude/generate.js';
 import { deployCodexAdapter } from '../adapters/codex/generate.js';
 import { deployCursorAdapter } from '../adapters/cursor/generate.js';
+import { deploySkills } from '../adapters/skills.js';
 import type { AdapterConfig, AdapterResult } from '../adapters/types.js';
 import type { ObservationAnalyzer } from '../core/automation/analyzer.js';
 import { DocumentImportAnalyzer } from '../core/automation/document-import-analyzer.js';
@@ -401,6 +402,9 @@ export class AegisService {
       outcome: 'proposed' | 'skipped' | 'pending';
       review_comment: string | null;
       target_doc_id: string | null;
+      target_files: string[] | null;
+      related_compile_id: string | null;
+      related_snapshot_id: string | null;
       created_at: string;
       analyzed_at: string | null;
     }>;
@@ -418,10 +422,14 @@ export class AegisService {
       observations: result.observations.map((obs) => {
         let review_comment: string | null = null;
         let target_doc_id: string | null = null;
+        let target_files: string[] | null = null;
         try {
           const payload = JSON.parse(obs.payload);
           review_comment = payload.review_comment ?? null;
           target_doc_id = payload.target_doc_id ?? null;
+          if (Array.isArray(payload.target_files)) {
+            target_files = payload.target_files;
+          }
         } catch {
           // payload parse failure — leave as null
         }
@@ -431,6 +439,9 @@ export class AegisService {
           outcome: obs.outcome,
           review_comment,
           target_doc_id,
+          target_files,
+          related_compile_id: obs.related_compile_id,
+          related_snapshot_id: obs.related_snapshot_id,
           created_at: obs.created_at,
           analyzed_at: obs.analyzed_at,
         };
@@ -566,6 +577,7 @@ export class AegisService {
         } else if (target === 'codex') {
           results.push(deployCodexAdapter(config));
         }
+        results.push(...deploySkills(projectRoot, target));
       } catch (e) {
         results.push({
           filePath: target,
