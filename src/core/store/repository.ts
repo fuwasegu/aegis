@@ -193,36 +193,39 @@ export class Repository {
   getTransitiveDependencies(startDocIds: string[]): { doc_id: string; depth: number }[] {
     if (startDocIds.length === 0) return [];
 
-    // We need to build a temp table for the start set, since recursive CTEs
-    // can't easily take a dynamic IN clause as the base case
-    const tempTableName = `_temp_start_${Date.now()}`;
-    this.db.exec(`CREATE TEMP TABLE ${tempTableName} (doc_id TEXT PRIMARY KEY)`);
-    const insertTemp = this.db.prepare(`INSERT OR IGNORE INTO temp.${tempTableName} (doc_id) VALUES (?)`);
-    for (const id of startDocIds) {
-      insertTemp.run(id);
-    }
+    // Wrapped in a transaction to hold the file lock for the entire TEMP TABLE
+    // lifecycle, preventing mid-operation reloads that would destroy the temp table.
+    let results: { doc_id: string; depth: number }[] = [];
+    this.db.transaction(() => {
+      const tempTableName = `_temp_start_${Date.now()}`;
+      this.db.exec(`CREATE TEMP TABLE ${tempTableName} (doc_id TEXT PRIMARY KEY)`);
+      const insertTemp = this.db.prepare(`INSERT OR IGNORE INTO temp.${tempTableName} (doc_id) VALUES (?)`);
+      for (const id of startDocIds) {
+        insertTemp.run(id);
+      }
 
-    const results = this.db
-      .prepare(`
-      WITH RECURSIVE dep_chain(doc_id, depth) AS (
-        SELECT doc_id, 0 FROM temp.${tempTableName}
-        UNION
-        SELECT e.target_doc_id, dc.depth + 1
-        FROM dep_chain dc
-        JOIN edges e ON e.source_type = 'doc'
-                    AND e.source_value = dc.doc_id
-                    AND e.edge_type = 'doc_depends_on'
-                    AND e.status = 'approved'
-        WHERE dc.depth < 10
-      )
-      SELECT doc_id, MIN(depth) as depth
-      FROM dep_chain
-      GROUP BY doc_id
-      ORDER BY depth ASC
-    `)
-      .all() as { doc_id: string; depth: number }[];
+      results = this.db
+        .prepare(`
+        WITH RECURSIVE dep_chain(doc_id, depth) AS (
+          SELECT doc_id, 0 FROM temp.${tempTableName}
+          UNION
+          SELECT e.target_doc_id, dc.depth + 1
+          FROM dep_chain dc
+          JOIN edges e ON e.source_type = 'doc'
+                      AND e.source_value = dc.doc_id
+                      AND e.edge_type = 'doc_depends_on'
+                      AND e.status = 'approved'
+          WHERE dc.depth < 10
+        )
+        SELECT doc_id, MIN(depth) as depth
+        FROM dep_chain
+        GROUP BY doc_id
+        ORDER BY depth ASC
+      `)
+        .all() as { doc_id: string; depth: number }[];
 
-    this.db.exec(`DROP TABLE temp.${tempTableName}`);
+      this.db.exec(`DROP TABLE temp.${tempTableName}`);
+    })();
     return results;
   }
 
