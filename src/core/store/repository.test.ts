@@ -411,7 +411,7 @@ describe('Repository', () => {
         status: 'pending',
         review_comment: null,
       });
-      expect(() => repo.approveProposal('p-upd')).toThrow('not found or not approved');
+      expect(() => repo.approveProposal('p-upd')).toThrow('not found');
     });
 
     it('deprecate on non-existent entity throws error', () => {
@@ -474,6 +474,183 @@ describe('Repository', () => {
         review_comment: null,
       });
       expect(() => repo.approveProposal('p-dep2')).toThrow('not found or not approved');
+    });
+  });
+
+  describe('source_path support', () => {
+    it('inserts and retrieves document with source_path', () => {
+      repo.insertDocument({
+        doc_id: 'sp-doc',
+        title: 'SP',
+        kind: 'guideline',
+        content: 'c',
+        content_hash: hash('c'),
+        status: 'approved',
+        template_origin: null,
+        source_path: '/path/to/file.md',
+      });
+
+      const doc = repo.getDocumentById('sp-doc');
+      expect(doc?.source_path).toBe('/path/to/file.md');
+    });
+
+    it('inserts document with null source_path', () => {
+      repo.insertDocument({
+        doc_id: 'no-sp',
+        title: 'NoSP',
+        kind: 'guideline',
+        content: 'c',
+        content_hash: hash('c'),
+        status: 'approved',
+        template_origin: null,
+        source_path: null,
+      });
+
+      const doc = repo.getDocumentById('no-sp');
+      expect(doc?.source_path).toBeNull();
+    });
+
+    it('getDocumentsWithSourcePath returns only approved docs with source_path', () => {
+      repo.insertDocument({
+        doc_id: 'has-sp',
+        title: 'Has',
+        kind: 'guideline',
+        content: 'c1',
+        content_hash: hash('c1'),
+        status: 'approved',
+        template_origin: null,
+        source_path: '/a.md',
+      });
+      repo.insertDocument({
+        doc_id: 'no-sp',
+        title: 'No',
+        kind: 'guideline',
+        content: 'c2',
+        content_hash: hash('c2'),
+        status: 'approved',
+        template_origin: null,
+        source_path: null,
+      });
+      repo.insertDocument({
+        doc_id: 'dep-sp',
+        title: 'Dep',
+        kind: 'guideline',
+        content: 'c3',
+        content_hash: hash('c3'),
+        status: 'deprecated',
+        template_origin: null,
+        source_path: '/b.md',
+      });
+
+      const result = repo.getDocumentsWithSourcePath();
+      expect(result).toHaveLength(1);
+      expect(result[0].doc_id).toBe('has-sp');
+    });
+
+    it('_applyUpdateDoc updates deprecated doc to approved', () => {
+      repo.insertDocument({
+        doc_id: 'dep-doc',
+        title: 'Deprecated',
+        kind: 'guideline',
+        content: 'old',
+        content_hash: hash('old'),
+        status: 'deprecated',
+        template_origin: null,
+        source_path: null,
+      });
+
+      repo.insertProposal({
+        proposal_id: 'p-reactivate',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({ doc_id: 'dep-doc', content: 'new', content_hash: hash('new') }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      repo.approveProposal('p-reactivate');
+      const doc = repo.getDocumentById('dep-doc');
+      expect(doc?.status).toBe('approved');
+      expect(doc?.content).toBe('new');
+    });
+
+    it('_applyUpdateDoc supports source_path in payload', () => {
+      repo.insertDocument({
+        doc_id: 'upd-sp',
+        title: 'T',
+        kind: 'guideline',
+        content: 'c',
+        content_hash: hash('c'),
+        status: 'approved',
+        template_origin: null,
+        source_path: null,
+      });
+
+      repo.insertProposal({
+        proposal_id: 'p-upd-sp',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({
+          doc_id: 'upd-sp',
+          content: 'new',
+          content_hash: hash('new'),
+          source_path: '/new/path.md',
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      repo.approveProposal('p-upd-sp');
+      const doc = repo.getDocumentById('upd-sp');
+      expect(doc?.source_path).toBe('/new/path.md');
+    });
+
+    it('_applyModifications allows source_path for new_doc and update_doc', () => {
+      repo.insertProposal({
+        proposal_id: 'p-mod',
+        proposal_type: 'new_doc',
+        payload: JSON.stringify({
+          doc_id: 'mod-doc',
+          title: 'T',
+          kind: 'guideline',
+          content: 'c',
+          content_hash: hash('c'),
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      repo.approveProposal('p-mod', { source_path: '/modified/path.md' });
+      const doc = repo.getDocumentById('mod-doc');
+      expect(doc?.source_path).toBe('/modified/path.md');
+    });
+
+    it('update_doc approve applies tag mappings when tags are present', () => {
+      repo.insertDocument({
+        doc_id: 'tag-upd',
+        title: 'T',
+        kind: 'guideline',
+        content: 'c',
+        content_hash: hash('c'),
+        status: 'approved',
+        template_origin: null,
+        source_path: null,
+      });
+
+      repo.insertProposal({
+        proposal_id: 'p-tag-upd',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({
+          doc_id: 'tag-upd',
+          content: 'new',
+          content_hash: hash('new'),
+          tags: ['auth', 'security'],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      repo.approveProposal('p-tag-upd');
+      const tags = repo.getTagsForDocument('tag-upd');
+      expect(tags.map((t) => t.tag).sort()).toEqual(['auth', 'security']);
     });
   });
 });

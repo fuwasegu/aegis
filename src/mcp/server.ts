@@ -5,7 +5,7 @@
  * Surface separation (INV-6):
  * - Agent Surface: compile_context, observe, get_compile_audit, init_detect (4 tools)
  * - Admin Surface: agent tools + init_confirm,
- *                  list/get/approve/reject_proposals, list_observations (15 tools total)
+ *                  list/get/approve/reject_proposals, list_observations, sync_docs (16 tools total)
  * - propose is NOT exposed (internal only)
  *
  * init_detect is on both surfaces (read-only preview).
@@ -281,9 +281,16 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
 
     server.tool(
       'aegis_import_doc',
-      'Import an existing document into Canonical Knowledge. Creates a document_import observation and generates new_doc/add_edge proposals. Content and metadata must be provided by the caller.',
+      'Import an existing document into Canonical Knowledge. Creates a document_import observation and generates new_doc/add_edge proposals. Provide content directly or file_path to read from disk.',
       {
-        content: z.string().describe('Document content (Markdown body)'),
+        content: z
+          .string()
+          .optional()
+          .describe('Document content (Markdown body). Either content or file_path is required.'),
+        file_path: z
+          .string()
+          .optional()
+          .describe('Absolute path to a file to read as document content. Takes priority over content.'),
         doc_id: z.string().describe('Document ID (lowercase alphanumeric, hyphens, underscores)'),
         title: z.string().describe('Document title'),
         kind: z.enum(['guideline', 'pattern', 'constraint', 'template', 'reference']).describe('Document kind'),
@@ -299,7 +306,10 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
           .optional()
           .describe('DAG edge hints for connecting the document'),
         tags: z.array(z.string()).optional().describe('Tags for tag_mappings (applied on approve)'),
-        source_path: z.string().optional().describe('Original file path (provenance metadata)'),
+        source_path: z
+          .string()
+          .optional()
+          .describe('Original file path (provenance metadata). Auto-set from file_path if not provided.'),
       },
       async (params) => {
         try {
@@ -349,6 +359,25 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         } catch (e: any) {
           return { content: [{ type: 'text', text: `Processing failed: ${e.message}` }], isError: true };
+        }
+      },
+    );
+
+    server.tool(
+      'aegis_sync_docs',
+      'Synchronize imported documents with their source files. Detects stale documents via content_hash and creates update_doc proposals.',
+      {
+        doc_ids: z
+          .array(z.string())
+          .optional()
+          .describe('Specific document IDs to sync. If omitted, syncs all documents with source_path.'),
+      },
+      async (params) => {
+        try {
+          const result = service.syncDocs({ doc_ids: params.doc_ids }, surface);
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        } catch (e: any) {
+          return { content: [{ type: 'text', text: `Sync failed: ${e.message}` }], isError: true };
         }
       },
     );

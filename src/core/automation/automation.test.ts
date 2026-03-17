@@ -1966,4 +1966,98 @@ describe('DocumentImportAnalyzer', () => {
 
     expect(result.drafts[0].payload.source_path).toBe('/path/to/original.md');
   });
+
+  it('generates update_doc when doc_id already exists (approved)', async () => {
+    repo.insertDocument({
+      doc_id: 'existing-doc',
+      title: 'Existing',
+      kind: 'guideline',
+      content: 'old content',
+      content_hash: 'oldhash',
+      status: 'approved',
+      template_origin: null,
+      source_path: null,
+    });
+
+    const ctx = makeContext({
+      content: 'new content',
+      doc_id: 'existing-doc',
+      title: 'Existing Updated',
+      kind: 'guideline',
+    });
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts[0].proposal_type).toBe('update_doc');
+    expect(result.drafts[0].payload.doc_id).toBe('existing-doc');
+    expect(result.drafts[0].payload.content).toBe('new content');
+    expect(result.drafts[0].payload.title).toBe('Existing Updated');
+  });
+
+  it('generates update_doc when doc_id exists with non-approved status', async () => {
+    repo.insertDocument({
+      doc_id: 'deprecated-doc',
+      title: 'Deprecated',
+      kind: 'guideline',
+      content: 'old',
+      content_hash: 'h',
+      status: 'deprecated',
+      template_origin: null,
+      source_path: null,
+    });
+
+    const ctx = makeContext({
+      content: 'revived content',
+      doc_id: 'deprecated-doc',
+      title: 'Revived',
+      kind: 'guideline',
+    });
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts[0].proposal_type).toBe('update_doc');
+  });
+
+  it('generates new_doc when doc_id does not exist', async () => {
+    const ctx = makeContext({
+      content: 'brand new',
+      doc_id: 'brand-new-doc',
+      title: 'Brand New',
+      kind: 'pattern',
+    });
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts[0].proposal_type).toBe('new_doc');
+  });
+
+  it('includes tags in update_doc payload for existing doc', async () => {
+    repo.insertDocument({
+      doc_id: 'tagged-existing',
+      title: 'Tagged',
+      kind: 'guideline',
+      content: 'old',
+      content_hash: 'h',
+      status: 'approved',
+      template_origin: null,
+      source_path: null,
+    });
+
+    const ctx = makeContext({
+      content: 'new content',
+      doc_id: 'tagged-existing',
+      title: 'Tagged Updated',
+      kind: 'guideline',
+      tags: ['auth', 'security'],
+    });
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts[0].proposal_type).toBe('update_doc');
+    expect(result.drafts[0].payload.tags).toEqual(['auth', 'security']);
+  });
 });

@@ -387,6 +387,10 @@ function applyMigrations(db: AegisDatabase): void {
   if (!hasColumn('observations', 'analyzed_at')) {
     db.exec('ALTER TABLE observations ADD COLUMN analyzed_at TEXT');
   }
+
+  if (!hasColumn('documents', 'source_path')) {
+    db.exec('ALTER TABLE documents ADD COLUMN source_path TEXT');
+  }
 }
 
 export async function createInMemoryDatabase(): Promise<AegisDatabase> {

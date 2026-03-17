@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS documents (
     status          TEXT NOT NULL DEFAULT 'draft'
                     CHECK (status IN ('draft', 'proposed', 'approved', 'deprecated')),
     template_origin TEXT,
+    source_path     TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );

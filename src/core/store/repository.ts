@@ -80,10 +80,29 @@ export class Repository {
   insertDocument(doc: Omit<Document, 'created_at' | 'updated_at'>): void {
     this.db
       .prepare(`
-      INSERT INTO documents (doc_id, title, kind, content, content_hash, status, template_origin)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO documents (doc_id, title, kind, content, content_hash, status, template_origin, source_path)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `)
-      .run(doc.doc_id, doc.title, doc.kind, doc.content, doc.content_hash, doc.status, doc.template_origin ?? null);
+      .run(
+        doc.doc_id,
+        doc.title,
+        doc.kind,
+        doc.content,
+        doc.content_hash,
+        doc.status,
+        doc.template_origin ?? null,
+        doc.source_path ?? null,
+      );
+  }
+
+  getDocumentById(docId: string): Document | undefined {
+    return this.db.prepare('SELECT * FROM documents WHERE doc_id = ?').get(docId) as Document | undefined;
+  }
+
+  getDocumentsWithSourcePath(): Document[] {
+    return this.db
+      .prepare("SELECT * FROM documents WHERE source_path IS NOT NULL AND status = 'approved'")
+      .all() as Document[];
   }
 
   setDocumentTemplateOrigin(docId: string, origin: string): void {
@@ -582,6 +601,11 @@ export class Repository {
         }
       } else if (proposal.proposal_type === 'update_doc') {
         this._applyUpdateDoc(payload);
+        if (Array.isArray(payload.tags) && payload.tags.length > 0 && payload.doc_id) {
+          for (const tag of payload.tags as string[]) {
+            this.upsertTagMapping({ tag, doc_id: payload.doc_id as string, confidence: 1.0, source: 'manual' });
+          }
+        }
       } else if (proposal.proposal_type === 'deprecate') {
         this._applyDeprecate(payload);
       }
@@ -631,8 +655,8 @@ export class Repository {
     modifications: Record<string, unknown>,
   ): void {
     const allowedFields: Record<string, string[]> = {
-      new_doc: ['title', 'content', 'kind'],
-      update_doc: ['title', 'content'],
+      new_doc: ['title', 'content', 'kind', 'source_path'],
+      update_doc: ['title', 'content', 'source_path'],
       add_edge: ['priority', 'source_value', 'target_doc_id'],
       deprecate: [],
       bootstrap: [],
@@ -684,23 +708,40 @@ export class Repository {
   }
 
   private _applyNewDoc(payload: Omit<Document, 'created_at' | 'updated_at' | 'status'>): void {
-    this.insertDocument({ ...payload, status: 'approved' });
+    this.insertDocument({
+      ...payload,
+      template_origin: payload.template_origin ?? null,
+      source_path: payload.source_path ?? null,
+      status: 'approved',
+    });
   }
 
-  private _applyUpdateDoc(payload: { doc_id: string; content: string; content_hash: string; title?: string }): void {
-    // Verify target exists and is approved
-    const existing = this.db
-      .prepare("SELECT doc_id FROM documents WHERE doc_id = ? AND status = 'approved'")
-      .get(payload.doc_id);
+  private _applyUpdateDoc(payload: {
+    doc_id: string;
+    content: string;
+    content_hash: string;
+    title?: string;
+    source_path?: string;
+  }): void {
+    const existing = this.db.prepare('SELECT doc_id FROM documents WHERE doc_id = ?').get(payload.doc_id);
     if (!existing) {
-      throw new Error(`Cannot update document '${payload.doc_id}': not found or not approved`);
+      throw new Error(`Cannot update document '${payload.doc_id}': not found`);
     }
 
-    const sets: string[] = ['content = ?', 'content_hash = ?', "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"];
+    const sets: string[] = [
+      'content = ?',
+      'content_hash = ?',
+      "status = 'approved'",
+      "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+    ];
     const params: unknown[] = [payload.content, payload.content_hash];
     if (payload.title) {
       sets.push('title = ?');
       params.push(payload.title);
+    }
+    if (payload.source_path !== undefined) {
+      sets.push('source_path = ?');
+      params.push(payload.source_path);
     }
     params.push(payload.doc_id);
     this.db.prepare(`UPDATE documents SET ${sets.join(', ')} WHERE doc_id = ?`).run(...params);

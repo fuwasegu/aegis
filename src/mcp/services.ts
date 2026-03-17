@@ -6,6 +6,8 @@
  * No business logic lives here — only delegation and surface authorization.
  */
 
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { v4 as uuidv4 } from 'uuid';
 import { deployClaudeAdapter } from '../adapters/claude/generate.js';
 import { deployCodexAdapter } from '../adapters/codex/generate.js';
@@ -456,7 +458,8 @@ export class AegisService {
    */
   async importDoc(
     params: {
-      content: string;
+      content?: string;
+      file_path?: string;
       doc_id: string;
       title: string;
       kind: string;
@@ -472,8 +475,24 @@ export class AegisService {
   }> {
     this.assertAdmin('aegis_import_doc', surface);
 
-    const payload = { ...params };
-    this.validateDocumentImportPayload(payload as Record<string, unknown>);
+    const payload: Record<string, unknown> = { ...params };
+
+    if (params.file_path) {
+      if (!existsSync(params.file_path)) {
+        throw new Error(`File not found: ${params.file_path}`);
+      }
+      payload.content = readFileSync(params.file_path, 'utf-8');
+      if (!params.source_path) {
+        payload.source_path = params.file_path;
+      }
+      delete payload.file_path;
+    }
+
+    if (!payload.content && !params.file_path) {
+      throw new Error('Either content or file_path is required');
+    }
+
+    this.validateDocumentImportPayload(payload);
 
     const observationId = uuidv4();
     this.repo.insertObservation({
@@ -499,6 +518,134 @@ export class AegisService {
       observation_id: observationId,
       warnings,
     };
+  }
+
+  /**
+   * Synchronize documents that have a source_path with their source files.
+   * Detects stale documents via content_hash comparison and creates
+   * update_doc proposals with full evidence chain (P-3 compliant).
+   */
+  syncDocs(
+    params: { doc_ids?: string[] },
+    surface: Surface,
+  ): {
+    checked: number;
+    up_to_date: number;
+    proposals_created: string[];
+    skipped_pending: string[];
+    not_found: string[];
+  } {
+    this.assertAdmin('aegis_sync_docs', surface);
+
+    let docs = this.repo.getDocumentsWithSourcePath();
+    if (params.doc_ids && params.doc_ids.length > 0) {
+      const filterSet = new Set(params.doc_ids);
+      docs = docs.filter((d) => filterSet.has(d.doc_id));
+    }
+
+    const up_to_date_ids: string[] = [];
+    const not_found: string[] = [];
+    const skipped_pending: string[] = [];
+
+    const observationIds: string[] = [];
+    const drafts: Array<{ draft: import('../core/types.js').ProposalDraft; obsId: string }> = [];
+
+    for (const doc of docs) {
+      if (!existsSync(doc.source_path!)) {
+        not_found.push(doc.doc_id);
+        continue;
+      }
+
+      const fileContent = readFileSync(doc.source_path!, 'utf-8');
+      const fileHash = createHash('sha256').update(fileContent).digest('hex');
+
+      if (fileHash === doc.content_hash) {
+        up_to_date_ids.push(doc.doc_id);
+        continue;
+      }
+
+      const pendingUpdateDocs = this.repo.getPendingProposalsByType('update_doc');
+      const hasPending = pendingUpdateDocs.some((p) => {
+        const pl = JSON.parse(p.payload) as Record<string, unknown>;
+        return pl.doc_id === doc.doc_id;
+      });
+      if (hasPending) {
+        skipped_pending.push(doc.doc_id);
+        continue;
+      }
+
+      const obsId = uuidv4();
+      this.repo.insertObservation({
+        observation_id: obsId,
+        event_type: 'document_import',
+        payload: JSON.stringify({
+          doc_id: doc.doc_id,
+          title: doc.title,
+          kind: doc.kind,
+          content: fileContent,
+          source_path: doc.source_path,
+        }),
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
+      observationIds.push(obsId);
+
+      drafts.push({
+        obsId,
+        draft: {
+          proposal_type: 'update_doc',
+          payload: {
+            doc_id: doc.doc_id,
+            content: fileContent,
+            content_hash: fileHash,
+            source_path: doc.source_path,
+          },
+          evidence_observation_ids: [obsId],
+        },
+      });
+    }
+
+    if (drafts.length === 0) {
+      return {
+        checked: docs.length,
+        up_to_date: up_to_date_ids.length,
+        proposals_created: [],
+        skipped_pending,
+        not_found,
+      };
+    }
+
+    this.repo.markObservationsAnalyzed(observationIds);
+
+    try {
+      const proposeService = new ProposeService(this.repo);
+      const result = proposeService.propose(drafts.map((d) => d.draft));
+
+      if (result.skipped_duplicate_count > 0) {
+        const linkedObsIds = new Set<string>();
+        for (const proposalId of result.created_proposal_ids) {
+          const evidence = this.repo.getProposalEvidence(proposalId);
+          for (const e of evidence) {
+            linkedObsIds.add(e.observation_id);
+          }
+        }
+        const orphanObsIds = observationIds.filter((id) => !linkedObsIds.has(id));
+        if (orphanObsIds.length > 0) {
+          this.repo.resetObservationsAnalyzed(orphanObsIds);
+        }
+      }
+
+      return {
+        checked: docs.length,
+        up_to_date: up_to_date_ids.length,
+        proposals_created: result.created_proposal_ids,
+        skipped_pending,
+        not_found,
+      };
+    } catch (err) {
+      this.repo.resetObservationsAnalyzed(observationIds);
+      throw err;
+    }
   }
 
   /**

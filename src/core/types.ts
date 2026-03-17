@@ -18,6 +18,7 @@ export interface Document {
   content_hash: string;
   status: EntityStatus;
   template_origin: string | null;
+  source_path: string | null;
   created_at: string;
   updated_at: string;
 }
