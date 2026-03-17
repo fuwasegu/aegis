@@ -1192,6 +1192,267 @@ describe('AegisService — list_observations (ADR-008)', () => {
 });
 
 // ============================================================
+// importDoc with file_path
+// ============================================================
+
+describe('AegisService — importDoc file_path', () => {
+  let db: AegisDatabase;
+  let repo: Repository;
+  let service: AegisService;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+    service = new AegisService(repo, TEMPLATES_ROOT);
+    tmpDir = mkdtempSync(join(tmpdir(), 'aegis-fp-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('reads content from file_path', async () => {
+    const filePath = join(tmpDir, 'doc.md');
+    writeFileSync(filePath, '# Full Content\nBody text here');
+
+    const result = await service.importDoc(
+      { file_path: filePath, doc_id: 'fp-doc', title: 'FP Doc', kind: 'guideline' },
+      'admin',
+    );
+
+    expect(result.proposal_ids.length).toBeGreaterThan(0);
+    const proposal = repo.getProposal(result.proposal_ids[0]);
+    const payload = JSON.parse(proposal!.payload);
+    expect(payload.content).toBe('# Full Content\nBody text here');
+  });
+
+  it('file_path takes priority over content', async () => {
+    const filePath = join(tmpDir, 'priority.md');
+    writeFileSync(filePath, 'file content');
+
+    const result = await service.importDoc(
+      { file_path: filePath, content: 'inline content', doc_id: 'prio-doc', title: 'Prio', kind: 'guideline' },
+      'admin',
+    );
+
+    const proposal = repo.getProposal(result.proposal_ids[0]);
+    const payload = JSON.parse(proposal!.payload);
+    expect(payload.content).toBe('file content');
+  });
+
+  it('auto-sets source_path from file_path when not provided', async () => {
+    const filePath = join(tmpDir, 'auto-source.md');
+    writeFileSync(filePath, 'content');
+
+    const result = await service.importDoc(
+      { file_path: filePath, doc_id: 'auto-src', title: 'Auto', kind: 'reference' },
+      'admin',
+    );
+
+    const obs = repo.getObservation(result.observation_id);
+    const payload = JSON.parse(obs!.payload);
+    expect(payload.source_path).toBe(filePath);
+  });
+
+  it('does not override explicit source_path', async () => {
+    const filePath = join(tmpDir, 'explicit.md');
+    writeFileSync(filePath, 'content');
+
+    const result = await service.importDoc(
+      { file_path: filePath, doc_id: 'explicit-src', title: 'Ex', kind: 'guideline', source_path: '/custom/path' },
+      'admin',
+    );
+
+    const obs = repo.getObservation(result.observation_id);
+    const payload = JSON.parse(obs!.payload);
+    expect(payload.source_path).toBe('/custom/path');
+  });
+
+  it('throws on non-existent file_path', async () => {
+    await expect(
+      service.importDoc(
+        { file_path: '/nonexistent/path.md', doc_id: 'bad-fp', title: 'Bad', kind: 'guideline' },
+        'admin',
+      ),
+    ).rejects.toThrow('File not found');
+  });
+
+  it('throws when neither content nor file_path provided', async () => {
+    await expect(service.importDoc({ doc_id: 'no-content', title: 'NC', kind: 'guideline' }, 'admin')).rejects.toThrow(
+      'Either content or file_path is required',
+    );
+  });
+});
+
+// ============================================================
+// syncDocs
+// ============================================================
+
+describe('AegisService — syncDocs', () => {
+  let db: AegisDatabase;
+  let repo: Repository;
+  let service: AegisService;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+    service = new AegisService(repo, TEMPLATES_ROOT);
+    tmpDir = mkdtempSync(join(tmpdir(), 'aegis-sync-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function insertApprovedDoc(docId: string, content: string, sourcePath: string) {
+    const contentHash = hash(content);
+    repo.insertDocument({
+      doc_id: docId,
+      title: `Doc ${docId}`,
+      kind: 'guideline',
+      content,
+      content_hash: contentHash,
+      status: 'approved',
+      template_origin: null,
+      source_path: sourcePath,
+    });
+  }
+
+  it('detects stale document and creates update_doc proposal with evidence', () => {
+    const filePath = join(tmpDir, 'stale.md');
+    writeFileSync(filePath, 'original');
+    insertApprovedDoc('stale-doc', 'original', filePath);
+
+    writeFileSync(filePath, 'updated content');
+    const result = service.syncDocs({}, 'admin');
+
+    expect(result.checked).toBe(1);
+    expect(result.proposals_created).toHaveLength(1);
+    expect(result.up_to_date).toBe(0);
+
+    const proposal = repo.getProposal(result.proposals_created[0]);
+    expect(proposal!.proposal_type).toBe('update_doc');
+    const payload = JSON.parse(proposal!.payload);
+    expect(payload.content).toBe('updated content');
+    expect(payload.doc_id).toBe('stale-doc');
+
+    const evidence = repo.getProposalEvidence(result.proposals_created[0]);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].event_type).toBe('document_import');
+  });
+
+  it('reports up_to_date when file has not changed', () => {
+    const filePath = join(tmpDir, 'fresh.md');
+    writeFileSync(filePath, 'same content');
+    insertApprovedDoc('fresh-doc', 'same content', filePath);
+
+    const result = service.syncDocs({}, 'admin');
+    expect(result.up_to_date).toBe(1);
+    expect(result.proposals_created).toHaveLength(0);
+  });
+
+  it('reports not_found when source file is missing', () => {
+    insertApprovedDoc('missing-doc', 'content', '/nonexistent/file.md');
+
+    const result = service.syncDocs({}, 'admin');
+    expect(result.not_found).toContain('missing-doc');
+    expect(result.proposals_created).toHaveLength(0);
+  });
+
+  it('skips documents with pending update_doc proposals', () => {
+    const filePath = join(tmpDir, 'pending.md');
+    writeFileSync(filePath, 'original');
+    insertApprovedDoc('pending-doc', 'original', filePath);
+    writeFileSync(filePath, 'changed');
+
+    repo.insertProposal({
+      proposal_id: 'existing-prop',
+      proposal_type: 'update_doc',
+      payload: JSON.stringify({ doc_id: 'pending-doc', content: 'x', content_hash: hash('x') }),
+      status: 'pending',
+      review_comment: null,
+    });
+
+    const result = service.syncDocs({}, 'admin');
+    expect(result.skipped_pending).toContain('pending-doc');
+    expect(result.proposals_created).toHaveLength(0);
+  });
+
+  it('marks sync observations as analyzed', () => {
+    const filePath = join(tmpDir, 'analyzed.md');
+    writeFileSync(filePath, 'original');
+    insertApprovedDoc('analyzed-doc', 'original', filePath);
+    writeFileSync(filePath, 'changed');
+
+    service.syncDocs({}, 'admin');
+
+    const unanalyzed = repo.getUnanalyzedObservations('document_import');
+    expect(unanalyzed).toHaveLength(0);
+  });
+
+  it('filters by doc_ids when specified', () => {
+    const file1 = join(tmpDir, 'a.md');
+    const file2 = join(tmpDir, 'b.md');
+    writeFileSync(file1, 'old-a');
+    writeFileSync(file2, 'old-b');
+    insertApprovedDoc('doc-a', 'old-a', file1);
+    insertApprovedDoc('doc-b', 'old-b', file2);
+    writeFileSync(file1, 'new-a');
+    writeFileSync(file2, 'new-b');
+
+    const result = service.syncDocs({ doc_ids: ['doc-a'] }, 'admin');
+    expect(result.checked).toBe(1);
+    expect(result.proposals_created).toHaveLength(1);
+  });
+
+  it('creates observation with full document_import contract payload', () => {
+    const filePath = join(tmpDir, 'contract.md');
+    writeFileSync(filePath, 'original');
+    insertApprovedDoc('contract-doc', 'original', filePath);
+    writeFileSync(filePath, 'new content');
+
+    service.syncDocs({}, 'admin');
+
+    const allObs = repo.getUnanalyzedObservations('document_import');
+    expect(allObs).toHaveLength(0);
+
+    const { observations } = repo.listObservations({ event_type: 'document_import' }, 100, 0);
+    const syncObs = observations.find((o) => {
+      const p = JSON.parse(o.payload);
+      return p.doc_id === 'contract-doc';
+    });
+    expect(syncObs).toBeDefined();
+    const obsPayload = JSON.parse(syncObs!.payload);
+    expect(obsPayload.title).toBe('Doc contract-doc');
+    expect(obsPayload.kind).toBe('guideline');
+    expect(obsPayload.content).toBe('new content');
+    expect(obsPayload.source_path).toBeTruthy();
+  });
+
+  it('reject and re-sync creates new observation and proposal', () => {
+    const filePath = join(tmpDir, 'reject.md');
+    writeFileSync(filePath, 'original');
+    insertApprovedDoc('reject-doc', 'original', filePath);
+    writeFileSync(filePath, 'v2');
+
+    const r1 = service.syncDocs({}, 'admin');
+    expect(r1.proposals_created).toHaveLength(1);
+
+    repo.rejectProposal(r1.proposals_created[0], 'not yet');
+
+    writeFileSync(filePath, 'v3');
+    const r2 = service.syncDocs({}, 'admin');
+    expect(r2.proposals_created).toHaveLength(1);
+
+    const proposal = repo.getProposal(r2.proposals_created[0]);
+    const payload = JSON.parse(proposal!.payload);
+    expect(payload.content).toBe('v3');
+  });
+});
+
+// ============================================================
 // buildObserveContent (server.ts response shape)
 // ============================================================
 

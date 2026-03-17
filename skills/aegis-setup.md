@@ -50,11 +50,11 @@ After init, `.aegis/` directory is created with the database. It self-manages it
 
 ## Step 3: Import Existing Docs (Optional)
 
-If the project has existing architecture documentation, read the file content and pass it directly:
+If the project has existing architecture documentation, use `file_path` to import directly from disk (recommended to avoid LLM truncation):
 
 ```
 aegis_import_doc({
-  content: "<full markdown content of the document>",
+  file_path: "/absolute/path/to/doc.md",
   doc_id: "my-doc-id",
   title: "My Document",
   kind: "guideline",
@@ -65,8 +65,10 @@ aegis_import_doc({
 })
 ```
 
-Required fields: `content`, `doc_id`, `title`, `kind`.
-Optional fields: `tags`, `edge_hints`, `source_path` (for provenance tracking only).
+Required fields: `doc_id`, `title`, `kind`, and either `content` or `file_path`.
+Optional fields: `tags`, `edge_hints`, `source_path` (auto-set from `file_path` if not provided).
+
+Using `file_path` ensures the full document content is read from disk, avoiding truncation by LLM context windows. Documents imported with `file_path` automatically track `source_path` for later synchronization.
 
 Each import creates a **proposal** (with full evidence chain via observation) that must be approved:
 
@@ -74,6 +76,15 @@ Each import creates a **proposal** (with full evidence chain via observation) th
 aegis_list_proposals({ status: "pending" })
 aegis_approve_proposal({ proposal_id: "<id>" })
 ```
+
+To keep imported documents in sync with their source files:
+
+```
+aegis_sync_docs()                           # Sync all documents with source_path
+aegis_sync_docs({ doc_ids: ["my-doc-id"] }) # Sync specific documents
+```
+
+This detects changes via content hash comparison and creates `update_doc` proposals for stale documents.
 
 ## Step 4: Verify
 

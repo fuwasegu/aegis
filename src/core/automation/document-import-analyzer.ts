@@ -62,25 +62,48 @@ export class DocumentImportAnalyzer implements ObservationAnalyzer {
     const obsId = ctx.observation.observation_id;
     const drafts: ProposalDraft[] = [];
 
-    const newDocPayload: Record<string, unknown> = {
-      doc_id: payload.doc_id,
-      title: payload.title,
-      kind: payload.kind,
-      content: payload.content,
-      content_hash: contentHash,
-    };
-    if (payload.tags && payload.tags.length > 0) {
-      newDocPayload.tags = payload.tags;
-    }
-    if (payload.source_path) {
-      newDocPayload.source_path = payload.source_path;
-    }
+    const existingDoc = this.repo.getDocumentById(payload.doc_id);
 
-    drafts.push({
-      proposal_type: 'new_doc',
-      payload: newDocPayload,
-      evidence_observation_ids: [obsId],
-    });
+    if (existingDoc) {
+      const updatePayload: Record<string, unknown> = {
+        doc_id: payload.doc_id,
+        content: payload.content,
+        content_hash: contentHash,
+      };
+      if (payload.title) {
+        updatePayload.title = payload.title;
+      }
+      if (payload.source_path) {
+        updatePayload.source_path = payload.source_path;
+      }
+      if (payload.tags && payload.tags.length > 0) {
+        updatePayload.tags = payload.tags;
+      }
+      drafts.push({
+        proposal_type: 'update_doc',
+        payload: updatePayload,
+        evidence_observation_ids: [obsId],
+      });
+    } else {
+      const newDocPayload: Record<string, unknown> = {
+        doc_id: payload.doc_id,
+        title: payload.title,
+        kind: payload.kind,
+        content: payload.content,
+        content_hash: contentHash,
+      };
+      if (payload.tags && payload.tags.length > 0) {
+        newDocPayload.tags = payload.tags;
+      }
+      if (payload.source_path) {
+        newDocPayload.source_path = payload.source_path;
+      }
+      drafts.push({
+        proposal_type: 'new_doc',
+        payload: newDocPayload,
+        evidence_observation_ids: [obsId],
+      });
+    }
 
     if (payload.edge_hints && payload.edge_hints.length > 0) {
       for (const hint of payload.edge_hints) {

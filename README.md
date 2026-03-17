@@ -26,7 +26,7 @@ Aegis uses two MCP surfaces — both are required:
 | Surface | Role | Tools |
 |---------|------|-------|
 | **agent** | Read-only tools for AI coding agents | 4 tools (compile, observe, audit, detect) |
-| **admin** | Initialization, approval, triage | 15 tools (4 shared + 11 admin-only) |
+| **admin** | Initialization, approval, triage | 16 tools (4 shared + 12 admin-only) |
 
 > The agent surface alone cannot initialize a project or approve proposals. This separation ensures AI agents cannot modify architecture rules without human approval. ([INV-6](docs/technical-guide.md))
 
@@ -219,7 +219,7 @@ Aegis ships with pre-built architecture templates. The template is auto-detected
 | `aegis_get_compile_audit` | Retrieve audit log of a past compile |
 | `aegis_init_detect` | Analyze a project to generate initialization preview |
 
-### MCP Tools — Admin Surface (additional 11 tools, 15 total)
+### MCP Tools — Admin Surface (additional 12 tools, 16 total)
 
 | Tool | Description |
 |------|-------------|
@@ -232,8 +232,9 @@ Aegis ships with pre-built architecture templates. The template is auto-detected
 | `aegis_apply_upgrade` | Generate proposals for template upgrades |
 | `aegis_archive_observations` | Archive old observations |
 | `aegis_list_observations` | List observations with outcome-based filtering (proposed / skipped / pending) |
-| `aegis_import_doc` | Import existing document content as a new_doc proposal (content-based, no file path) |
+| `aegis_import_doc` | Import a document into Canonical Knowledge (from `content` or `file_path`) |
 | `aegis_process_observations` | Trigger observation analysis pipeline for pending observations |
+| `aegis_sync_docs` | Synchronize imported documents with their source files |
 
 ### CLI Subcommands
 
