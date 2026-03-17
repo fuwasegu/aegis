@@ -9,16 +9,16 @@ const DEFAULT_RULES_DIR = join('.cursor', 'rules');
 function generateCursorRule(config: AdapterConfig): string {
   return `${AEGIS_MARKER}
 ---
-description: Aegis process enforcement — always consult Aegis before writing code
+description: Aegis process enforcement — always consult Aegis before writing code or answering architecture questions
 globs:
 alwaysApply: true
 ---
 
 # Aegis Process Enforcement
 
-You MUST follow this process for every coding task. No exceptions.
+You MUST consult Aegis for every coding-related interaction — implementation tasks AND questions about architecture, patterns, or conventions. No exceptions.
 
-## Before Writing Code
+## When Writing Code
 
 1. **Create a Plan** — Before touching any file, articulate what you intend to do in natural language.
 2. **Consult Aegis** — Call \`${config.toolNames.compileContext}\` with:
@@ -27,11 +27,8 @@ You MUST follow this process for every coding task. No exceptions.
    - \`command\`: the type of operation (scaffold, refactor, review, etc.)
 3. **Read the returned documents** — Aegis returns architecture guidelines, patterns, and constraints relevant to your task. You MUST follow them.
 4. **Implement** — Write code that adheres to the returned guidelines.
-
-## After Writing Code
-
 5. **Self-Review** — Check your implementation against the guidelines Aegis returned.
-6. **Report Violations** — If you discover that Aegis did not provide a relevant guideline (a "compile miss"), report it:
+6. **Report Compile Misses** — If Aegis did not provide a relevant guideline:
    \`\`\`
    ${config.toolNames.observe}({
      event_type: "compile_miss",
@@ -49,12 +46,22 @@ You MUST follow this process for every coding task. No exceptions.
    - \`missing_doc\`: A doc_id that should have been included in the compile result but was absent.
    - If neither can be identified, \`review_comment\` alone is sufficient.
 
+## When Answering Questions
+
+If the user asks about architecture, patterns, conventions, or how to write code — even without requesting implementation:
+
+1. **Consult Aegis** — Call \`${config.toolNames.compileContext}\` with:
+   - \`target_files\`: concrete file paths relevant to the question (e.g. \`src/Application/CreateOrderUseCase.php\`, not globs)
+   - \`plan\`: the user's question in natural language
+   - \`command\`: \`"review"\`
+2. **Answer using Aegis context** — Base your answer on the guidelines returned by Aegis, supplemented by your own knowledge. Cite specific guidelines when relevant.
+
 ## Rules
 
-- NEVER skip the Aegis consultation step.
+- NEVER skip the Aegis consultation step — for both implementation and questions.
 - NEVER ignore guidelines returned by Aegis.
 - If Aegis returns no documents (empty base), proceed but note this may indicate missing DAG edges.
-- The \`compile_id\` and \`snapshot_id\` from step 2 are required for any observation reporting.
+- The \`compile_id\` and \`snapshot_id\` from the consultation are required for any observation reporting.
 `;
 }
 

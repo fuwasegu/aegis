@@ -18,6 +18,14 @@ export function getSkillsDir(target: string): string | undefined {
   return SKILLS_DIR[target];
 }
 
+/**
+ * Rewrite inter-skill Markdown links from flat source layout (aegis-foo.md)
+ * to deployed per-directory layout (../aegis-foo/SKILL.md).
+ */
+export function rewriteSkillLinks(source: string): string {
+  return source.replace(/\]\(([a-z0-9-]+)\.md(#[^)]*?)?\)/g, '](../$1/SKILL.md$2)');
+}
+
 export function insertMarkerAfterFrontMatter(source: string): string {
   const fmRegex = /^---\r?\n[\s\S]*?\r?\n---\r?\n/;
   const match = source.match(fmRegex);
@@ -42,7 +50,8 @@ export function deploySkills(projectRoot: string, target: string): AdapterResult
     const targetDir = join(projectRoot, skillsRelDir, skillName);
     const targetPath = join(targetDir, 'SKILL.md');
     const source = readFileSync(join(bundledSkillsDir, file), 'utf-8');
-    const content = source.includes(SKILL_MARKER) ? source : insertMarkerAfterFrontMatter(source);
+    const rewritten = rewriteSkillLinks(source);
+    const content = rewritten.includes(SKILL_MARKER) ? rewritten : insertMarkerAfterFrontMatter(rewritten);
 
     mkdirSync(targetDir, { recursive: true });
 

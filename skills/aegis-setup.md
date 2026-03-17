@@ -50,6 +50,8 @@ After init, `.aegis/` directory is created with the database. It self-manages it
 
 ## Step 3: Import Existing Docs (Optional)
 
+For bulk-importing many documents at once, see the [aegis-bulk-import skill](aegis-bulk-import.md).
+
 If the project has existing architecture documentation, use `file_path` to import directly from disk (recommended to avoid LLM truncation):
 
 ```
