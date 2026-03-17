@@ -144,7 +144,34 @@ aegis_compile_context({
 
 編集対象ファイルに関連するアーキテクチャガイドライン、パターン、制約が返されます。
 
-### 3. オブザベーションを報告
+### 3. 既存ドキュメントのインポート（任意）
+
+プロジェクトに既存のアーキテクチャドキュメント（ADR、設計ガイド、コーディング規約等）がある場合、**admin** surface を使って Aegis のナレッジベースに一括インポートできます:
+
+```
+aegis_import_doc({
+  file_path: "/absolute/path/to/docs/architecture-guide.md",
+  doc_id: "architecture-guide",
+  title: "アーキテクチャガイド",
+  kind: "guideline",
+  tags: ["architecture"],
+  edge_hints: [
+    { source_type: "path", source_value: "src/domain/**", edge_type: "path_requires" }
+  ]
+})
+```
+
+`file_path` を使うとディスクから直接内容を読み取るため、LLM コンテキストウィンドウによる切り詰めを回避できます。各インポートは `proposal_ids` を返すので、承認して有効化します。
+
+インポートしたドキュメントをソースファイルと同期するには:
+
+```
+aegis_sync_docs()   # コンテンツハッシュで変更を検知し、update_doc プロポーザルを作成
+```
+
+`aegis_import_doc` と `aegis_sync_docs` はいずれも **admin** surface が必要です。詳細な一括インポート手順は `aegis-bulk-import` skill（`deploy-adapters` でデプロイ）を参照してください。
+
+### 4. オブザベーションを報告
 
 エージェントがガイドラインの不足や修正を発見した場合:
 
@@ -157,7 +184,7 @@ aegis_observe({
 })
 ```
 
-### 4. プロポーザルをレビュー
+### 5. プロポーザルをレビュー
 
 オブザベーションは自動分析されプロポーザルになります。Admin surface でレビュー・承認:
 

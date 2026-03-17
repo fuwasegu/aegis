@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { deployClaudeAdapter } from './claude/generate.js';
 import { deployCodexAdapter } from './codex/generate.js';
 import { deployCursorAdapter } from './cursor/generate.js';
-import { deploySkills, insertMarkerAfterFrontMatter } from './skills.js';
+import { deploySkills, insertMarkerAfterFrontMatter, rewriteSkillLinks } from './skills.js';
 import type { AdapterConfig } from './types.js';
 
 function makeTmpDir(): string {
@@ -249,6 +249,16 @@ describe('Skills deployment (Agent Skills standard)', () => {
     expect(results).toHaveLength(0);
   });
 
+  it('rewrites inter-skill links to deployed layout', () => {
+    const results = deploySkills(tmpDir, 'cursor');
+    const setup = results.find((r) => r.filePath.includes('aegis-setup'));
+    if (setup) {
+      const content = readFileSync(setup.filePath, 'utf-8');
+      expect(content).not.toContain('(aegis-bulk-import.md)');
+      expect(content).toContain('(../aegis-bulk-import/SKILL.md)');
+    }
+  });
+
   it('preserves YAML front matter at file start (marker inserted after)', () => {
     const results = deploySkills(tmpDir, 'cursor');
     for (const r of results) {
@@ -261,6 +271,28 @@ describe('Skills deployment (Agent Skills standard)', () => {
         expect(afterFrontMatter).toContain('<!-- aegis:managed-skill -->');
       }
     }
+  });
+});
+
+describe('rewriteSkillLinks', () => {
+  it('rewrites flat .md links to deployed directory layout', () => {
+    const input = 'see [bulk import](aegis-bulk-import.md) for details';
+    expect(rewriteSkillLinks(input)).toBe('see [bulk import](../aegis-bulk-import/SKILL.md) for details');
+  });
+
+  it('preserves fragment identifiers', () => {
+    const input = 'see [setup step 3](aegis-setup.md#step-3) for details';
+    expect(rewriteSkillLinks(input)).toBe('see [setup step 3](../aegis-setup/SKILL.md#step-3) for details');
+  });
+
+  it('does not rewrite absolute or external URLs', () => {
+    const input = 'see [docs](https://example.com/aegis-setup.md) or [local](/docs/aegis-setup.md)';
+    expect(rewriteSkillLinks(input)).toBe(input);
+  });
+
+  it('rewrites multiple links in one string', () => {
+    const input = '[a](aegis-setup.md) and [b](aegis-bulk-import.md)';
+    expect(rewriteSkillLinks(input)).toBe('[a](../aegis-setup/SKILL.md) and [b](../aegis-bulk-import/SKILL.md)');
   });
 });
 
