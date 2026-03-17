@@ -144,7 +144,34 @@ aegis_compile_context({
 
 Returns architecture guidelines, patterns, and constraints relevant to the files being edited.
 
-### 3. Report observations
+### 3. Import existing documents (optional)
+
+If your project already has architecture documentation (ADRs, design guides, coding conventions, etc.), bulk-import them into the Aegis knowledge base using the **admin** surface:
+
+```
+aegis_import_doc({
+  file_path: "/absolute/path/to/docs/architecture-guide.md",
+  doc_id: "architecture-guide",
+  title: "Architecture Guide",
+  kind: "guideline",
+  tags: ["architecture"],
+  edge_hints: [
+    { source_type: "path", source_value: "src/domain/**", edge_type: "path_requires" }
+  ]
+})
+```
+
+Using `file_path` reads content directly from disk, avoiding truncation by LLM context windows. Each import returns `proposal_ids` — approve them to activate the documents.
+
+To keep imported documents in sync with source files:
+
+```
+aegis_sync_docs()   # detects changes via content hash, creates update_doc proposals
+```
+
+Both `aegis_import_doc` and `aegis_sync_docs` require the **admin** surface. For a detailed step-by-step bulk import workflow, see the `aegis-bulk-import` skill (deployed via `deploy-adapters`).
+
+### 4. Report observations
 
 When the agent notices a missing guideline or a correction:
 
@@ -157,7 +184,7 @@ aegis_observe({
 })
 ```
 
-### 4. Review proposals
+### 5. Review proposals
 
 Observations are analyzed into proposals. Review and approve via admin surface:
 
