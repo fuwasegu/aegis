@@ -649,9 +649,7 @@ describe('ContextCompiler — empty result hints', () => {
 
   it('includes hint alongside expanded results when base is empty', async () => {
     bootstrap(repo, {
-      documents: [
-        { doc_id: 'auth-doc', title: 'Auth Guide', kind: 'guideline', content: 'auth' },
-      ],
+      documents: [{ doc_id: 'auth-doc', title: 'Auth Guide', kind: 'guideline', content: 'auth' }],
       edges: [
         {
           edge_id: 'e1',

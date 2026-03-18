@@ -349,10 +349,7 @@ export class ContextCompiler {
 
   private buildEmptyResultHint(request: CompileRequest): string {
     const MAX_PATTERNS = 20;
-    const lines: string[] = [
-      `No documents matched target_files: [${request.target_files.join(', ')}].`,
-      '',
-    ];
+    const lines: string[] = [`No documents matched target_files: [${request.target_files.join(', ')}].`, ''];
 
     const pathEdges = this.repo.getApprovedEdgesByType('path_requires');
     if (pathEdges.length > 0) {
