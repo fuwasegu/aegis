@@ -55,9 +55,11 @@ Output: documents[] + resolution_path[] + templates[]
 
 Given the same input, **always returns the same output**. This is the fundamental difference from RAG.
 
+- P-1 covers: `base` (documents, resolution_path, templates), `expanded`, `warnings`
+- P-1 excluded: `compile_id` (UUID), `notices` (operational metadata such as adapter version status)
+- `notices` may vary by server runtime state and is not recorded in compile_log
 - Edge sorting is deterministic (→ §2)
 - Document display order is deterministic
-- Every field except UUID (compile_id) is reproducible
 
 ### Complexity
 

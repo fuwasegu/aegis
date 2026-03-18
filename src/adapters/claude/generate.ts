@@ -74,6 +74,9 @@ export function deployClaudeAdapter(config: AdapterConfig): AdapterResult {
 
   if (startIdx !== -1 && endIdx !== -1) {
     const content = existing.slice(0, startIdx) + section + existing.slice(endIdx + AEGIS_END.length);
+    if (content === existing) {
+      return { filePath, status: 'unchanged', content };
+    }
     writeFileSync(filePath, content, 'utf-8');
     return { filePath, status: 'updated', content };
   }

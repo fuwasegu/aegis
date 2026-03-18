@@ -273,8 +273,11 @@ Aegis ships with pre-built architecture templates. The template is auto-detected
 npx @fuwasegu/aegis deploy-adapters                         # Deploy all adapters
 npx @fuwasegu/aegis deploy-adapters --targets cursor,codex  # Deploy specific adapters
 npx @fuwasegu/aegis deploy-adapters --project-root /path    # Specify project root
+npx @fuwasegu/aegis deploy-adapters --db /path/to/aegis.db  # Use custom DB path
 npx @fuwasegu/aegis --list-models                           # List available SLM models
 ```
+
+> **Note**: Version tracking is only updated on full deployments (without `--targets`). Partial deployments will not update the version record, so the "adapter templates may be outdated" notice will persist until a full deployment is run.
 
 ### CLI Flags (MCP server mode)
 

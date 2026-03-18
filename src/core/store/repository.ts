@@ -896,6 +896,28 @@ export class Repository {
     return row.cnt;
   }
 
+  // ============================================================
+  // Adapter Meta (outside Canonical, no approval)
+  // ============================================================
+
+  getAdapterMeta(): { deployed_version: string; deployed_at: string } | undefined {
+    return this.db.prepare('SELECT deployed_version, deployed_at FROM adapter_meta WHERE id = 1').get() as
+      | { deployed_version: string; deployed_at: string }
+      | undefined;
+  }
+
+  upsertAdapterMeta(version: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO adapter_meta (id, deployed_version, deployed_at)
+         VALUES (1, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         ON CONFLICT(id) DO UPDATE SET
+           deployed_version = excluded.deployed_version,
+           deployed_at = excluded.deployed_at`,
+      )
+      .run(version);
+  }
+
   searchArchivedObservations(
     eventType?: string,
     limit = 50,

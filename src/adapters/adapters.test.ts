@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createInMemoryDatabase } from '../core/store/database.js';
+import { Repository } from '../core/store/repository.js';
+import { AegisService } from '../mcp/services.js';
 import { deployClaudeAdapter } from './claude/generate.js';
 import { deployCodexAdapter } from './codex/generate.js';
 import { deployCursorAdapter } from './cursor/generate.js';
 import { deploySkills, insertMarkerAfterFrontMatter, rewriteSkillLinks } from './skills.js';
-import type { AdapterConfig } from './types.js';
+import type { AdapterConfig, AdapterResult } from './types.js';
 
 function makeTmpDir(): string {
   const dir = join(import.meta.dirname, '..', '..', '.tmp-test', randomUUID());
@@ -58,8 +61,18 @@ describe('Cursor adapter', () => {
     deployCursorAdapter(config, RULES_DIR);
     const result = deployCursorAdapter(config, RULES_DIR);
 
-    expect(result.status).toBe('updated');
+    expect(result.status).toBe('unchanged');
     expect(readFileSync(result.filePath, 'utf-8')).toContain('aegis_compile_context');
+  });
+
+  it('returns updated when managed content differs', () => {
+    const config = makeConfig(tmpDir);
+    deployCursorAdapter(config, RULES_DIR);
+    const filePath = join(tmpDir, RULES_DIR, 'aegis-process.mdc');
+    writeFileSync(filePath, '<!-- aegis:managed -->\nOld managed content', 'utf-8');
+
+    const result = deployCursorAdapter(config, RULES_DIR);
+    expect(result.status).toBe('updated');
   });
 
   it('does not overwrite non-managed file (conflict)', () => {
@@ -126,6 +139,14 @@ describe('Claude adapter', () => {
     expect(content).toContain('aegis_compile_context');
     expect(content).not.toContain('old content');
   });
+
+  it('returns unchanged when aegis section is identical', () => {
+    const config = makeConfig(tmpDir);
+    deployClaudeAdapter(config);
+    const result = deployClaudeAdapter(config);
+
+    expect(result.status).toBe('unchanged');
+  });
 });
 
 describe('Codex adapter', () => {
@@ -180,6 +201,14 @@ describe('Codex adapter', () => {
     expect(content).toContain('aegis_compile_context');
     expect(content).not.toContain('old content');
   });
+
+  it('returns unchanged when aegis section is identical', () => {
+    const config = makeConfig(tmpDir);
+    deployCodexAdapter(config);
+    const result = deployCodexAdapter(config);
+
+    expect(result.status).toBe('unchanged');
+  });
 });
 
 describe('Skills deployment (Agent Skills standard)', () => {
@@ -225,12 +254,12 @@ describe('Skills deployment (Agent Skills standard)', () => {
     }
   });
 
-  it('is idempotent — overwrites managed skills', () => {
+  it('is idempotent — unchanged when content identical', () => {
     deploySkills(tmpDir, 'cursor');
     const results = deploySkills(tmpDir, 'cursor');
 
     for (const skill of results) {
-      expect(['created', 'updated']).toContain(skill.status);
+      expect(skill.status).toBe('unchanged');
     }
   });
 
@@ -313,5 +342,84 @@ describe('insertMarkerAfterFrontMatter', () => {
     const source = '# No front matter';
     const result = insertMarkerAfterFrontMatter(source);
     expect(result).toBe('<!-- aegis:managed-skill -->\n# No front matter');
+  });
+});
+
+// ============================================================
+// deploy-adapters version recording integration tests
+// Mirrors the conditional logic in main.ts handleDeployAdapters()
+// ============================================================
+
+function applyVersionRecording(
+  repo: Repository,
+  results: AdapterResult[],
+  targets: string[] | undefined,
+  version: string,
+): void {
+  const isFullDeploy = !targets;
+  const hasFailure = results.some((r) => r.status === 'failed' || r.status === 'conflict');
+  if (isFullDeploy && !hasFailure) {
+    repo.upsertAdapterMeta(version);
+  }
+}
+
+describe('deploy-adapters version recording', () => {
+  let tmpDir: string;
+  let repo: Repository;
+  let service: AegisService;
+  const TEST_VERSION = '99.0.0';
+
+  beforeEach(async () => {
+    tmpDir = makeTmpDir();
+    const db = await createInMemoryDatabase();
+    repo = new Repository(db);
+    const templatesRoot = join(import.meta.dirname, '..', '..', 'templates');
+    service = new AegisService(repo, templatesRoot, null);
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('full deploy + all success → records version', () => {
+    const results = service.deployAdapters(tmpDir);
+    applyVersionRecording(repo, results, undefined, TEST_VERSION);
+
+    const meta = repo.getAdapterMeta();
+    expect(meta).toBeDefined();
+    expect(meta!.deployed_version).toBe(TEST_VERSION);
+  });
+
+  it('full deploy + conflict → does not record version', () => {
+    const rulesDir = join(tmpDir, '.cursor', 'rules');
+    mkdirSync(rulesDir, { recursive: true });
+    writeFileSync(join(rulesDir, 'aegis-process.mdc'), '# Custom rules — not managed by Aegis', 'utf-8');
+
+    const results = service.deployAdapters(tmpDir);
+    expect(results.some((r) => r.status === 'conflict')).toBe(true);
+
+    applyVersionRecording(repo, results, undefined, TEST_VERSION);
+
+    expect(repo.getAdapterMeta()).toBeUndefined();
+  });
+
+  it('partial deploy (--targets) + all success → does not record version', () => {
+    const targets = ['cursor'];
+    const results = service.deployAdapters(tmpDir, targets);
+    expect(results.every((r) => r.status !== 'failed' && r.status !== 'conflict')).toBe(true);
+
+    applyVersionRecording(repo, results, targets, TEST_VERSION);
+
+    expect(repo.getAdapterMeta()).toBeUndefined();
+  });
+
+  it('full deploy updates existing version record', () => {
+    repo.upsertAdapterMeta('1.0.0');
+
+    const results = service.deployAdapters(tmpDir);
+    applyVersionRecording(repo, results, undefined, TEST_VERSION);
+
+    const meta = repo.getAdapterMeta();
+    expect(meta!.deployed_version).toBe(TEST_VERSION);
   });
 });
