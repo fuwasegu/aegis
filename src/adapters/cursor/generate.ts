@@ -50,11 +50,12 @@ You MUST consult Aegis for every coding-related interaction — implementation t
 
 If the user asks about architecture, patterns, conventions, or how to write code — even without requesting implementation:
 
-1. **Consult Aegis** — Call \`${config.toolNames.compileContext}\` with:
-   - \`target_files\`: concrete file paths relevant to the question (e.g. \`src/Application/CreateOrderUseCase.php\`, not globs)
+1. **Identify representative files** — Find 1–3 real file paths in the codebase that are relevant to the question (e.g. \`modules/Member/Application/Member/UpdateMemberInteractor.php\`). Use directory listings or search if needed. Do NOT guess paths or use directories.
+2. **Consult Aegis** — Call \`${config.toolNames.compileContext}\` with:
+   - \`target_files\`: the real file paths from step 1
    - \`plan\`: the user's question in natural language
    - \`command\`: \`"review"\`
-2. **Answer using Aegis context** — Base your answer on the guidelines returned by Aegis, supplemented by your own knowledge. Cite specific guidelines when relevant.
+3. **Answer using Aegis context** — Base your answer on the guidelines returned by Aegis, supplemented by your own knowledge. Cite specific guidelines when relevant.
 
 ## Rules
 
