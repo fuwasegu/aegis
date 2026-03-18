@@ -683,6 +683,84 @@ describe('ContextCompiler — empty result hints', () => {
 });
 
 // ============================================================
+// Notices Tests (P-1 excluded, operational metadata)
+// ============================================================
+
+describe('ContextCompiler — notices', () => {
+  let db: AegisDatabase;
+  let repo: Repository;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+  });
+
+  it('includes outdated adapter notice when adapterOutdated is true', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'c' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo, null, true);
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+
+    expect(result.notices).toHaveLength(1);
+    expect(result.notices[0]).toContain('deploy-adapters');
+  });
+
+  it('returns empty notices when adapterOutdated is false', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'c' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo, null, false);
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+
+    expect(result.notices).toHaveLength(0);
+  });
+
+  it('returns empty notices by default (no adapterOutdated parameter)', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'c' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+
+    expect(result.notices).toHaveLength(0);
+  });
+});
+
+// ============================================================
 // Expanded Context Tests
 // ============================================================
 

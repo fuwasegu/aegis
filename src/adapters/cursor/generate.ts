@@ -77,6 +77,9 @@ export function deployCursorAdapter(config: AdapterConfig, rulesRelDir?: string)
   if (existsSync(filePath)) {
     const existing = readFileSync(filePath, 'utf-8');
     if (existing.startsWith(AEGIS_MARKER)) {
+      if (content === existing) {
+        return { filePath, status: 'unchanged', content };
+      }
       writeFileSync(filePath, content, 'utf-8');
       return { filePath, status: 'updated', content };
     }

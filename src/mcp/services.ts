@@ -67,8 +67,9 @@ export class AegisService {
     private templatesRoot: string,
     tagger: IntentTagger | null = null,
     private extraTemplateDirs: string[] = [],
+    adapterOutdated = false,
   ) {
-    this.compiler = new ContextCompiler(repo, tagger);
+    this.compiler = new ContextCompiler(repo, tagger, adapterOutdated);
     this.analyzerRegistry = new Map<ObservationEventType, ObservationAnalyzer>([
       ['compile_miss', new RuleBasedAnalyzer()],
       ['review_correction', new ReviewCorrectionAnalyzer(repo)],

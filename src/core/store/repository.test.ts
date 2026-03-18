@@ -653,4 +653,25 @@ describe('Repository', () => {
       expect(tags.map((t) => t.tag).sort()).toEqual(['auth', 'security']);
     });
   });
+
+  describe('Adapter Meta', () => {
+    it('returns undefined when no meta is set', () => {
+      expect(repo.getAdapterMeta()).toBeUndefined();
+    });
+
+    it('upserts and retrieves adapter meta', () => {
+      repo.upsertAdapterMeta('1.0.0');
+      const meta = repo.getAdapterMeta();
+      expect(meta).toBeDefined();
+      expect(meta!.deployed_version).toBe('1.0.0');
+      expect(meta!.deployed_at).toBeTruthy();
+    });
+
+    it('updates version on re-upsert', () => {
+      repo.upsertAdapterMeta('1.0.0');
+      repo.upsertAdapterMeta('2.0.0');
+      const meta = repo.getAdapterMeta();
+      expect(meta!.deployed_version).toBe('2.0.0');
+    });
+  });
 });

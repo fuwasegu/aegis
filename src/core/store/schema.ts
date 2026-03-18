@@ -172,6 +172,17 @@ CREATE TABLE IF NOT EXISTS tag_mappings (
 );
 
 -- ============================================================
+-- Adapter Meta (outside Canonical Knowledge, no approval workflow)
+-- Same pattern as tag_mappings: operational metadata, direct CRUD.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS adapter_meta (
+    id                INTEGER PRIMARY KEY CHECK (id = 1),
+    deployed_version  TEXT NOT NULL,
+    deployed_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- ============================================================
 -- Indexes (§5.3)
 -- ============================================================
 

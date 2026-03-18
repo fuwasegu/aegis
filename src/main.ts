@@ -15,6 +15,7 @@
  *   npx aegis deploy-adapters                    # Deploy all IDE adapters
  *   npx aegis deploy-adapters --targets cursor,codex
  *   npx aegis deploy-adapters --project-root /path/to/project
+ *   npx aegis deploy-adapters --db path/to/aegis.db  # Use custom DB path
  *   npx aegis --list-models                      # List available SLM models
  *
  * SLM is disabled by default (ADR-004). Enable with --slm for expanded context.
@@ -22,7 +23,7 @@
  * DB defaults to .aegis/aegis.db (per project).
  */
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createDatabase } from './core/store/database.js';
@@ -36,6 +37,10 @@ import { OllamaClient } from './expansion/ollama-client.js';
 import { createAegisServer } from './mcp/server.js';
 import type { Surface } from './mcp/services.js';
 import { AegisService } from './mcp/services.js';
+
+const PACKAGE_VERSION: string = JSON.parse(
+  readFileSync(join(import.meta.dirname, '../package.json'), 'utf-8'),
+).version;
 
 const DEFAULT_DB_DIR = '.aegis';
 const DEFAULT_DB_PATH = join(DEFAULT_DB_DIR, 'aegis.db');
@@ -173,6 +178,7 @@ async function handleDeployAdapters(): Promise<void> {
   const args = process.argv.slice(3);
   let projectRoot = process.cwd();
   let targets: string[] | undefined;
+  let customDbPath: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -182,13 +188,16 @@ async function handleDeployAdapters(): Promise<void> {
       case '--targets':
         targets = args[++i].split(',').map((t) => t.trim());
         break;
+      case '--db':
+        customDbPath = args[++i];
+        break;
     }
   }
 
-  const dbPath = join(projectRoot, DEFAULT_DB_PATH);
+  const dbPath = customDbPath ?? join(projectRoot, DEFAULT_DB_PATH);
   if (!existsSync(dbPath)) {
     console.error(`[aegis] Database not found at ${dbPath}`);
-    console.error('[aegis] Run aegis init first, or specify --project-root.');
+    console.error('[aegis] Run aegis init first, or specify --project-root / --db.');
     process.exit(1);
   }
 
@@ -198,9 +207,16 @@ async function handleDeployAdapters(): Promise<void> {
   const service = new AegisService(repo, templatesRoot, null);
   const results = service.deployAdapters(projectRoot, targets);
 
+  const isFullDeploy = !targets;
+  const hasFailure = results.some((r) => r.status === 'failed' || r.status === 'conflict');
+  if (isFullDeploy && !hasFailure) {
+    repo.upsertAdapterMeta(PACKAGE_VERSION);
+  }
+
   const statusIcon: Record<string, string> = {
     created: '+',
     updated: '~',
+    unchanged: '=',
     skipped: '-',
     conflict: '!',
     failed: 'x',
@@ -208,7 +224,7 @@ async function handleDeployAdapters(): Promise<void> {
 
   console.log('\nAdapter deployment results:\n');
   for (const r of results) {
-    console.log(`  [${statusIcon[r.status] ?? '?'}] ${r.status.padEnd(8)} ${r.filePath}`);
+    console.log(`  [${statusIcon[r.status] ?? '?'}] ${r.status.padEnd(10)} ${r.filePath}`);
   }
   console.log('');
 }
@@ -241,7 +257,19 @@ async function main() {
   const db = await createDatabase(dbPath);
   const repo = new Repository(db);
   const tagger = await createTagger(cliArgs);
-  const service = new AegisService(repo, templatesRoot, tagger, cliArgs.extraTemplateDirs);
+
+  let adapterOutdated = false;
+  if (repo.isInitialized()) {
+    const meta = repo.getAdapterMeta();
+    adapterOutdated = !meta || meta.deployed_version !== PACKAGE_VERSION;
+    if (adapterOutdated) {
+      console.error(
+        '[aegis] Adapter templates may be outdated. Run `npx @fuwasegu/aegis deploy-adapters` to update.',
+      );
+    }
+  }
+
+  const service = new AegisService(repo, templatesRoot, tagger, cliArgs.extraTemplateDirs, adapterOutdated);
   const server = createAegisServer(service, surface);
 
   const transport = new StdioServerTransport();

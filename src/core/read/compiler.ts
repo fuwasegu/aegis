@@ -28,6 +28,7 @@ export class ContextCompiler {
   constructor(
     private repo: Repository,
     private tagger: IntentTagger | null = null,
+    private adapterOutdated = false,
   ) {}
 
   /**
@@ -173,6 +174,13 @@ export class ContextCompiler {
       warnings.push(this.buildEmptyResultHint(request));
     }
 
+    const notices: string[] = [];
+    if (this.adapterOutdated) {
+      notices.push(
+        'Aegis adapter templates may be outdated. Run `npx @fuwasegu/aegis deploy-adapters` to update.',
+      );
+    }
+
     const result: CompiledContext = {
       compile_id: compileId,
       snapshot_id: snapshot.snapshot_id,
@@ -183,6 +191,7 @@ export class ContextCompiler {
         templates,
       },
       warnings,
+      notices,
     };
 
     // ── Expanded context (best-effort, non-fatal) ──
@@ -404,6 +413,7 @@ export class ContextCompiler {
       knowledge_version: 0,
       base: { documents: [], resolution_path: [], templates: [] },
       warnings,
+      notices: [],
     };
   }
 }

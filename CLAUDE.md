@@ -46,6 +46,14 @@ npm test               # run all tests
 - **IntentTagger port**: `extractTags(plan) → IntentTag[]` (async, FakeTagger for tests, OllamaIntentTagger for production)
 - **Wired to ContextCompiler**: `plan` + tagger → expanded context via tag_mappings lookup
 
+## Adapter Meta (Outside Canonical Knowledge)
+
+- **Storage**: `adapter_meta` table — separate from Canonical Knowledge, no approval workflow
+- **Same pattern as**: `tag_mappings` (operational metadata, direct CRUD)
+- **Purpose**: Track the package version that last ran a full `deploy-adapters`
+- **Written by**: `deploy-adapters` CLI only (full deploy, no `--targets`, no failures)
+- **Read by**: MCP server startup (to set `adapterOutdated` flag for `notices`)
+
 ## Project Structure
 
 ```

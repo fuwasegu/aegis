@@ -170,6 +170,8 @@ describe('AegisService — compile_context v2 contract', () => {
       expect(edge.target_doc_id).toBeTruthy();
       expect(edge.edge_type).toBeTruthy();
     }
+
+    expect(result.notices).toEqual([]);
   });
 });
 
@@ -423,6 +425,7 @@ describe('AegisService — Integration: separate admin/agent instances', () => {
     expect(compiled.base.documents.length).toBeGreaterThan(0);
     expect(compiled.base.resolution_path.length).toBeGreaterThan(0);
     expect(compiled.warnings).toHaveLength(0);
+    expect(compiled.notices).toEqual([]);
 
     // ── Step 4: get_compile_audit (Agent Surface) ──
     const audit = agentService.getCompileAudit(compiled.compile_id, 'agent');

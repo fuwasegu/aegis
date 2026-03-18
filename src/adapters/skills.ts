@@ -58,8 +58,12 @@ export function deploySkills(projectRoot: string, target: string): AdapterResult
     if (existsSync(targetPath)) {
       const existing = readFileSync(targetPath, 'utf-8');
       if (existing.includes(SKILL_MARKER)) {
-        writeFileSync(targetPath, content, 'utf-8');
-        results.push({ filePath: targetPath, status: 'updated', content });
+        if (existing === content) {
+          results.push({ filePath: targetPath, status: 'unchanged', content });
+        } else {
+          writeFileSync(targetPath, content, 'utf-8');
+          results.push({ filePath: targetPath, status: 'updated', content });
+        }
       } else {
         results.push({ filePath: targetPath, status: 'conflict', content: existing });
       }

@@ -55,9 +55,11 @@ Step 4: doc_depends_on 推移閉包
 
 同じ入力に対して **常に同じ出力** を返す。これが RAG との根本的な違い。
 
+- P-1 の対象: `base`（documents, resolution_path, templates）、`expanded`、`warnings`
+- P-1 の対象外: `compile_id`（UUID）、`notices`（アダプタバージョン状態などの運用メタデータ）
+- `notices` はサーバ実行時の状態により変動し、compile_log には記録されない
 - エッジのソートが決定的（→ §2）
 - ドキュメントの表示順も決定的
-- UUID（compile_id）以外のすべてのフィールドが再現可能
 
 ### 計算量
 

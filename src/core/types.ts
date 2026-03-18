@@ -197,6 +197,8 @@ export interface CompiledContext {
     resolution_path: ResolvedEdge[];
   };
   warnings: string[];
+  /** Operational notices (P-1 excluded): may vary by server runtime state, not recorded in compile_log */
+  notices: string[];
 }
 
 // ============================================================
