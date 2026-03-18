@@ -176,9 +176,7 @@ export class ContextCompiler {
 
     const notices: string[] = [];
     if (this.adapterOutdated) {
-      notices.push(
-        'Aegis adapter templates may be outdated. Run `npx @fuwasegu/aegis deploy-adapters` to update.',
-      );
+      notices.push('Aegis adapter templates may be outdated. Run `npx @fuwasegu/aegis deploy-adapters` to update.');
     }
 
     const result: CompiledContext = {

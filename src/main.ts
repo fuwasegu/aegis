@@ -38,9 +38,7 @@ import { createAegisServer } from './mcp/server.js';
 import type { Surface } from './mcp/services.js';
 import { AegisService } from './mcp/services.js';
 
-const PACKAGE_VERSION: string = JSON.parse(
-  readFileSync(join(import.meta.dirname, '../package.json'), 'utf-8'),
-).version;
+const PACKAGE_VERSION: string = JSON.parse(readFileSync(join(import.meta.dirname, '../package.json'), 'utf-8')).version;
 
 const DEFAULT_DB_DIR = '.aegis';
 const DEFAULT_DB_PATH = join(DEFAULT_DB_DIR, 'aegis.db');
@@ -263,9 +261,7 @@ async function main() {
     const meta = repo.getAdapterMeta();
     adapterOutdated = !meta || meta.deployed_version !== PACKAGE_VERSION;
     if (adapterOutdated) {
-      console.error(
-        '[aegis] Adapter templates may be outdated. Run `npx @fuwasegu/aegis deploy-adapters` to update.',
-      );
+      console.error('[aegis] Adapter templates may be outdated. Run `npx @fuwasegu/aegis deploy-adapters` to update.');
     }
   }
 
