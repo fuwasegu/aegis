@@ -490,6 +490,201 @@ describe('ContextCompiler', () => {
 });
 
 // ============================================================
+// Empty Result Hint Tests
+// ============================================================
+
+describe('ContextCompiler — empty result hints', () => {
+  let db: AegisDatabase;
+  let repo: Repository;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+  });
+
+  it('includes sorted path/command/layer hints when no docs match', async () => {
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'doc-b', title: 'Doc B', kind: 'guideline', content: 'b' },
+        { doc_id: 'doc-a', title: 'Doc A', kind: 'guideline', content: 'a' },
+        { doc_id: 'doc-c', title: 'Doc C', kind: 'guideline', content: 'c' },
+        { doc_id: 'doc-d', title: 'Doc D', kind: 'guideline', content: 'd' },
+      ],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'doc-b',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'modules/**',
+          target_doc_id: 'doc-a',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e3',
+          source_type: 'command',
+          source_value: 'scaffold',
+          target_doc_id: 'doc-c',
+          edge_type: 'command_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e4',
+          source_type: 'layer',
+          source_value: 'Domain',
+          target_doc_id: 'doc-d',
+          edge_type: 'layer_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e5',
+          source_type: 'layer',
+          source_value: 'Application',
+          target_doc_id: 'doc-d',
+          edge_type: 'layer_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['app/UseCases'] });
+
+    expect(result.base.documents).toHaveLength(0);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toBe(
+      [
+        'No documents matched target_files: [app/UseCases].',
+        '',
+        'Registered path patterns (path_requires):',
+        '  modules/** -> doc-a',
+        '  src/** -> doc-b',
+        '',
+        'Registered commands: scaffold',
+        '',
+        'Registered layers (layer_requires): Application, Domain',
+        '',
+        'Ensure target_files are real file paths (not directories) matching the patterns above.',
+        'If the paths are correct but no edges cover them, report a compile_miss.',
+      ].join('\n'),
+    );
+  });
+
+  it('includes only header and footer when no edges exist', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'orphan', title: 'Orphan', kind: 'guideline', content: 'orphan' }],
+      edges: [],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['anything.ts'] });
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toBe(
+      [
+        'No documents matched target_files: [anything.ts].',
+        '',
+        'No edges are registered in the knowledge base.',
+        'If the paths are correct but no edges cover them, report a compile_miss.',
+      ].join('\n'),
+    );
+  });
+
+  it('truncates path patterns beyond MAX_PATTERNS (20)', async () => {
+    const docs = Array.from({ length: 21 }, (_, i) => ({
+      doc_id: `doc-${String(i).padStart(2, '0')}`,
+      title: `Doc ${i}`,
+      kind: 'guideline',
+      content: `content ${i}`,
+    }));
+    const edges = docs.map((d, i) => ({
+      edge_id: `e-${String(i).padStart(2, '0')}`,
+      source_type: 'path' as const,
+      source_value: `pattern-${String(i).padStart(2, '0')}/**`,
+      target_doc_id: d.doc_id,
+      edge_type: 'path_requires' as const,
+      priority: 100,
+    }));
+
+    bootstrap(repo, { documents: docs, edges });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['no-match.ts'] });
+
+    expect(result.warnings).toHaveLength(1);
+    const hint = result.warnings[0];
+    expect(hint).toContain('...and 1 more');
+    const patternLines = hint.split('\n').filter((l) => l.startsWith('  pattern-'));
+    expect(patternLines).toHaveLength(20);
+  });
+
+  it('does not add hint when documents are matched', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'c' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+
+    expect(result.base.documents).toHaveLength(1);
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('includes hint alongside expanded results when base is empty', async () => {
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'auth-doc', title: 'Auth Guide', kind: 'guideline', content: 'auth' },
+      ],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'auth-doc',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+    repo.upsertTagMapping({ tag: 'auth', doc_id: 'auth-doc', confidence: 0.9, source: 'manual' });
+
+    const tagger = new FakeTagger({
+      'add auth': [{ tag: 'auth', confidence: 0.9 }],
+    });
+    const compiler = new ContextCompiler(repo, tagger);
+
+    const result = await compiler.compile({
+      target_files: ['app/NoMatch.ts'],
+      plan: 'add auth',
+    });
+
+    expect(result.base.documents).toHaveLength(0);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('No documents matched');
+    expect(result.expanded).toBeDefined();
+    expect(result.expanded!.documents).toHaveLength(1);
+    expect(result.expanded!.documents[0].doc_id).toBe('auth-doc');
+  });
+});
+
+// ============================================================
 // Expanded Context Tests
 // ============================================================
 
