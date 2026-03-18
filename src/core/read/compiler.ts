@@ -168,6 +168,11 @@ export class ContextCompiler {
     // ── Build result ──
     const compileId = uuidv4();
     const warnings: string[] = [];
+
+    if (collectedDocIds.size === 0) {
+      warnings.push(this.buildEmptyResultHint(request));
+    }
+
     const result: CompiledContext = {
       compile_id: compileId,
       snapshot_id: snapshot.snapshot_id,
@@ -340,6 +345,56 @@ export class ContextCompiler {
       }
     }
     return map;
+  }
+
+  private buildEmptyResultHint(request: CompileRequest): string {
+    const MAX_PATTERNS = 20;
+    const lines: string[] = [`No documents matched target_files: [${request.target_files.join(', ')}].`, ''];
+
+    const pathEdges = this.repo.getApprovedEdgesByType('path_requires');
+    if (pathEdges.length > 0) {
+      const byPattern = new Map<string, string[]>();
+      for (const e of pathEdges) {
+        const list = byPattern.get(e.source_value) ?? [];
+        list.push(e.target_doc_id);
+        byPattern.set(e.source_value, list);
+      }
+      const sorted = [...byPattern.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+      const shown = sorted.slice(0, MAX_PATTERNS);
+
+      lines.push('Registered path patterns (path_requires):');
+      for (const [pattern, docIds] of shown) {
+        lines.push(`  ${pattern} -> ${docIds.sort().join(', ')}`);
+      }
+      if (sorted.length > MAX_PATTERNS) {
+        lines.push(`  ...and ${sorted.length - MAX_PATTERNS} more`);
+      }
+      lines.push('');
+    }
+
+    const cmdEdges = this.repo.getApprovedEdgesByType('command_requires');
+    if (cmdEdges.length > 0) {
+      const commands = [...new Set(cmdEdges.map((e) => e.source_value))].sort();
+      lines.push(`Registered commands: ${commands.join(', ')}`);
+      lines.push('');
+    }
+
+    const layerEdges = this.repo.getApprovedEdgesByType('layer_requires');
+    if (layerEdges.length > 0) {
+      const layers = [...new Set(layerEdges.map((e) => e.source_value))].sort();
+      lines.push(`Registered layers (layer_requires): ${layers.join(', ')}`);
+      lines.push('');
+    }
+
+    const hasRegistered = pathEdges.length > 0 || cmdEdges.length > 0 || layerEdges.length > 0;
+    if (hasRegistered) {
+      lines.push('Ensure target_files are real file paths (not directories) matching the patterns above.');
+    } else {
+      lines.push('No edges are registered in the knowledge base.');
+    }
+    lines.push('If the paths are correct but no edges cover them, report a compile_miss.');
+
+    return lines.join('\n');
   }
 
   private emptyResult(_request: CompileRequest, warnings: string[]): CompiledContext {
