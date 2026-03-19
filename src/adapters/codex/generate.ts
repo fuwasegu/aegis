@@ -49,6 +49,11 @@ If the user asks about architecture, patterns, conventions, or how to write code
    - \`command\`: \`"review"\`
 3. **Answer using Aegis context** — Base your answer on the guidelines returned by Aegis, supplemented by your own knowledge. Cite specific guidelines when relevant. When documents include a \`relevance\` score, prioritize high-scoring documents and skim or skip low-scoring ones.
 
+### When Knowledge Base Is Empty
+
+If \`${config.toolNames.compileContext}\` returns no documents, the knowledge base has not been populated yet.
+Ask the user to run initial setup using the **admin surface** with \`aegis_import_doc\` to add architecture documents with \`edge_hints\`.
+
 ### Rules
 
 - NEVER skip the Aegis consultation step — for both implementation and questions.

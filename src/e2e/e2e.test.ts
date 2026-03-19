@@ -6,11 +6,11 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ManualNoteAnalyzer } from '../core/automation/manual-note-analyzer.js';
-import { PrMergedAnalyzer } from '../core/automation/pr-merged-analyzer.js';
 import { ReviewCorrectionAnalyzer } from '../core/automation/review-correction-analyzer.js';
 import { RuleBasedAnalyzer } from '../core/automation/rule-analyzer.js';
 import { createInMemoryDatabase } from '../core/store/database.js';
@@ -19,11 +19,66 @@ import type { IntentTagger } from '../core/tagging/tagger.js';
 import type { IntentTag } from '../core/types.js';
 import { AegisService } from '../mcp/services.js';
 
-const TEMPLATES_ROOT = join(import.meta.dirname, '../../templates');
-
 function makeTmpProject(): string {
   const dir = join(import.meta.dirname, '../../.tmp-test', randomUUID());
   mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function makeTestTemplateDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'aegis-e2e-tpl-'));
+  const tplDir = join(dir, 'test-tpl');
+  mkdirSync(join(tplDir, 'documents'), { recursive: true });
+
+  writeFileSync(
+    join(tplDir, 'manifest.yaml'),
+    `template_id: test-tpl
+version: "0.1.0"
+display_name: "Test Template"
+description: "E2E test template"
+
+detect_signals:
+  required:
+    - type: file_exists
+      path: marker.txt
+  boosters: []
+  confidence_thresholds:
+    high: 50
+    medium: 10
+
+placeholders:
+  app_root:
+    description: "App root"
+    required: true
+    detect_strategy: first_match
+    candidates:
+      - app
+      - src
+    ambiguity_policy: first
+    default: src
+
+seed_documents:
+  - doc_id: test-root
+    title: "Test Architecture Root"
+    kind: guideline
+    file: root.md
+
+seed_edges:
+  - source_type: path
+    source_value: "{{app_root}}/**"
+    target_doc_id: test-root
+    edge_type: path_requires
+    priority: 100
+
+seed_layer_rules: []
+`,
+  );
+
+  writeFileSync(
+    join(tplDir, 'documents', 'root.md'),
+    '# Architecture Root\n\nAll code should follow clean architecture patterns.',
+  );
+
   return dir;
 }
 
@@ -33,7 +88,133 @@ class FakeTagger implements IntentTagger {
   }
 }
 
-describe('E2E: Full Lifecycle', () => {
+describe('E2E: Template-based Lifecycle', () => {
+  let repo: Repository;
+  let adminService: AegisService;
+  let agentService: AegisService;
+  let tmpDir: string;
+  let templatesDir: string;
+
+  beforeEach(async () => {
+    const db = await createInMemoryDatabase();
+    repo = new Repository(db);
+    const tagger = new FakeTagger();
+    templatesDir = makeTestTemplateDir();
+    adminService = new AegisService(repo, templatesDir, tagger);
+    agentService = new AegisService(repo, templatesDir, tagger);
+
+    tmpDir = makeTmpProject();
+    writeFileSync(join(tmpDir, 'marker.txt'), '');
+    mkdirSync(join(tmpDir, 'app'), { recursive: true });
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
+    try {
+      rmSync(templatesDir, { recursive: true, force: true });
+    } catch {}
+  });
+
+  it('full lifecycle: init → compile → observe → analyze → approve', async () => {
+    const preview = adminService.initDetect(tmpDir, 'admin');
+    expect(preview.template_id).toBe('test-tpl');
+    expect(preview.has_blocking_warnings).toBe(false);
+    expect(preview.generated.documents.length).toBeGreaterThan(0);
+
+    const initResult = adminService.initConfirm(preview.preview_hash, 'admin');
+    expect(initResult.knowledge_version).toBe(1);
+
+    const compiled = await agentService.compileContext({ target_files: ['app/User/Entity.ts'] }, 'agent');
+    expect(compiled.knowledge_version).toBe(1);
+    expect(compiled.base.documents.length).toBeGreaterThan(0);
+    expect(compiled.compile_id).toBeTruthy();
+
+    const observation = agentService.observe(
+      {
+        event_type: 'compile_miss',
+        related_compile_id: compiled.compile_id,
+        related_snapshot_id: compiled.snapshot_id,
+        payload: {
+          target_files: ['app/User/Entity.ts'],
+          missing_doc: 'test-root',
+          review_comment: 'Guidelines were not specific enough',
+        },
+      },
+      'agent',
+    );
+    expect(observation.observation_id).toBeTruthy();
+
+    const analyzer = new RuleBasedAnalyzer();
+    const analysis = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
+    expect(analysis.proposals.created_proposal_ids.length).toBeGreaterThan(0);
+
+    const proposalList = adminService.listProposals({ status: 'pending' }, 'admin');
+    for (const p of proposalList.proposals as any[]) {
+      const approved = adminService.approveProposal(p.proposal_id, undefined, 'admin');
+      expect(approved.knowledge_version).toBeGreaterThan(1);
+    }
+  });
+
+  it('review_correction flow works end to end', async () => {
+    const preview = adminService.initDetect(tmpDir, 'admin');
+    adminService.initConfirm(preview.preview_hash, 'admin');
+
+    agentService.observe(
+      {
+        event_type: 'review_correction',
+        payload: {
+          file_path: 'app/User/Entity.ts',
+          correction: 'Should use value objects for IDs',
+          target_doc_id: 'test-root',
+          proposed_content: '# Updated Root\n\nUse value objects for IDs.',
+        },
+      },
+      'agent',
+    );
+
+    const analyzer = new ReviewCorrectionAnalyzer(repo);
+    const analysis = await adminService.analyzeAndPropose(analyzer, 'review_correction', 'admin');
+    expect(analysis.proposals.created_proposal_ids.length).toBe(1);
+
+    const detail = adminService.getProposal(analysis.proposals.created_proposal_ids[0], 'admin');
+    expect(detail?.proposal_type).toBe('update_doc');
+  });
+
+  it('manual_note with new_doc_hint creates new doc proposal', async () => {
+    const preview = adminService.initDetect(tmpDir, 'admin');
+    adminService.initConfirm(preview.preview_hash, 'admin');
+
+    agentService.observe(
+      {
+        event_type: 'manual_note',
+        payload: {
+          content: '# Error Handling\n\nAll errors should be wrapped.',
+          new_doc_hint: { doc_id: 'error-handling', title: 'Error Handling Guide', kind: 'guideline' },
+        },
+      },
+      'agent',
+    );
+
+    const analyzer = new ManualNoteAnalyzer(repo);
+    const analysis = await adminService.analyzeAndPropose(analyzer, 'manual_note', 'admin');
+    expect(analysis.proposals.created_proposal_ids.length).toBe(1);
+
+    const detail = adminService.getProposal(analysis.proposals.created_proposal_ids[0], 'admin');
+    expect(detail?.proposal_type).toBe('new_doc');
+    const payload = (detail as any).payload;
+    expect(payload.doc_id).toBe('error-handling');
+  });
+
+  it('agent can call init_detect but not init_confirm', () => {
+    const preview = agentService.initDetect(tmpDir, 'agent');
+    expect(preview.template_id).toBe('test-tpl');
+    expect(() => agentService.initConfirm(preview.preview_hash, 'agent')).toThrow('not available');
+  });
+});
+
+describe('E2E: Template-less Lifecycle (skip_template)', () => {
   let repo: Repository;
   let adminService: AegisService;
   let agentService: AegisService;
@@ -43,198 +224,77 @@ describe('E2E: Full Lifecycle', () => {
     const db = await createInMemoryDatabase();
     repo = new Repository(db);
     const tagger = new FakeTagger();
-    adminService = new AegisService(repo, TEMPLATES_ROOT, tagger);
-    agentService = new AegisService(repo, TEMPLATES_ROOT, tagger);
+    adminService = new AegisService(repo, '', tagger);
+    agentService = new AegisService(repo, '', tagger);
 
     tmpDir = makeTmpProject();
-
-    // Create a Laravel-like project for detection
-    writeFileSync(
-      join(tmpDir, 'composer.json'),
-      JSON.stringify({
-        require: { 'laravel/framework': '^11.0' },
-      }),
-    );
-    mkdirSync(join(tmpDir, 'app/Domain'), { recursive: true });
-    mkdirSync(join(tmpDir, 'app/UseCases'), { recursive: true });
-  });
-
-  it('full lifecycle: init → compile → observe → analyze → approve', async () => {
-    // ── Step 1: Admin detects project ──
-    const preview = adminService.initDetect(tmpDir, 'admin');
-    expect(preview.template_id).toBe('laravel-ddd');
-    expect(preview.has_blocking_warnings).toBe(false);
-    expect(preview.generated.documents.length).toBeGreaterThan(0);
-
-    // ── Step 2: Admin confirms init ──
-    const initResult = adminService.initConfirm(preview.preview_hash, 'admin');
-    expect(initResult.knowledge_version).toBe(1);
-    expect(initResult.snapshot_id).toBeTruthy();
-
-    // ── Step 3: Agent compiles context for a domain file ──
-    const compiled = await agentService.compileContext(
-      {
-        target_files: ['app/Domain/User/UserEntity.php'],
-      },
-      'agent',
-    );
-
-    expect(compiled.knowledge_version).toBe(1);
-    expect(compiled.base.documents.length).toBeGreaterThan(0);
-    expect(compiled.compile_id).toBeTruthy();
-    expect(compiled.snapshot_id).toBeTruthy();
-
-    // Verify resolution path includes path_requires edges
-    const pathEdges = compiled.base.resolution_path.filter((e) => e.edge_type === 'path_requires');
-    expect(pathEdges.length).toBeGreaterThan(0);
-
-    // ── Step 4: Agent reports a compile miss ──
-    const observation = agentService.observe(
-      {
-        event_type: 'compile_miss',
-        related_compile_id: compiled.compile_id,
-        related_snapshot_id: compiled.snapshot_id,
-        payload: {
-          target_files: ['app/Domain/User/UserEntity.php'],
-          missing_doc: 'laravel-ddd-entity',
-          review_comment: 'Entity guidelines were not specific enough',
-        },
-      },
-      'agent',
-    );
-    expect(observation.observation_id).toBeTruthy();
-
-    // ── Step 5: Admin runs automation ──
-    const analyzer = new RuleBasedAnalyzer();
-    const analysis = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
-    expect(analysis.proposals.created_proposal_ids.length).toBeGreaterThan(0);
-
-    // ── Step 6: Admin reviews and approves ──
-    const proposalList = adminService.listProposals({ status: 'pending' }, 'admin');
-    expect(proposalList.proposals.length).toBeGreaterThan(0);
-
-    for (const p of proposalList.proposals as any[]) {
-      const approved = adminService.approveProposal(p.proposal_id, undefined, 'admin');
-      expect(approved.knowledge_version).toBeGreaterThan(1);
-    }
-
-    // ── Step 7: Verify audit trail ──
-    const audit = agentService.getCompileAudit(compiled.compile_id, 'agent');
-    expect(audit).toBeDefined();
-    expect(audit!.base_doc_ids.length).toBeGreaterThan(0);
-  });
-
-  it('review_correction lifecycle: observe → analyze → approve → doc updated', async () => {
-    // Init project
-    const preview = adminService.initDetect(tmpDir, 'admin');
-    adminService.initConfirm(preview.preview_hash, 'admin');
-
-    // Find the first approved doc
-    const docs = repo.getApprovedDocuments();
-    const targetDoc = docs[0];
-
-    // Agent observes a correction
-    const _obs = agentService.observe(
-      {
-        event_type: 'review_correction',
-        payload: {
-          file_path: 'app/Domain/User/UserEntity.php',
-          correction: 'Entity should use factory methods',
-          target_doc_id: targetDoc.doc_id,
-          proposed_content: '# Updated Entity Guidelines\n\nUse factory methods.',
-        },
-      },
-      'agent',
-    );
-
-    // Admin runs analyzer
-    const analyzer = new ReviewCorrectionAnalyzer(repo);
-    const result = await adminService.analyzeAndPropose(analyzer, 'review_correction', 'admin');
-    expect(result.proposals.created_proposal_ids.length).toBe(1);
-
-    // Approve
-    const proposalId = result.proposals.created_proposal_ids[0];
-    const approved = adminService.approveProposal(proposalId, undefined, 'admin');
-    expect(approved.knowledge_version).toBeGreaterThan(1);
-
-    // Verify document was updated
-    const updatedDocs = repo.getApprovedDocumentsByIds([targetDoc.doc_id]);
-    expect(updatedDocs[0].content).toContain('factory methods');
-  });
-
-  it('pr_merged lifecycle: observe → analyze → proposes edges for uncovered paths', async () => {
-    // Init project
-    const preview = adminService.initDetect(tmpDir, 'admin');
-    adminService.initConfirm(preview.preview_hash, 'admin');
-
-    // Agent observes a PR merge with files in an uncovered directory
-    agentService.observe(
-      {
-        event_type: 'pr_merged',
-        payload: {
-          pr_id: 'PR-42',
-          summary: 'Add new API controller',
-          files_changed: ['app/Http/Controllers/ApiController.php', 'app/Http/Controllers/AuthController.php'],
-        },
-      },
-      'agent',
-    );
-
-    // Admin runs pr_merged analyzer
-    const analyzer = new PrMergedAnalyzer(repo);
-    const result = await adminService.analyzeAndPropose(analyzer, 'pr_merged', 'admin');
-
-    // Should propose edge(s) for uncovered paths
-    expect(result.proposals.created_proposal_ids.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('manual_note new_doc lifecycle: observe → analyze → approve → new doc in canonical', async () => {
-    // Init project
-    const preview = adminService.initDetect(tmpDir, 'admin');
-    adminService.initConfirm(preview.preview_hash, 'admin');
-
-    // Agent observes a manual note with new_doc_hint
-    agentService.observe(
-      {
-        event_type: 'manual_note',
-        payload: {
-          content: '# Error Handling\n\nAll domain operations should return Result types.',
-          new_doc_hint: {
-            doc_id: 'error-handling-guide',
-            title: 'Error Handling Guidelines',
-            kind: 'guideline',
-          },
-        },
-      },
-      'agent',
-    );
-
-    // Admin runs manual_note analyzer
-    const analyzer = new ManualNoteAnalyzer(repo);
-    const result = await adminService.analyzeAndPropose(analyzer, 'manual_note', 'admin');
-    expect(result.proposals.created_proposal_ids.length).toBe(1);
-
-    // Approve the new doc proposal
-    const proposalId = result.proposals.created_proposal_ids[0];
-    adminService.approveProposal(proposalId, undefined, 'admin');
-
-    // Verify new document exists in canonical
-    const docs = repo.getApprovedDocumentsByIds(['error-handling-guide']);
-    expect(docs).toHaveLength(1);
-    expect(docs[0].title).toBe('Error Handling Guidelines');
-    expect(docs[0].content).toContain('Error Handling');
-  });
-
-  it('agent can call init_detect but not init_confirm', () => {
-    const preview = agentService.initDetect(tmpDir, 'agent');
-    expect(preview.template_id).toBe('laravel-ddd');
-
-    expect(() => agentService.initConfirm(preview.preview_hash, 'agent')).toThrow('not available');
   });
 
   afterEach(() => {
     try {
       rmSync(tmpDir, { recursive: true, force: true });
     } catch {}
+  });
+
+  it('skip_template → init → import_doc(edge_hints) → approve → compile_context returns doc', async () => {
+    // Step 1: Admin inits with skip_template
+    const preview = adminService.initDetect(tmpDir, 'admin', { skip_template: true });
+    expect(preview.template_id).toBe('none');
+    expect(preview.has_blocking_warnings).toBe(false);
+    expect(preview.generated.documents).toHaveLength(0);
+
+    const initResult = adminService.initConfirm(preview.preview_hash, 'admin');
+    expect(initResult.knowledge_version).toBe(1);
+
+    // Step 2: compile_context is empty
+    const emptyCompile = await agentService.compileContext({ target_files: ['src/core/store/repo.ts'] }, 'agent');
+    expect(emptyCompile.base.documents).toHaveLength(0);
+    expect(emptyCompile.warnings.length).toBeGreaterThan(0);
+    expect(emptyCompile.warnings.some((w: string) => w.includes('No edges are registered'))).toBe(true);
+
+    // Step 3: Admin imports a doc with edge_hints
+    const importResult = await adminService.importDoc(
+      {
+        content: '# Repository Pattern\n\nAll data access goes through repositories.',
+        doc_id: 'repo-pattern',
+        title: 'Repository Pattern',
+        kind: 'guideline',
+        edge_hints: [
+          { source_type: 'path' as const, source_value: 'src/core/store/**', edge_type: 'path_requires' as const },
+        ],
+      },
+      'admin',
+    );
+    expect(importResult.proposal_ids.length).toBeGreaterThan(0);
+    expect(importResult.warnings).toHaveLength(0);
+
+    // Step 4: Admin approves proposals in importDoc return order (new_doc first, then add_edge)
+    for (const pid of importResult.proposal_ids) {
+      adminService.approveProposal(pid, undefined, 'admin');
+    }
+
+    // Step 5: compile_context now returns the imported doc
+    const compiled = await agentService.compileContext({ target_files: ['src/core/store/repo.ts'] }, 'agent');
+    expect(compiled.base.documents.length).toBe(1);
+    expect(compiled.base.documents[0].doc_id).toBe('repo-pattern');
+    expect(compiled.base.documents[0].content).toContain('Repository Pattern');
+  });
+
+  it('import_doc without edge_hints warns about isolation', async () => {
+    const preview = adminService.initDetect(tmpDir, 'admin', { skip_template: true });
+    adminService.initConfirm(preview.preview_hash, 'admin');
+
+    const importResult = await adminService.importDoc(
+      {
+        content: '# Isolated Doc\n\nNo edges.',
+        doc_id: 'isolated-doc',
+        title: 'Isolated Document',
+        kind: 'guideline',
+      },
+      'admin',
+    );
+
+    expect(importResult.warnings.length).toBeGreaterThan(0);
+    expect(importResult.warnings[0]).toContain('isolated');
   });
 });

@@ -154,9 +154,15 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
     'Analyze a project and generate an initialization preview. Does not modify Canonical.',
     {
       project_root: z.string().describe('Absolute path to the project root directory'),
+      skip_template: z
+        .boolean()
+        .optional()
+        .describe('Skip template detection and create an empty knowledge base. Use aegis_import_doc to add documents.'),
     },
     async (params) => {
-      const preview = service.initDetect(params.project_root, surface);
+      const preview = service.initDetect(params.project_root, surface, {
+        skip_template: params.skip_template,
+      });
       const { _placeholders, ...publicPreview } = preview;
       return { content: [{ type: 'text', text: JSON.stringify(publicPreview, null, 2) }] };
     },
@@ -246,7 +252,14 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       async () => {
         const result = service.checkUpgrade(surface);
         if (!result) {
-          return { content: [{ type: 'text', text: 'Project not initialized or template not found.' }], isError: true };
+          return { content: [{ type: 'text', text: 'Project not initialized.' }], isError: true };
+        }
+        if ('not_found' in result) {
+          const msg =
+            result.template_id === 'none'
+              ? 'This project was initialized without a template. Template upgrades are not applicable — use aegis_import_doc to manage documents directly.'
+              : `Template '${result.template_id}' is no longer bundled. Bundled templates have been removed in favor of aegis_import_doc-based onboarding. Your existing documents are unaffected.`;
+          return { content: [{ type: 'text', text: msg }] };
         }
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       },

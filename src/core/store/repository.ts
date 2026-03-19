@@ -699,6 +699,19 @@ export class Repository {
   }
 
   private _applyAddEdge(payload: Omit<Edge, 'created_at' | 'status'>): void {
+    const targetDoc = this.getDocumentById(payload.target_doc_id);
+    if (!targetDoc) {
+      throw new Error(
+        `Cannot add edge: target document '${payload.target_doc_id}' does not exist. ` +
+          'If there is a pending new_doc proposal for this document, approve it first.',
+      );
+    }
+    if (targetDoc.status !== 'approved') {
+      throw new Error(
+        `Cannot add edge: target document '${payload.target_doc_id}' is not approved (status: ${targetDoc.status}). ` +
+          'Approve or reactivate the document first.',
+      );
+    }
     if (payload.edge_type === 'doc_depends_on') {
       if (this.wouldCreateCycle(payload.source_value, payload.target_doc_id)) {
         throw new CycleDetectedError(payload.source_value, payload.target_doc_id);

@@ -185,6 +185,12 @@ export class AegisService {
             if (typeof hint.title !== 'string' || !hint.title) {
               throw new ObserveValidationError('manual_note: new_doc_hint.title is required');
             }
+            const validKinds = ['guideline', 'pattern', 'constraint', 'template', 'reference'];
+            if (hint.kind === undefined || typeof hint.kind !== 'string' || !validKinds.includes(hint.kind)) {
+              throw new ObserveValidationError(
+                `manual_note: new_doc_hint.kind is required and must be one of: ${validKinds.join(', ')}`,
+              );
+            }
           }
         }
         break;
@@ -228,8 +234,8 @@ export class AegisService {
     return this.compiler.getCompileAudit(compileId);
   }
 
-  initDetect(projectRoot: string, _surface: Surface): InitPreview {
-    const preview = coreInitDetect(projectRoot, this.templatesRoot, this.extraTemplateDirs);
+  initDetect(projectRoot: string, _surface: Surface, options?: { skip_template?: boolean }): InitPreview {
+    const preview = coreInitDetect(projectRoot, this.templatesRoot, this.extraTemplateDirs, options);
     if (preview.preview_hash) {
       this.previewCache.set(preview.preview_hash, { preview, projectRoot });
     }
@@ -362,9 +368,17 @@ export class AegisService {
     return result;
   }
 
-  checkUpgrade(surface: Surface): UpgradePreview | null {
+  checkUpgrade(surface: Surface): UpgradePreview | { not_found: true; template_id: string } | null {
     this.assertAdmin('aegis_check_upgrade', surface);
-    return detectUpgrade(this.repo, this.templatesRoot, this.extraTemplateDirs);
+    const result = detectUpgrade(this.repo, this.templatesRoot, this.extraTemplateDirs);
+    if (result) return result;
+
+    const manifest = this.repo.getInitManifest();
+    if (!manifest) return null;
+    if (manifest.template_id === 'none') {
+      return { not_found: true, template_id: 'none' };
+    }
+    return { not_found: true, template_id: manifest.template_id };
   }
 
   applyUpgrade(surface: Surface): { proposal_ids: string[] } {

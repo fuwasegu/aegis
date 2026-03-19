@@ -54,12 +54,33 @@ export interface InitPreview {
   _placeholders: Record<string, string | null>;
 }
 
+export interface InitDetectOptions {
+  skip_template?: boolean;
+}
+
 /**
  * init_detect — Stage 1+2: detect stack, score profiles, generate preview.
  */
-export function initDetect(projectRoot: string, templatesRoot: string, extraTemplateDirs?: string[]): InitPreview {
+export function initDetect(
+  projectRoot: string,
+  templatesRoot: string,
+  extraTemplateDirs?: string[],
+  options?: InitDetectOptions,
+): InitPreview {
   // ── Stage 1: detect ──
   const stack = detectStack(projectRoot);
+
+  if (options?.skip_template) {
+    const warnings: InitWarning[] = [
+      {
+        severity: 'warn',
+        message:
+          'Template skipped. Knowledge base will be empty — use aegis_import_doc (admin surface) to add documents from your codebase.',
+      },
+    ];
+    return templatelessPreview(stack, [], [], warnings);
+  }
+
   const manifests = loadAllManifests(templatesRoot, extraTemplateDirs);
 
   const allEvidence: DetectionEvidence[] = [];
@@ -83,15 +104,22 @@ export function initDetect(projectRoot: string, templatesRoot: string, extraTemp
   const warnings: InitWarning[] = [];
 
   // ── Profile selection with ambiguity handling ──
-  const selectedProfile = selectProfile(profiles, warnings);
-  if (!selectedProfile) {
-    // No usable profile — block
-    warnings.push({
-      severity: 'block',
-      message: 'No matching architecture profile found and no fallback available.',
-    });
+  const selection = selectProfile(profiles, warnings);
+
+  if (selection.kind === 'ambiguous') {
     return emptyPreview(stack, profiles, allEvidence, warnings);
   }
+
+  if (selection.kind === 'none') {
+    warnings.push({
+      severity: 'warn',
+      message:
+        'No matching architecture profile found. Knowledge base will be empty — use aegis_import_doc (admin surface) to add documents from your codebase.',
+    });
+    return templatelessPreview(stack, profiles, allEvidence, warnings);
+  }
+
+  const selectedProfile = selection.profile;
 
   const selectedEntry = manifests.find((m) => m.manifest.template_id === selectedProfile.profile_id);
   if (!selectedEntry) {
@@ -152,17 +180,19 @@ export function initDetect(projectRoot: string, templatesRoot: string, extraTemp
   };
 }
 
+type SelectResult = { kind: 'selected'; profile: ProfileCandidate } | { kind: 'none' } | { kind: 'ambiguous' };
+
 /**
  * Select the best profile, emitting warnings for ambiguous or low-confidence situations.
  *
  * Rules:
- * - If top candidate is 'high' confidence with no same-score tie → auto-select
- * - If top candidates are tied on score → block (ambiguous)
- * - If top candidate is 'low' confidence → warn (proceed but inform human)
- * - If no candidates at all → return null
+ * - If no candidates at all → 'none'
+ * - If top candidates are tied on score at high confidence → 'ambiguous' (block)
+ * - If top candidate is 'low' confidence → 'selected' with warn
+ * - Otherwise → 'selected'
  */
-function selectProfile(profiles: ProfileCandidate[], warnings: InitWarning[]): ProfileCandidate | null {
-  if (profiles.length === 0) return null;
+function selectProfile(profiles: ProfileCandidate[], warnings: InitWarning[]): SelectResult {
+  if (profiles.length === 0) return { kind: 'none' };
 
   const top = profiles[0];
 
@@ -171,13 +201,12 @@ function selectProfile(profiles: ProfileCandidate[], warnings: InitWarning[]): P
   if (tied.length > 1) {
     const tiedIds = tied.map((p) => p.profile_id).join(', ');
     if (top.confidence === 'high') {
-      // Multiple high-confidence profiles at same score — ambiguous, block
       warnings.push({
         severity: 'block',
         message: `Ambiguous profile selection: [${tiedIds}] tied at score ${top.score}. Cannot auto-select.`,
-        suggestion: 'Use init_detect with an explicit profile selection.',
+        suggestion: 'Use init_detect with skip_template or an explicit profile selection.',
       });
-      return null;
+      return { kind: 'ambiguous' };
     }
     // Tied but not high — warn and pick the first (deterministic via sort)
     warnings.push({
@@ -196,7 +225,7 @@ function selectProfile(profiles: ProfileCandidate[], warnings: InitWarning[]): P
     });
   }
 
-  return top;
+  return { kind: 'selected', profile: top };
 }
 
 function emptyPreview(
@@ -213,6 +242,38 @@ function emptyPreview(
     has_blocking_warnings: true,
     template_id: '',
     template_version: '',
+    _placeholders: {},
+  };
+}
+
+/**
+ * Template-less preview: empty generated content but confirmable (has_blocking_warnings: false).
+ * Used when skip_template is set or no profiles matched.
+ */
+function templatelessPreview(
+  stack: StackDetection,
+  profiles: ProfileCandidate[],
+  evidence: DetectionEvidence[],
+  warnings: InitWarning[],
+): InitPreview {
+  const previewContent = JSON.stringify({
+    template_id: 'none',
+    template_version: '0.0.0',
+    placeholders: {},
+    documents: [],
+    edges: [],
+    layer_rules: [],
+  });
+  const previewHash = createHash('sha256').update(previewContent).digest('hex');
+
+  return {
+    preview_hash: previewHash,
+    detection: { stack, architecture_profiles: profiles, evidence },
+    generated: { documents: [], edges: [], layer_rules: [] },
+    warnings,
+    has_blocking_warnings: false,
+    template_id: 'none',
+    template_version: '0.0.0',
     _placeholders: {},
   };
 }

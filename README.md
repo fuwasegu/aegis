@@ -115,14 +115,14 @@ After initialization, `deploy-adapters` appends an `<!-- aegis:start -->` sectio
 
 ### 1. Initialize your project
 
-Using the admin surface, detect your project's architecture and bootstrap Canonical Knowledge:
+Using the admin surface, initialize Aegis with an empty knowledge base:
 
 ```
-aegis_init_detect({ project_root: "/path/to/your/project" })
+aegis_init_detect({ project_root: "/path/to/your/project", skip_template: true })
 aegis_init_confirm({ preview_hash: "<hash from detect>" })
 ```
 
-This creates seed documents, DAG edges, and layer rules based on your project structure.
+This creates an empty knowledge base. You'll populate it with architecture documents in the next step.
 
 Then deploy adapter rules and Agent Skills for your AI coding tool via CLI:
 
@@ -144,9 +144,9 @@ aegis_compile_context({
 
 Returns architecture guidelines, patterns, and constraints relevant to the files being edited.
 
-### 3. Import existing documents (optional)
+### 3. Add architecture documents
 
-If your project already has architecture documentation (ADRs, design guides, coding conventions, etc.), bulk-import them into the Aegis knowledge base using the **admin** surface:
+After initialization, populate the knowledge base by analyzing your codebase. Use `aegis_import_doc` on the **admin** surface to add architecture documents with `edge_hints` that connect them to file paths:
 
 ```
 aegis_import_doc({
@@ -225,16 +225,6 @@ You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 
 > **Legacy:** `--ollama` flag is available for Ollama-based inference if preferred. Using `--ollama` implicitly enables SLM.
 
-## Templates
-
-Aegis ships with pre-built architecture templates. The template is auto-detected during `aegis_init_detect`:
-
-| Template | Detection | Description |
-|----------|-----------|-------------|
-| `laravel-ddd` | `composer.json` + Laravel | Domain-Driven Design with Clean Architecture |
-| `generic-layered` | Any `src/` project | Language-agnostic layered architecture |
-| `typescript-mcp` | `package.json` + `tsconfig.json` + MCP SDK | TypeScript MCP server with layered architecture |
-
 ## Reference
 
 ### MCP Tools — Agent Surface (4 tools)
@@ -301,7 +291,7 @@ npx @fuwasegu/aegis --list-models                           # List available SLM
 
 ```bash
 npm run build    # Compile TypeScript
-npm test         # Run all tests (250+)
+npm test         # Run all tests (335+)
 npm run test:watch
 ```
 

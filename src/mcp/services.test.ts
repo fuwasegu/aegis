@@ -13,6 +13,61 @@ function hash(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
+/** Creates a minimal laravel-ddd test template in the given dir. */
+function createLaravelTestTemplate(dir: string): void {
+  const templateDir = join(dir, 'laravel-ddd');
+  mkdirSync(join(templateDir, 'documents'), { recursive: true });
+  writeFileSync(
+    join(templateDir, 'manifest.yaml'),
+    `template_id: laravel-ddd
+version: "0.1.0"
+display_name: "Laravel DDD"
+description: "Test template for Laravel DDD"
+
+detect_signals:
+  required:
+    - type: file_exists
+      path: composer.json
+  boosters:
+    - type: package_dependency
+      file: composer.json
+      key: require
+      pattern: laravel
+      weight: 50
+  confidence_thresholds:
+    high: 50
+    medium: 10
+
+placeholders:
+  src_root:
+    description: "Source root"
+    required: true
+    detect_strategy: first_match
+    candidates:
+      - app
+      - src
+    ambiguity_policy: first
+    default: app
+
+seed_documents:
+  - doc_id: laravel-entity-guidelines
+    title: "Entity Guidelines"
+    kind: guideline
+    file: entity.md
+
+seed_edges:
+  - source_type: path
+    source_value: "{{src_root}}/Domain/**"
+    target_doc_id: laravel-entity-guidelines
+    edge_type: path_requires
+    priority: 100
+
+seed_layer_rules: []
+`,
+  );
+  writeFileSync(join(templateDir, 'documents', 'entity.md'), '# Entity Guidelines\n\nDDD entity patterns.');
+}
+
 function createLaravelProject(root: string): void {
   writeFileSync(
     join(root, 'composer.json'),
@@ -108,19 +163,23 @@ describe('AegisService — Surface Authorization', () => {
 
 describe('AegisService — compile_context v2 contract', () => {
   let tmpDir: string;
+  let templatesDir: string;
   let db: AegisDatabase;
   let repo: Repository;
   let service: AegisService;
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'aegis-svc-'));
+    templatesDir = mkdtempSync(join(tmpdir(), 'aegis-tpl-'));
+    createLaravelTestTemplate(templatesDir);
     db = await createInMemoryDatabase();
     repo = new Repository(db);
-    service = new AegisService(repo, TEMPLATES_ROOT);
+    service = new AegisService(repo, templatesDir);
   });
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(templatesDir, { recursive: true, force: true });
   });
 
   // ── 2. compile_context の request/response が v2 契約どおり ──
@@ -244,19 +303,23 @@ describe('AegisService — observe discriminated union', () => {
 
 describe('AegisService — Admin delegation', () => {
   let tmpDir: string;
+  let templatesDir: string;
   let db: AegisDatabase;
   let repo: Repository;
   let service: AegisService;
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'aegis-admin-'));
+    templatesDir = mkdtempSync(join(tmpdir(), 'aegis-tpl-'));
+    createLaravelTestTemplate(templatesDir);
     db = await createInMemoryDatabase();
     repo = new Repository(db);
-    service = new AegisService(repo, TEMPLATES_ROOT);
+    service = new AegisService(repo, templatesDir);
   });
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(templatesDir, { recursive: true, force: true });
   });
 
   // ── 4. Admin Surface の approve/reject が core に正しく委譲される ──
@@ -381,6 +444,7 @@ describe('AegisService — Admin delegation', () => {
 
 describe('AegisService — Integration: separate admin/agent instances', () => {
   let tmpDir: string;
+  let templatesDir: string;
   let db: AegisDatabase;
   let repo: Repository;
   let adminService: AegisService;
@@ -388,15 +452,18 @@ describe('AegisService — Integration: separate admin/agent instances', () => {
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'aegis-e2e-'));
+    templatesDir = mkdtempSync(join(tmpdir(), 'aegis-tpl-'));
+    createLaravelTestTemplate(templatesDir);
     db = await createInMemoryDatabase();
     repo = new Repository(db);
     // Simulate separate processes: distinct AegisService instances sharing same DB
-    adminService = new AegisService(repo, TEMPLATES_ROOT);
-    agentService = new AegisService(repo, TEMPLATES_ROOT);
+    adminService = new AegisService(repo, templatesDir);
+    agentService = new AegisService(repo, templatesDir);
   });
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(templatesDir, { recursive: true, force: true });
   });
 
   it('full flow: admin init → agent compile → agent audit', async () => {
@@ -451,7 +518,7 @@ describe('AegisService — Integration: separate admin/agent instances', () => {
     const preview = adminService.initDetect(tmpDir, 'admin');
 
     // A DIFFERENT admin instance tries to confirm — cache miss
-    const otherAdmin = new AegisService(repo, TEMPLATES_ROOT);
+    const otherAdmin = new AegisService(repo, templatesDir);
     expect(() => otherAdmin.initConfirm(preview.preview_hash, 'admin')).toThrow(/No cached preview/);
   });
 
@@ -596,19 +663,23 @@ describe('AegisService — observe validation', () => {
 
 describe('AegisService — approve with modifications', () => {
   let tmpDir: string;
+  let templatesDir: string;
   let db: AegisDatabase;
   let repo: Repository;
   let service: AegisService;
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'aegis-mod-'));
+    templatesDir = mkdtempSync(join(tmpdir(), 'aegis-tpl-'));
+    createLaravelTestTemplate(templatesDir);
     db = await createInMemoryDatabase();
     repo = new Repository(db);
-    service = new AegisService(repo, TEMPLATES_ROOT);
+    service = new AegisService(repo, templatesDir);
   });
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(templatesDir, { recursive: true, force: true });
   });
 
   it('modifications override payload fields before Canonical write', () => {
@@ -1480,5 +1551,68 @@ describe('buildObserveContent', () => {
       const content = buildObserveContent({ observation_id: 'x' }, eventType);
       expect(() => JSON.parse(content[0].text)).not.toThrow();
     }
+  });
+});
+
+// ============================================================
+// new_doc_hint.kind validation
+// ============================================================
+
+describe('AegisService — new_doc_hint.kind validation', () => {
+  let db: AegisDatabase;
+  let repo: Repository;
+  let service: AegisService;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+    service = new AegisService(repo, '', []);
+  });
+
+  it('accepts valid kind values in new_doc_hint', () => {
+    for (const kind of ['guideline', 'pattern', 'constraint', 'template', 'reference']) {
+      expect(() =>
+        service.observe(
+          {
+            event_type: 'manual_note',
+            payload: {
+              content: 'test note',
+              new_doc_hint: { doc_id: `test-${kind}`, title: 'Test', kind },
+            },
+          },
+          'agent',
+        ),
+      ).not.toThrow();
+    }
+  });
+
+  it('rejects invalid kind value in new_doc_hint', () => {
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'manual_note',
+          payload: {
+            content: 'test note',
+            new_doc_hint: { doc_id: 'test-bad', title: 'Test', kind: 'invalid-kind' },
+          },
+        },
+        'agent',
+      ),
+    ).toThrow('new_doc_hint.kind is required');
+  });
+
+  it('rejects new_doc_hint without kind (required)', () => {
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'manual_note',
+          payload: {
+            content: 'test note',
+            new_doc_hint: { doc_id: 'test-no-kind', title: 'Test' },
+          },
+        },
+        'agent',
+      ),
+    ).toThrow('new_doc_hint.kind is required');
   });
 });

@@ -22,7 +22,7 @@ npm test               # run all tests
 - `aegis_get_compile_audit` — Retrieve audit log of a past compile invocation.
 - `aegis_init_detect` — Analyze a project to generate initialization preview (read-only).
 
-## Admin Surface Tools (9 additional tools, includes all agent tools)
+## Admin Surface Tools (12 additional tools, 16 total)
 
 - `aegis_init_confirm` — Confirm initialization using preview_hash from init_detect.
 - `aegis_list_proposals` / `aegis_get_proposal` — Review pending proposals.
@@ -30,6 +30,10 @@ npm test               # run all tests
 - `aegis_check_upgrade` — Check for template version upgrades.
 - `aegis_apply_upgrade` — Generate proposals for template upgrade changes.
 - `aegis_archive_observations` — Archive old observations.
+- `aegis_list_observations` — List observations with outcome-based filtering (proposed / skipped / pending).
+- `aegis_import_doc` — Import a document into Canonical Knowledge (from `content` or `file_path`).
+- `aegis_process_observations` — Trigger observation analysis pipeline for pending observations.
+- `aegis_sync_docs` — Synchronize imported documents with their source files.
 
 ## Key Invariants
 
@@ -78,7 +82,7 @@ src/
     intent-tagger.ts — OllamaIntentTagger (IntentTagger implementation)
   e2e/          — End-to-end integration tests
   main.ts       — Entry point (--surface, --db, --templates, --ollama-*)
-templates/      — Init templates (laravel-ddd, generic-layered, typescript-mcp)
+templates/      — Reserved for custom user templates (--template-dir)
 ```
 
 ## Design Decisions

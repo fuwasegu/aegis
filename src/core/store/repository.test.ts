@@ -342,6 +342,73 @@ describe('Repository', () => {
       expect(() => repo.approveProposal('p1')).toThrow(CycleDetectedError);
     });
 
+    it('rejects add_edge when target document does not exist', () => {
+      repo.insertProposal({
+        proposal_id: 'p-edge-no-doc',
+        proposal_type: 'add_edge',
+        payload: JSON.stringify({
+          edge_id: 'e-orphan',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'nonexistent-doc',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 0,
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      expect(() => repo.approveProposal('p-edge-no-doc')).toThrow(
+        "Cannot add edge: target document 'nonexistent-doc' does not exist",
+      );
+    });
+
+    it('rejects add_edge when target document is deprecated', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot-dep',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          template_id: 'test',
+          documents: [{ doc_id: 'dep-target', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot-dep');
+
+      repo.insertProposal({
+        proposal_id: 'p-deprecate',
+        proposal_type: 'deprecate',
+        payload: JSON.stringify({ entity_type: 'document', entity_id: 'dep-target' }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-deprecate');
+
+      repo.insertProposal({
+        proposal_id: 'p-edge-dep',
+        proposal_type: 'add_edge',
+        payload: JSON.stringify({
+          edge_id: 'e-dep',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'dep-target',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 0,
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      expect(() => repo.approveProposal('p-edge-dep')).toThrow(
+        "Cannot add edge: target document 'dep-target' is not approved",
+      );
+    });
+
     it('reject proposal records reason', () => {
       repo.insertProposal({
         proposal_id: 'p1',
