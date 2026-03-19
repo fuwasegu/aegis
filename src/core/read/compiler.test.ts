@@ -1079,8 +1079,18 @@ describe('ContextCompiler — plan relevance scoring', () => {
   it('attaches relevance scores to base documents when plan is provided', async () => {
     bootstrap(repo, {
       documents: [
-        { doc_id: 'usecase-guide', title: 'UseCase Guidelines', kind: 'guideline', content: 'How to implement UseCase patterns' },
-        { doc_id: 'api-spec', title: 'Member Search API', kind: 'reference', content: 'GET /api/members/search endpoint specification' },
+        {
+          doc_id: 'usecase-guide',
+          title: 'UseCase Guidelines',
+          kind: 'guideline',
+          content: 'How to implement UseCase patterns',
+        },
+        {
+          doc_id: 'api-spec',
+          title: 'Member Search API',
+          kind: 'reference',
+          content: 'GET /api/members/search endpoint specification',
+        },
       ],
       edges: [
         {
@@ -1200,9 +1210,7 @@ describe('ContextCompiler — plan relevance scoring', () => {
 
   it('scores 1.0 when all terms match the document', async () => {
     bootstrap(repo, {
-      documents: [
-        { doc_id: 'd1', title: 'UseCase パターン', kind: 'guideline', content: '実装の規約について' },
-      ],
+      documents: [{ doc_id: 'd1', title: 'UseCase パターン', kind: 'guideline', content: '実装の規約について' }],
       edges: [
         {
           edge_id: 'e1',
@@ -1226,9 +1234,7 @@ describe('ContextCompiler — plan relevance scoring', () => {
 
   it('scores 0.0 when no terms match the document', async () => {
     bootstrap(repo, {
-      documents: [
-        { doc_id: 'd1', title: 'Unrelated Topic', kind: 'guideline', content: 'nothing relevant here' },
-      ],
+      documents: [{ doc_id: 'd1', title: 'Unrelated Topic', kind: 'guideline', content: 'nothing relevant here' }],
       edges: [
         {
           edge_id: 'e1',
@@ -1253,8 +1259,18 @@ describe('ContextCompiler — plan relevance scoring', () => {
   it('uses word-boundary matching for ASCII terms to avoid false positives', async () => {
     bootstrap(repo, {
       documents: [
-        { doc_id: 'real-api', title: 'API Reference', kind: 'reference', content: 'The API endpoint for review submission' },
-        { doc_id: 'false-hit', title: 'Preview template for capillary docs', kind: 'guideline', content: 'capillary flow documentation with preview images' },
+        {
+          doc_id: 'real-api',
+          title: 'API Reference',
+          kind: 'reference',
+          content: 'The API endpoint for review submission',
+        },
+        {
+          doc_id: 'false-hit',
+          title: 'Preview template for capillary docs',
+          kind: 'guideline',
+          content: 'capillary flow documentation with preview images',
+        },
       ],
       edges: [
         {
@@ -1294,7 +1310,12 @@ describe('ContextCompiler — plan relevance scoring', () => {
   it('matches PascalCase sub-identifiers at CamelCase boundaries', async () => {
     bootstrap(repo, {
       documents: [
-        { doc_id: 'class-doc', title: 'Application Classes', kind: 'guideline', content: 'StoreMemberUseCase and ListMembersInteractor' },
+        {
+          doc_id: 'class-doc',
+          title: 'Application Classes',
+          kind: 'guideline',
+          content: 'StoreMemberUseCase and ListMembersInteractor',
+        },
         { doc_id: 'unrelated', title: 'Unrelated', kind: 'guideline', content: 'nothing about use cases here' },
       ],
       edges: [
@@ -1335,7 +1356,12 @@ describe('ContextCompiler — plan relevance scoring', () => {
   it('does not match across snake_case boundaries (known limitation)', async () => {
     bootstrap(repo, {
       documents: [
-        { doc_id: 'snake-doc', title: 'Client Library', kind: 'guideline', content: 'member_api_client handles requests' },
+        {
+          doc_id: 'snake-doc',
+          title: 'Client Library',
+          kind: 'guideline',
+          content: 'member_api_client handles requests',
+        },
         { doc_id: 'word-doc', title: 'API Client', kind: 'guideline', content: 'The api client handles requests' },
       ],
       edges: [

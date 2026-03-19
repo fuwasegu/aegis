@@ -64,10 +64,7 @@ function matchesAsciiTerm(term: string, searchText: string): boolean {
       (/[a-z]/.test(searchText[pos - 1]) && /[A-Z]/.test(searchText[pos]));
 
     const endPos = pos + term.length;
-    const afterOk =
-      endPos >= searchText.length ||
-      !/\w/.test(searchText[endPos]) ||
-      /[A-Z]/.test(searchText[endPos]);
+    const afterOk = endPos >= searchText.length || !/\w/.test(searchText[endPos]) || /[A-Z]/.test(searchText[endPos]);
 
     if (beforeOk && afterOk) return true;
     pos = lower.indexOf(term, pos + 1);
