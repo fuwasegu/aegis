@@ -13,6 +13,92 @@ import type { IntentTagger } from '../tagging/tagger.js';
 import type { CompiledContext, CompileRequest, Edge, ResolvedDoc, ResolvedEdge } from '../types.js';
 
 /**
+ * Extract meaningful terms from a plan string for deterministic relevance scoring.
+ * Captures PascalCase identifiers, Katakana words, Kanji compounds, and
+ * standalone alphabetic words. Pure function — same input always yields same output.
+ */
+export function extractPlanTerms(plan: string): string[] {
+  const terms = new Set<string>();
+
+  for (const m of plan.matchAll(/[A-Z][a-zA-Z0-9]{2,}/g)) {
+    terms.add(m[0].toLowerCase());
+  }
+
+  for (const m of plan.matchAll(/[\u30A0-\u30FA\u30FC-\u30FF]{2,}/g)) {
+    terms.add(m[0]);
+  }
+
+  for (const m of plan.matchAll(/[\u4E00-\u9FFF]{2,}/g)) {
+    terms.add(m[0]);
+  }
+
+  for (const word of plan.split(/[\s\u3000\u30FB\u3001\u3002\u300C\u300D\uFF08\uFF09[\]{}:;,.\-!?\n\r]+/)) {
+    if (/^[a-zA-Z][a-zA-Z0-9]*$/.test(word) && word.length >= 4) {
+      terms.add(word.toLowerCase());
+    }
+  }
+
+  return [...terms];
+}
+
+/**
+ * Check if a lowercase ASCII term appears in text at a word boundary or
+ * PascalCase transition (lowercase→uppercase).
+ *
+ * Two-pass approach avoids the JS quirk where the `i` flag neutralises
+ * `\p{Ll}` / `\p{Lu}` inside lookarounds.
+ *
+ *  Pass 1: standard `\b...\b` (case-insensitive) — standalone words
+ *  Pass 2: scan for case-insensitive substrings and verify start/end
+ *          sit on a CamelCase boundary (lower→upper transition)
+ */
+function matchesAsciiTerm(term: string, searchText: string): boolean {
+  if (new RegExp(`\\b${term}\\b`, 'i').test(searchText)) return true;
+
+  const lower = searchText.toLowerCase();
+  let pos = lower.indexOf(term);
+  while (pos !== -1) {
+    const beforeOk =
+      pos === 0 ||
+      !/\w/.test(searchText[pos - 1]) ||
+      (/[a-z]/.test(searchText[pos - 1]) && /[A-Z]/.test(searchText[pos]));
+
+    const endPos = pos + term.length;
+    const afterOk = endPos >= searchText.length || !/\w/.test(searchText[endPos]) || /[A-Z]/.test(searchText[endPos]);
+
+    if (beforeOk && afterOk) return true;
+    pos = lower.indexOf(term, pos + 1);
+  }
+  return false;
+}
+
+/**
+ * Compute deterministic relevance score (0–1) for a document against plan terms.
+ * Score = (matched terms) / (total terms). Returns undefined when no terms are available.
+ *
+ * ASCII terms use CamelCase-aware boundary matching so that:
+ *  - "usecase" matches both standalone "UseCase" and embedded "StoreMemberUseCase"
+ *  - "api" does NOT match "capillary", "review" does NOT match "preview"
+ *
+ * CJK terms use substring matching since ideographic characters are
+ * inherently delimited and don't embed inside other words.
+ */
+function computeRelevance(terms: string[], doc: { title: string; content: string }): number {
+  if (terms.length === 0) return 1.0;
+
+  const searchText = `${doc.title}\n${doc.content}`;
+  let matched = 0;
+  for (const term of terms) {
+    if (/^[a-zA-Z0-9]+$/.test(term)) {
+      if (matchesAsciiTerm(term, searchText)) matched++;
+    } else {
+      if (searchText.includes(term)) matched++;
+    }
+  }
+  return Math.round((matched / terms.length) * 100) / 100;
+}
+
+/**
  * Deterministic sort for edges: specificity DESC → priority ASC → edge_id ASC.
  * The edge_id tiebreaker guarantees a fully deterministic order (P-1).
  */
@@ -136,17 +222,23 @@ export class ContextCompiler {
       return a.doc_id.localeCompare(b.doc_id);
     });
 
+    const planTerms = request.plan ? extractPlanTerms(request.plan) : [];
+
     for (const doc of sortedDocs) {
       if (doc.kind === 'template') {
         templateDocIds.push(doc.doc_id);
         templates.push({ name: doc.title, content: doc.content });
       } else {
-        regularDocs.push({
+        const resolved: ResolvedDoc = {
           doc_id: doc.doc_id,
           title: doc.title,
           kind: doc.kind,
           content: doc.content,
-        });
+        };
+        if (request.plan && planTerms.length > 0) {
+          resolved.relevance = computeRelevance(planTerms, doc);
+        }
+        regularDocs.push(resolved);
       }
     }
 

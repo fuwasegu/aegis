@@ -54,6 +54,8 @@ describe('Cursor adapter', () => {
     expect(content).toContain('aegis_compile_context');
     expect(content).toContain('aegis_observe');
     expect(content).toContain('Aegis Process Enforcement');
+    expect(content).toContain('Do NOT read the files');
+    expect(content).toContain('relevance');
   });
 
   it('is idempotent — overwrites managed file', () => {
@@ -108,6 +110,8 @@ describe('Claude adapter', () => {
     expect(content).toContain('<!-- aegis:start -->');
     expect(content).toContain('<!-- aegis:end -->');
     expect(content).toContain('aegis_compile_context');
+    expect(content).toContain('Do NOT read the files');
+    expect(content).toContain('relevance');
   });
 
   it('appends section to existing CLAUDE.md', () => {
@@ -170,6 +174,8 @@ describe('Codex adapter', () => {
     expect(content).toContain('<!-- aegis:end -->');
     expect(content).toContain('aegis_compile_context');
     expect(content).toContain('AGENTS.md');
+    expect(content).toContain('Do NOT read the files');
+    expect(content).toContain('relevance');
   });
 
   it('appends section to existing AGENTS.md', () => {

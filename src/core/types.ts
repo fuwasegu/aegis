@@ -171,6 +171,8 @@ export interface ResolvedDoc {
   title: string;
   kind: DocumentKind;
   content: string;
+  /** Deterministic relevance score (0–1) based on plan keyword matching. Present only when plan is provided. */
+  relevance?: number;
 }
 
 export interface ResolvedEdge {
