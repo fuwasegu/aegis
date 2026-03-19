@@ -268,10 +268,9 @@ describe('E2E: Template-less Lifecycle (skip_template)', () => {
     expect(importResult.proposal_ids.length).toBeGreaterThan(0);
     expect(importResult.warnings).toHaveLength(0);
 
-    // Step 4: Admin approves all proposals
-    const proposals = adminService.listProposals({ status: 'pending' }, 'admin');
-    for (const p of proposals.proposals as any[]) {
-      adminService.approveProposal(p.proposal_id, undefined, 'admin');
+    // Step 4: Admin approves proposals in importDoc return order (new_doc first, then add_edge)
+    for (const pid of importResult.proposal_ids) {
+      adminService.approveProposal(pid, undefined, 'admin');
     }
 
     // Step 5: compile_context now returns the imported doc
