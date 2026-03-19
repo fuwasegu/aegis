@@ -231,9 +231,10 @@ Aegis ships with pre-built architecture templates. The template is auto-detected
 
 | Template | Detection | Description |
 |----------|-----------|-------------|
+| `nextjs-app-router` | `package.json` + `next` dependency | Next.js App Router with React Server Components |
 | `laravel-ddd` | `composer.json` + Laravel | Domain-Driven Design with Clean Architecture |
-| `generic-layered` | Any `src/` project | Language-agnostic layered architecture |
 | `typescript-mcp` | `package.json` + `tsconfig.json` + MCP SDK | TypeScript MCP server with layered architecture |
+| `generic-layered` | Any `src/` project | Language-agnostic layered architecture (fallback) |
 
 ## Reference
 
@@ -301,7 +302,7 @@ npx @fuwasegu/aegis --list-models                           # List available SLM
 
 ```bash
 npm run build    # Compile TypeScript
-npm test         # Run all tests (250+)
+npm test         # Run all tests (335+)
 npm run test:watch
 ```
 

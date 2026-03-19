@@ -34,10 +34,25 @@ Using the **admin** surface tools:
 
 ```
 1. aegis_init_detect({ project_root: "<absolute path to project>" })
-   → Review the output: template match, confidence, warnings
+   → Review the output: template match, confidence, seed documents
+```
 
-2. If preview looks correct:
-   aegis_init_confirm({ preview_hash: "<hash from step 1>" })
+**Important: Before confirming, present the seed documents to the user.**
+
+The preview includes `seed_documents` — architecture guidelines that will be added to the knowledge base. These are generic best practices for the detected stack (e.g. Next.js App Router, Laravel DDD). They may not match the project's actual conventions.
+
+**You MUST ask the user:**
+> "Aegis detected **{template_name}** and will add these seed documents:
+> - {doc_id}: {title}
+> - {doc_id}: {title}
+> - ...
+>
+> Do you want all of them, or should I exclude any?"
+
+If the user wants to exclude documents, note the `doc_id`s to exclude. If the user wants no template documents at all, skip to Step 3 and use `import_doc` instead.
+
+```
+2. aegis_init_confirm({ preview_hash: "<hash from step 1>" })
    → Creates seed documents, edges, layer rules
 
 3. Deploy adapter rules (run in terminal, not an MCP tool):
