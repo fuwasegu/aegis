@@ -1,15 +1,15 @@
 <!-- aegis:managed -->
 ---
-description: Aegis process enforcement — always consult Aegis before writing code
+description: Aegis process enforcement — always consult Aegis before writing code or answering architecture questions
 globs:
 alwaysApply: true
 ---
 
 # Aegis Process Enforcement
 
-You MUST follow this process for every coding task. No exceptions.
+You MUST consult Aegis for every coding-related interaction — implementation tasks AND questions about architecture, patterns, or conventions. No exceptions.
 
-## Before Writing Code
+## When Writing Code
 
 1. **Create a Plan** — Before touching any file, articulate what you intend to do in natural language.
 2. **Consult Aegis** — Call `aegis_compile_context` with:
@@ -18,11 +18,8 @@ You MUST follow this process for every coding task. No exceptions.
    - `command`: the type of operation (scaffold, refactor, review, etc.)
 3. **Read the returned documents** — Aegis returns architecture guidelines, patterns, and constraints relevant to your task. You MUST follow them.
 4. **Implement** — Write code that adheres to the returned guidelines.
-
-## After Writing Code
-
 5. **Self-Review** — Check your implementation against the guidelines Aegis returned.
-6. **Report Violations** — If you discover that Aegis did not provide a relevant guideline (a "compile miss"), report it:
+6. **Report Compile Misses** — If Aegis did not provide a relevant guideline:
    ```
    aegis_observe({
      event_type: "compile_miss",
@@ -40,9 +37,20 @@ You MUST follow this process for every coding task. No exceptions.
    - `missing_doc`: A doc_id that should have been included in the compile result but was absent.
    - If neither can be identified, `review_comment` alone is sufficient.
 
+## When Answering Questions
+
+If the user asks about architecture, patterns, conventions, or how to write code — even without requesting implementation:
+
+1. **Identify representative files** — Find 1–3 real file paths in the codebase that are relevant to the question (e.g. `modules/Member/Application/Member/UpdateMemberInteractor.php`). Use directory listings or search if needed. Do NOT guess paths or use directories. **Do NOT read the files** — Aegis already has the relevant guidelines; reading files wastes tokens.
+2. **Consult Aegis** — Call `aegis_compile_context` with:
+   - `target_files`: the real file paths from step 1
+   - `plan`: the user's question in natural language
+   - `command`: `"review"`
+3. **Answer using Aegis context** — Base your answer on the guidelines returned by Aegis, supplemented by your own knowledge. Cite specific guidelines when relevant. When documents include a `relevance` score, prioritize high-scoring documents and skim or skip low-scoring ones.
+
 ## Rules
 
-- NEVER skip the Aegis consultation step.
+- NEVER skip the Aegis consultation step — for both implementation and questions.
 - NEVER ignore guidelines returned by Aegis.
 - If Aegis returns no documents (empty base), proceed but note this may indicate missing DAG edges.
-- The `compile_id` and `snapshot_id` from step 2 are required for any observation reporting.
+- The `compile_id` and `snapshot_id` from the consultation are required for any observation reporting.

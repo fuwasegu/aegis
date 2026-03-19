@@ -56,7 +56,7 @@ aegis_list_proposals({ status: "pending" })
 aegis_approve_proposal({ proposal_id: "<id>" })
 ```
 
-**Note**: `aegis_import_doc` is for **new** documents only. To update an existing document, use the `review_correction` flow above.
+**Note**: `aegis_import_doc` can also update existing documents (it generates `update_doc` if the `doc_id` already exists). For targeted content corrections based on review feedback, the `review_correction` flow above is preferred.
 
 ## Step 3b: Add Missing Edge
 

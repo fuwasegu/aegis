@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { type AegisDatabase, createInMemoryDatabase, Repository } from '../store/index.js';
 import type { IntentTagger } from '../tagging/tagger.js';
 import type { IntentTag } from '../types.js';
-import { ContextCompiler } from './compiler.js';
+import { ContextCompiler, extractPlanTerms } from './compiler.js';
 
 function hash(content: string): string {
   return createHash('sha256').update(content).digest('hex');
@@ -1009,5 +1009,367 @@ describe('ContextCompiler — expanded context', () => {
     const r2 = await compilerEmpty.compile({ target_files: ['src/a.ts'], plan: 'empty plan' });
     const a2 = compilerEmpty.getCompileAudit(r2.compile_id);
     expect(a2!.expanded_doc_ids).toEqual([]);
+  });
+});
+
+// ============================================================
+// Plan Relevance Scoring Tests
+// ============================================================
+
+describe('extractPlanTerms', () => {
+  it('extracts PascalCase identifiers', () => {
+    const terms = extractPlanTerms('Implement UseCase for StoreMember');
+    expect(terms).toContain('usecase');
+    expect(terms).toContain('storemember');
+    expect(terms).toContain('implement');
+  });
+
+  it('extracts Katakana words', () => {
+    const terms = extractPlanTerms('パターンとインタフェースの設計');
+    expect(terms).toContain('パターン');
+    expect(terms).toContain('インタフェース');
+  });
+
+  it('extracts Kanji compounds', () => {
+    const terms = extractPlanTerms('UseCaseを実装するうえでの注意点');
+    expect(terms).toContain('usecase');
+    expect(terms).toContain('実装');
+    expect(terms).toContain('注意点');
+  });
+
+  it('extracts standalone alphabetic words (4+ chars)', () => {
+    const terms = extractPlanTerms('scaffold a new service layer');
+    expect(terms).toContain('scaffold');
+    expect(terms).toContain('service');
+    expect(terms).toContain('layer');
+    expect(terms).not.toContain('a');
+    expect(terms).not.toContain('new');
+  });
+
+  it('returns empty array for empty plan', () => {
+    expect(extractPlanTerms('')).toEqual([]);
+  });
+
+  it('deduplicates terms', () => {
+    const terms = extractPlanTerms('UseCase UseCase UseCase');
+    const usecaseCount = terms.filter((t) => t === 'usecase').length;
+    expect(usecaseCount).toBe(1);
+  });
+
+  it('handles mixed Japanese/English plan from experiment', () => {
+    const terms = extractPlanTerms('UseCaseを実装するうえでの注意点・パターン・規約を理解したい');
+    expect(terms).toContain('usecase');
+    expect(terms).toContain('パターン');
+    expect(terms).toContain('実装');
+    expect(terms).toContain('注意点');
+    expect(terms).toContain('規約');
+    expect(terms).toContain('理解');
+  });
+});
+
+describe('ContextCompiler — plan relevance scoring', () => {
+  let db: AegisDatabase;
+  let repo: Repository;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+  });
+
+  it('attaches relevance scores to base documents when plan is provided', async () => {
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'usecase-guide', title: 'UseCase Guidelines', kind: 'guideline', content: 'How to implement UseCase patterns' },
+        { doc_id: 'api-spec', title: 'Member Search API', kind: 'reference', content: 'GET /api/members/search endpoint specification' },
+      ],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'modules/**',
+          target_doc_id: 'usecase-guide',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'modules/**',
+          target_doc_id: 'api-spec',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({
+      target_files: ['modules/Member/Application/StoreMemberUseCase.php'],
+      plan: 'UseCaseの実装パターンを理解したい',
+    });
+
+    expect(result.base.documents).toHaveLength(2);
+
+    const usecaseDoc = result.base.documents.find((d) => d.doc_id === 'usecase-guide')!;
+    const apiDoc = result.base.documents.find((d) => d.doc_id === 'api-spec')!;
+
+    expect(usecaseDoc.relevance).toBeDefined();
+    expect(apiDoc.relevance).toBeDefined();
+    expect(usecaseDoc.relevance!).toBeGreaterThan(apiDoc.relevance!);
+  });
+
+  it('does not attach relevance when plan is absent', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'content' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+
+    expect(result.base.documents[0].relevance).toBeUndefined();
+  });
+
+  it('does not attach relevance when plan yields no extractable terms', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'content' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['src/a.ts'], plan: 'hi' });
+
+    expect(result.base.documents[0].relevance).toBeUndefined();
+  });
+
+  it('produces deterministic scores (P-1): same plan + same docs = same scores', async () => {
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'd1', title: 'Architecture Guide', kind: 'guideline', content: 'UseCase implementation patterns' },
+        { doc_id: 'd2', title: 'API Reference', kind: 'reference', content: 'REST endpoint documentation' },
+      ],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd2',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const plan = 'UseCase implementation review';
+
+    const r1 = await compiler.compile({ target_files: ['src/a.ts'], plan });
+    const r2 = await compiler.compile({ target_files: ['src/a.ts'], plan });
+
+    for (const doc of r1.base.documents) {
+      const matching = r2.base.documents.find((d) => d.doc_id === doc.doc_id)!;
+      expect(doc.relevance).toBe(matching.relevance);
+    }
+  });
+
+  it('scores 1.0 when all terms match the document', async () => {
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'd1', title: 'UseCase パターン', kind: 'guideline', content: '実装の規約について' },
+      ],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      plan: 'UseCaseの実装パターンと規約',
+    });
+
+    expect(result.base.documents[0].relevance).toBe(1.0);
+  });
+
+  it('scores 0.0 when no terms match the document', async () => {
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'd1', title: 'Unrelated Topic', kind: 'guideline', content: 'nothing relevant here' },
+      ],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      plan: 'UseCaseの実装パターン',
+    });
+
+    expect(result.base.documents[0].relevance).toBe(0);
+  });
+
+  it('uses word-boundary matching for ASCII terms to avoid false positives', async () => {
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'real-api', title: 'API Reference', kind: 'reference', content: 'The API endpoint for review submission' },
+        { doc_id: 'false-hit', title: 'Preview template for capillary docs', kind: 'guideline', content: 'capillary flow documentation with preview images' },
+      ],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'real-api',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'false-hit',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      plan: 'API review plan',
+    });
+
+    const realApi = result.base.documents.find((d) => d.doc_id === 'real-api')!;
+    const falseHit = result.base.documents.find((d) => d.doc_id === 'false-hit')!;
+
+    // "API" and "review" should match real-api (word boundaries present)
+    // but NOT false-hit ("api" in "capillary" and "review" in "preview" are not word-bounded)
+    expect(realApi.relevance!).toBeGreaterThan(falseHit.relevance!);
+    expect(falseHit.relevance).toBe(0);
+  });
+
+  it('matches PascalCase sub-identifiers at CamelCase boundaries', async () => {
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'class-doc', title: 'Application Classes', kind: 'guideline', content: 'StoreMemberUseCase and ListMembersInteractor' },
+        { doc_id: 'unrelated', title: 'Unrelated', kind: 'guideline', content: 'nothing about use cases here' },
+      ],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'class-doc',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'unrelated',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      plan: 'UseCase implementation Interactor',
+    });
+
+    const classDoc = result.base.documents.find((d) => d.doc_id === 'class-doc')!;
+    const unrelatedDoc = result.base.documents.find((d) => d.doc_id === 'unrelated')!;
+
+    // "usecase" should match "StoreMemberUseCase" at CamelCase boundary
+    // "interactor" should match "ListMembersInteractor" at CamelCase boundary
+    expect(classDoc.relevance!).toBeGreaterThan(unrelatedDoc.relevance!);
+    expect(classDoc.relevance!).toBeGreaterThanOrEqual(0.67);
+  });
+
+  it('does not match across snake_case boundaries (known limitation)', async () => {
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'snake-doc', title: 'Client Library', kind: 'guideline', content: 'member_api_client handles requests' },
+        { doc_id: 'word-doc', title: 'API Client', kind: 'guideline', content: 'The api client handles requests' },
+      ],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'snake-doc',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'word-doc',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      plan: 'API client implementation',
+    });
+
+    const snakeDoc = result.base.documents.find((d) => d.doc_id === 'snake-doc')!;
+    const wordDoc = result.base.documents.find((d) => d.doc_id === 'word-doc')!;
+
+    // "api" inside "member_api_client" is NOT matched — underscore is a \w char
+    // so neither \b nor CamelCase boundary fires. This is a known limitation;
+    // standalone "api" and "client" in word-doc DO match at word boundaries.
+    expect(wordDoc.relevance!).toBeGreaterThan(snakeDoc.relevance!);
   });
 });
