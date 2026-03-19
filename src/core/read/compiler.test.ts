@@ -592,7 +592,12 @@ describe('ContextCompiler — empty result hints', () => {
         'No documents matched target_files: [anything.ts].',
         '',
         'No edges are registered in the knowledge base.',
-        'If the paths are correct but no edges cover them, report a compile_miss.',
+        '',
+        'To populate the knowledge base, use the admin surface:',
+        '1. Read the code around the target files and identify architecture patterns',
+        '2. Call aegis_import_doc with content + edge_hints for each pattern',
+        '   (edge_hints connect documents to file paths for compile_context routing)',
+        '3. Approve the generated proposals with aegis_approve_proposal',
       ].join('\n'),
     );
   });

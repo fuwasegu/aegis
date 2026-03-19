@@ -33,12 +33,11 @@ Add to the project's `.cursor/mcp.json` (create if missing):
 Using the **admin** surface tools:
 
 ```
-1. aegis_init_detect({ project_root: "<absolute path to project>" })
-   → Review the output: template match, confidence, warnings
+1. aegis_init_detect({ project_root: "<absolute path to project>", skip_template: true })
+   → Creates an empty knowledge base (no bundled templates)
 
-2. If preview looks correct:
-   aegis_init_confirm({ preview_hash: "<hash from step 1>" })
-   → Creates seed documents, edges, layer rules
+2. aegis_init_confirm({ preview_hash: "<hash from step 1>" })
+   → Initializes the project with an empty knowledge base
 
 3. Deploy adapter rules (run in terminal, not an MCP tool):
    npx @fuwasegu/aegis deploy-adapters
@@ -48,11 +47,31 @@ Using the **admin** surface tools:
 
 After init, `.aegis/` directory is created with the database. It self-manages its `.gitignore`.
 
-## Step 3: Import Existing Docs (Optional)
+## Step 3: Analyze Codebase and Create Documents
 
-For bulk-importing many documents at once, see the [aegis-bulk-import skill](aegis-bulk-import.md).
+The knowledge base is empty after init. You need to analyze the codebase and create architecture documents.
 
-If the project has existing architecture documentation, use `file_path` to import directly from disk (recommended to avoid LLM truncation):
+**You MUST use the admin surface for this step.**
+
+1. **Read the project structure** — List directories, identify key architectural patterns (e.g. layered architecture, domain modules, API routes).
+2. **For each pattern, create a document** using `aegis_import_doc`:
+
+```
+aegis_import_doc({
+  doc_id: "repo-pattern",
+  title: "Repository Pattern",
+  kind: "guideline",
+  content: "## Repository Pattern\n\nAll data access goes through repository interfaces...",
+  edge_hints: [
+    { source_type: "path", source_value: "src/core/store/**", edge_type: "path_requires" }
+  ]
+})
+```
+
+**CRITICAL: Always include `edge_hints`.**
+Without `edge_hints`, the document will be isolated in the DAG and `compile_context` will never return it. Each `edge_hint` connects the document to file path patterns so that `compile_context` can route queries to it.
+
+If the project has existing architecture documentation files, use `file_path` to import directly from disk:
 
 ```
 aegis_import_doc({
@@ -60,7 +79,6 @@ aegis_import_doc({
   doc_id: "my-doc-id",
   title: "My Document",
   kind: "guideline",
-  tags: ["architecture", "patterns"],
   edge_hints: [
     { source_type: "path", source_value: "src/domain/**", edge_type: "path_requires" }
   ]
@@ -70,25 +88,18 @@ aegis_import_doc({
 Required fields: `doc_id`, `title`, `kind`, and either `content` or `file_path`.
 Optional fields: `tags`, `edge_hints`, `source_path` (auto-set from `file_path` if not provided).
 
-Using `file_path` ensures the full document content is read from disk, avoiding truncation by LLM context windows. Documents imported with `file_path` automatically track `source_path` for later synchronization.
+For bulk-importing many documents at once, see the [aegis-bulk-import skill](aegis-bulk-import.md).
 
-Each import creates a **proposal** (with full evidence chain via observation) that must be approved:
+## Step 4: Approve Proposals
+
+Each import creates a **proposal** that must be approved:
 
 ```
 aegis_list_proposals({ status: "pending" })
 aegis_approve_proposal({ proposal_id: "<id>" })
 ```
 
-To keep imported documents in sync with their source files:
-
-```
-aegis_sync_docs()                           # Sync all documents with source_path
-aegis_sync_docs({ doc_ids: ["my-doc-id"] }) # Sync specific documents
-```
-
-This detects changes via content hash comparison and creates `update_doc` proposals for stale documents.
-
-## Step 4: Verify
+## Step 5: Verify
 
 Test the setup by compiling context:
 
@@ -99,9 +110,9 @@ aegis_compile_context({
 })
 ```
 
-Should return architecture documents relevant to the target files.
+Should return architecture documents relevant to the target files. If empty, check that your `edge_hints` patterns match the target file paths.
 
-## Step 5: Claude Code / Codex (Optional)
+## Step 6: Claude Code / Codex (Optional)
 
 For Claude Code projects, also add to `.mcp.json`:
 
@@ -131,7 +142,7 @@ SLM is **disabled by default**. The deterministic DAG context works without it. 
 | `--model qwen3.5-9b` | Higher quality model (~5.5 GB, requires `--slm`) |
 | `--list-models` | Show all available models |
 | `--ollama` | Use Ollama backend (implies `--slm`) |
-| `--template-dir <path>` | Additional template search path (local overrides bundled) |
+| `--template-dir <path>` | Additional template search path (for custom templates) |
 
 Models are stored in `~/.aegis/models/` and shared across all projects.
 
@@ -152,7 +163,6 @@ Example MCP config with SLM enabled:
 
 | Issue | Solution |
 |-------|----------|
-| `No matching architecture profile` | Project structure doesn't match any template. Check detection evidence in init_detect output. |
-| `Ambiguous profile selection` | Multiple templates matched equally. May need to add template or adjust project structure. |
-| `Compile returns empty` | Run init first. Or check that edges exist for your file paths. |
+| `Compile returns empty` | Check that edges exist for your file paths. Use `aegis_import_doc` with `edge_hints`. |
+| `Ambiguous profile selection` | Use `skip_template: true` to bypass template detection. |
 | SLM download fails | Remove `--slm` flag. Base context works without SLM. |

@@ -115,14 +115,14 @@ codex mcp add aegis-admin -- npx -y @fuwasegu/aegis --surface admin
 
 ### 1. プロジェクトを初期化する
 
-Admin surface を使って、プロジェクトのアーキテクチャを検出し Canonical Knowledge をブートストラップ:
+Admin surface を使って、空のナレッジベースで Aegis を初期化:
 
 ```
-aegis_init_detect({ project_root: "/path/to/your/project" })
+aegis_init_detect({ project_root: "/path/to/your/project", skip_template: true })
 aegis_init_confirm({ preview_hash: "<detect で返されたハッシュ>" })
 ```
 
-プロジェクト構造に基づいてシードドキュメント、DAG エッジ、レイヤルールが作成されます。
+空のナレッジベースが作成されます。次のステップでアーキテクチャドキュメントを追加します。
 
 続けて CLI でアダプタルールと Agent Skills をデプロイ:
 
@@ -144,9 +144,9 @@ aegis_compile_context({
 
 編集対象ファイルに関連するアーキテクチャガイドライン、パターン、制約が返されます。
 
-### 3. 既存ドキュメントのインポート（任意）
+### 3. アーキテクチャドキュメントを追加する
 
-プロジェクトに既存のアーキテクチャドキュメント（ADR、設計ガイド、コーディング規約等）がある場合、**admin** surface を使って Aegis のナレッジベースに一括インポートできます:
+初期化後、コードベースを分析してナレッジベースにドキュメントを追加します。**admin** surface の `aegis_import_doc` で `edge_hints` 付きのドキュメントを追加:
 
 ```
 aegis_import_doc({
@@ -224,17 +224,6 @@ SLM 有効時の初回起動で、選択されたモデルが `~/.aegis/models/`
 HuggingFace URI を直接指定することも可能: `--model hf:user/repo:file.gguf`
 
 > **レガシー:** Ollama ベースの推論を使いたい場合は `--ollama` フラグが利用可能です。`--ollama` 指定時は SLM が暗黙的に有効化されます。
-
-## テンプレート
-
-Aegis にはアーキテクチャテンプレートが同梱されています。`aegis_init_detect` 時に自動検出されます:
-
-| テンプレート | 検出条件 | 説明 |
-|------------|----------|------|
-| `nextjs-app-router` | `package.json` + `next` 依存 | Next.js App Router + React Server Components |
-| `laravel-ddd` | `composer.json` + Laravel | DDD + Clean Architecture |
-| `typescript-mcp` | `package.json` + `tsconfig.json` + MCP SDK | TypeScript MCP サーバー |
-| `generic-layered` | `src/` ディレクトリ | 言語非依存レイヤードアーキテクチャ（フォールバック） |
 
 ## リファレンス
 

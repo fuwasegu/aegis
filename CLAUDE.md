@@ -82,7 +82,7 @@ src/
     intent-tagger.ts — OllamaIntentTagger (IntentTagger implementation)
   e2e/          — End-to-end integration tests
   main.ts       — Entry point (--surface, --db, --templates, --ollama-*)
-templates/      — Init templates (laravel-ddd, generic-layered, typescript-mcp)
+templates/      — Reserved for custom user templates (--template-dir)
 ```
 
 ## Design Decisions

@@ -396,10 +396,16 @@ export class ContextCompiler {
     const hasRegistered = pathEdges.length > 0 || cmdEdges.length > 0 || layerEdges.length > 0;
     if (hasRegistered) {
       lines.push('Ensure target_files are real file paths (not directories) matching the patterns above.');
+      lines.push('If the paths are correct but no edges cover them, report a compile_miss.');
     } else {
       lines.push('No edges are registered in the knowledge base.');
+      lines.push('');
+      lines.push('To populate the knowledge base, use the admin surface:');
+      lines.push('1. Read the code around the target files and identify architecture patterns');
+      lines.push('2. Call aegis_import_doc with content + edge_hints for each pattern');
+      lines.push('   (edge_hints connect documents to file paths for compile_context routing)');
+      lines.push('3. Approve the generated proposals with aegis_approve_proposal');
     }
-    lines.push('If the paths are correct but no edges cover them, report a compile_miss.');
 
     return lines.join('\n');
   }
