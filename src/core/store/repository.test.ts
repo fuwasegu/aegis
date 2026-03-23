@@ -721,6 +721,89 @@ describe('Repository', () => {
     });
   });
 
+  describe('countActionableObservations', () => {
+    it('returns zeros when no observations exist', () => {
+      const counts = repo.countActionableObservations();
+      expect(counts).toEqual({ pending: 0, skipped: 0 });
+    });
+
+    it('counts pending observations (unanalyzed)', () => {
+      for (let i = 0; i < 3; i++) {
+        repo.insertObservation({
+          observation_id: `obs-${i}`,
+          event_type: 'compile_miss',
+          payload: JSON.stringify({ target_files: ['a.ts'], review_comment: 'miss' }),
+          related_compile_id: null,
+          related_snapshot_id: null,
+        });
+      }
+      const counts = repo.countActionableObservations();
+      expect(counts).toEqual({ pending: 3, skipped: 0 });
+    });
+
+    it('counts skipped observations (analyzed but no proposal)', () => {
+      for (let i = 0; i < 2; i++) {
+        repo.insertObservation({
+          observation_id: `obs-skip-${i}`,
+          event_type: 'compile_miss',
+          payload: JSON.stringify({ target_files: ['a.ts'], review_comment: 'miss' }),
+          related_compile_id: null,
+          related_snapshot_id: null,
+        });
+      }
+      repo.markObservationsAnalyzed(['obs-skip-0', 'obs-skip-1']);
+      const counts = repo.countActionableObservations();
+      expect(counts).toEqual({ pending: 0, skipped: 2 });
+    });
+
+    it('excludes proposed observations (analyzed with proposal evidence)', () => {
+      repo.insertObservation({
+        observation_id: 'obs-proposed',
+        event_type: 'compile_miss',
+        payload: JSON.stringify({ target_files: ['a.ts'], review_comment: 'miss' }),
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
+      repo.markObservationsAnalyzed(['obs-proposed']);
+      repo.insertProposal({
+        proposal_id: 'p1',
+        proposal_type: 'add_edge',
+        payload: '{}',
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.insertProposalEvidence('p1', 'obs-proposed');
+
+      const counts = repo.countActionableObservations();
+      expect(counts).toEqual({ pending: 0, skipped: 0 });
+    });
+
+    it('excludes archived observations', () => {
+      for (let i = 0; i < 3; i++) {
+        repo.insertObservation({
+          observation_id: `obs-arch-${i}`,
+          event_type: 'compile_miss',
+          payload: JSON.stringify({ target_files: ['a.ts'], review_comment: 'miss' }),
+          related_compile_id: null,
+          related_snapshot_id: null,
+        });
+      }
+
+      const before = repo.countActionableObservations();
+      expect(before.pending).toBe(3);
+
+      // Simulate archival by marking analyzed + archiving via SQL
+      repo.markObservationsAnalyzed(['obs-arch-0', 'obs-arch-1', 'obs-arch-2']);
+      // Use the underlying db to set archived_at directly for reliable testing
+      (repo as any).db
+        .prepare("UPDATE observations SET archived_at = datetime('now') WHERE observation_id LIKE 'obs-arch-%'")
+        .run();
+
+      const counts = repo.countActionableObservations();
+      expect(counts).toEqual({ pending: 0, skipped: 0 });
+    });
+  });
+
   describe('Adapter Meta', () => {
     it('returns undefined when no meta is set', () => {
       expect(repo.getAdapterMeta()).toBeUndefined();

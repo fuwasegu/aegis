@@ -298,6 +298,31 @@ export class Repository {
     }
   }
 
+  countActionableObservations(): { pending: number; skipped: number } {
+    const row = this.db
+      .prepare(
+        `
+      SELECT
+        SUM(CASE WHEN sub.outcome = 'pending' THEN 1 ELSE 0 END) AS pending,
+        SUM(CASE WHEN sub.outcome = 'skipped' THEN 1 ELSE 0 END) AS skipped
+      FROM (
+        SELECT
+          CASE
+            WHEN o.analyzed_at IS NULL THEN 'pending'
+            WHEN COUNT(pe.proposal_id) > 0 THEN 'proposed'
+            ELSE 'skipped'
+          END AS outcome
+        FROM observations o
+        LEFT JOIN proposal_evidence pe ON pe.observation_id = o.observation_id
+        WHERE o.archived_at IS NULL
+        GROUP BY o.observation_id
+      ) sub
+    `,
+      )
+      .get() as { pending: number | null; skipped: number | null };
+    return { pending: row.pending ?? 0, skipped: row.skipped ?? 0 };
+  }
+
   listObservations(
     filters: {
       event_type?: string;
