@@ -271,6 +271,19 @@ export class ContextCompiler {
       notices.push('Aegis adapter templates may be outdated. Run `npx @fuwasegu/aegis deploy-adapters` to update.');
     }
 
+    const OBSERVATION_TRIAGE_THRESHOLD = 5;
+    const obsCounts = this.repo.countActionableObservations();
+    const actionableTotal = obsCounts.pending + obsCounts.skipped;
+    if (actionableTotal >= OBSERVATION_TRIAGE_THRESHOLD) {
+      const parts: string[] = [];
+      if (obsCounts.pending > 0) parts.push(`${obsCounts.pending} pending`);
+      if (obsCounts.skipped > 0) parts.push(`${obsCounts.skipped} skipped`);
+      notices.push(
+        `${actionableTotal} observations need attention (${parts.join(', ')}). ` +
+          'Ask the admin to run the aegis-triage skill, or call aegis_list_observations and aegis_process_observations on the admin surface.',
+      );
+    }
+
     const result: CompiledContext = {
       compile_id: compileId,
       snapshot_id: snapshot.snapshot_id,

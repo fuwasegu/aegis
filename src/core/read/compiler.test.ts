@@ -763,6 +763,158 @@ describe('ContextCompiler — notices', () => {
 
     expect(result.notices).toHaveLength(0);
   });
+
+  it('includes observation triage notice when 5+ actionable observations exist', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'c' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    for (let i = 0; i < 5; i++) {
+      repo.insertObservation({
+        observation_id: `obs-pending-${i}`,
+        event_type: 'compile_miss',
+        payload: JSON.stringify({ target_files: ['src/a.ts'], review_comment: `miss ${i}` }),
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
+    }
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+
+    expect(result.notices).toHaveLength(1);
+    expect(result.notices[0]).toContain('5 observations need attention');
+    expect(result.notices[0]).toContain('5 pending');
+    expect(result.notices[0]).toContain('aegis-triage');
+  });
+
+  it('does not include observation triage notice when fewer than 5 actionable observations', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'c' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    for (let i = 0; i < 4; i++) {
+      repo.insertObservation({
+        observation_id: `obs-${i}`,
+        event_type: 'compile_miss',
+        payload: JSON.stringify({ target_files: ['src/a.ts'], review_comment: `miss ${i}` }),
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
+    }
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+
+    expect(result.notices).toHaveLength(0);
+  });
+
+  it('counts skipped observations in triage notice', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'c' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    for (let i = 0; i < 3; i++) {
+      repo.insertObservation({
+        observation_id: `obs-pending-${i}`,
+        event_type: 'compile_miss',
+        payload: JSON.stringify({ target_files: ['src/a.ts'], review_comment: `miss ${i}` }),
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
+    }
+
+    for (let i = 0; i < 3; i++) {
+      repo.insertObservation({
+        observation_id: `obs-skipped-${i}`,
+        event_type: 'compile_miss',
+        payload: JSON.stringify({ target_files: ['src/a.ts'], review_comment: `skipped ${i}` }),
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
+    }
+    repo.markObservationsAnalyzed(['obs-skipped-0', 'obs-skipped-1', 'obs-skipped-2']);
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+
+    expect(result.notices).toHaveLength(1);
+    expect(result.notices[0]).toContain('6 observations need attention');
+    expect(result.notices[0]).toContain('3 pending');
+    expect(result.notices[0]).toContain('3 skipped');
+  });
+
+  it('excludes proposed observations from triage count', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'c' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    for (let i = 0; i < 5; i++) {
+      repo.insertObservation({
+        observation_id: `obs-proposed-${i}`,
+        event_type: 'compile_miss',
+        payload: JSON.stringify({ target_files: ['src/a.ts'], review_comment: `miss ${i}` }),
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
+    }
+    repo.markObservationsAnalyzed(Array.from({ length: 5 }, (_, i) => `obs-proposed-${i}`));
+    const proposalId = repo.insertProposal({
+      proposal_id: 'prop-1',
+      proposal_type: 'add_edge',
+      payload: '{}',
+      status: 'pending',
+      review_comment: null,
+    });
+    for (let i = 0; i < 5; i++) {
+      repo.insertProposalEvidence(proposalId, `obs-proposed-${i}`);
+    }
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+
+    expect(result.notices).toHaveLength(0);
+  });
 });
 
 // ============================================================
