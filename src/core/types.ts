@@ -320,6 +320,9 @@ export interface TagMapping {
   created_at: string;
 }
 
+/** Sentinel content for update_doc proposals where human must provide content via modifications. */
+export const PENDING_CONTENT_PLACEHOLDER = '(content pending — provide via modifications when approving)';
+
 export interface ExpandedContextCandidate {
   doc_id: string;
   matched_tags: string[];

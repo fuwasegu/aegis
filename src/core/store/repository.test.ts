@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { PENDING_CONTENT_PLACEHOLDER } from '../types.js';
 import {
   type AegisDatabase,
   AlreadyInitializedError,
@@ -718,6 +719,63 @@ describe('Repository', () => {
       repo.approveProposal('p-tag-upd');
       const tags = repo.getTagsForDocument('tag-upd');
       expect(tags.map((t) => t.tag).sort()).toEqual(['auth', 'security']);
+    });
+
+    it('rejects update_doc approval when content is placeholder', () => {
+      repo.insertDocument({
+        doc_id: 'placeholder-doc',
+        title: 'T',
+        kind: 'guideline',
+        content: 'original',
+        content_hash: hash('original'),
+        status: 'approved',
+        template_origin: null,
+        source_path: null,
+      });
+
+      repo.insertProposal({
+        proposal_id: 'p-placeholder',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({
+          doc_id: 'placeholder-doc',
+          content: PENDING_CONTENT_PLACEHOLDER,
+          content_hash: hash(PENDING_CONTENT_PLACEHOLDER),
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      expect(() => repo.approveProposal('p-placeholder')).toThrow('content is a placeholder');
+    });
+
+    it('allows update_doc approval when placeholder is overwritten via modifications', () => {
+      repo.insertDocument({
+        doc_id: 'placeholder-doc2',
+        title: 'T',
+        kind: 'guideline',
+        content: 'original',
+        content_hash: hash('original'),
+        status: 'approved',
+        template_origin: null,
+        source_path: null,
+      });
+
+      repo.insertProposal({
+        proposal_id: 'p-placeholder2',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({
+          doc_id: 'placeholder-doc2',
+          content: PENDING_CONTENT_PLACEHOLDER,
+          content_hash: hash(PENDING_CONTENT_PLACEHOLDER),
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      const result = repo.approveProposal('p-placeholder2', { content: 'Real content here' });
+      expect(result.knowledge_version).toBeGreaterThan(0);
+      const doc = repo.getDocumentById('placeholder-doc2');
+      expect(doc?.content).toBe('Real content here');
     });
   });
 

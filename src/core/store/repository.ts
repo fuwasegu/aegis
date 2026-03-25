@@ -4,23 +4,24 @@
  */
 
 import { createHash } from 'node:crypto';
-import type {
-  CanonicalVersion,
-  CompileLog,
-  Document,
-  Edge,
-  EdgeSourceType,
-  EdgeType,
-  EntityStatus,
-  InitManifest,
-  KnowledgeMeta,
-  LayerRule,
-  Observation,
-  Proposal,
-  ProposalStatus,
-  ProposalType,
-  Snapshot,
-  TagMapping,
+import {
+  type CanonicalVersion,
+  type CompileLog,
+  type Document,
+  type Edge,
+  type EdgeSourceType,
+  type EdgeType,
+  type EntityStatus,
+  type InitManifest,
+  type KnowledgeMeta,
+  type LayerRule,
+  type Observation,
+  PENDING_CONTENT_PLACEHOLDER,
+  type Proposal,
+  type ProposalStatus,
+  type ProposalType,
+  type Snapshot,
+  type TagMapping,
 } from '../types.js';
 import type { AegisDatabase } from './database.js';
 
@@ -442,6 +443,13 @@ export class Repository {
       .all(proposalType) as Proposal[];
   }
 
+  countPendingProposals(): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS cnt FROM proposals WHERE status = 'pending'").get() as {
+      cnt: number;
+    };
+    return row.cnt;
+  }
+
   // ============================================================
   // Snapshot (INV-3: INSERT ONLY, INV-4: monotonic version)
   // ============================================================
@@ -625,6 +633,12 @@ export class Repository {
           }
         }
       } else if (proposal.proposal_type === 'update_doc') {
+        if (payload.content === PENDING_CONTENT_PLACEHOLDER) {
+          throw new Error(
+            `Cannot approve update_doc proposal '${proposalId}': content is a placeholder. ` +
+              'Provide actual content via modifications when approving.',
+          );
+        }
         this._applyUpdateDoc(payload);
         if (Array.isArray(payload.tags) && payload.tags.length > 0 && payload.doc_id) {
           for (const tag of payload.tags as string[]) {
