@@ -146,7 +146,7 @@ describe('E2E: Template-based Lifecycle', () => {
     );
     expect(observation.observation_id).toBeTruthy();
 
-    const analyzer = new RuleBasedAnalyzer();
+    const analyzer = new RuleBasedAnalyzer(repo);
     const analysis = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
     expect(analysis.proposals.created_proposal_ids.length).toBeGreaterThan(0);
 

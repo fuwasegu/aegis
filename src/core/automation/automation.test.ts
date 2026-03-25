@@ -41,7 +41,15 @@ function makeObservation(id: string, overrides: Partial<Observation> = {}): Obse
 // ============================================================
 
 describe('RuleBasedAnalyzer', () => {
-  const analyzer = new RuleBasedAnalyzer();
+  let db: AegisDatabase;
+  let repo: Repository;
+  let analyzer: RuleBasedAnalyzer;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+    analyzer = new RuleBasedAnalyzer(repo);
+  });
 
   it('compile_miss with missing_doc produces add_edge draft', async () => {
     const obs = makeObservation('obs-1');
@@ -207,6 +215,106 @@ describe('RuleBasedAnalyzer', () => {
     expect(result.drafts).toHaveLength(1);
     expect(result.skipped_observation_ids).toEqual(['obs-b', 'obs-c']);
     expect(result.errors).toHaveLength(0);
+  });
+
+  // ── Content gap: compile_miss with target_doc_id (no missing_doc) ──
+
+  it('compile_miss with target_doc_id (no missing_doc) produces update_doc draft', async () => {
+    // Bootstrap an approved document
+    repo.insertProposal({
+      proposal_id: 'boot',
+      proposal_type: 'bootstrap',
+      payload: JSON.stringify({
+        documents: [{ doc_id: 'ddd-guide', title: 'DDD', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+        edges: [],
+        layer_rules: [],
+      }),
+      status: 'pending',
+      review_comment: null,
+    });
+    repo.approveProposal('boot');
+
+    const obs = makeObservation('obs-gap-1', {
+      payload: JSON.stringify({
+        target_files: ['src/a.ts'],
+        target_doc_id: 'ddd-guide',
+        review_comment: 'missing validation section in DDD guide',
+      }),
+    });
+    const ctx: AnalysisContext = { observation: obs, compile_audit: null };
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts).toHaveLength(1);
+    expect(result.skipped_observation_ids).toHaveLength(0);
+    const draft = result.drafts[0];
+    expect(draft.proposal_type).toBe('update_doc');
+    expect(draft.payload.doc_id).toBe('ddd-guide');
+    expect(draft.payload.review_comment).toBe('missing validation section in DDD guide');
+    expect(draft.payload.content).toBeDefined();
+    expect(draft.payload.content_hash).toBeDefined();
+    expect(draft.evidence_observation_ids).toEqual(['obs-gap-1']);
+  });
+
+  it('compile_miss with target_doc_id but doc not approved → skip', async () => {
+    // Insert a non-approved (proposed) document directly
+    repo.insertDocument({
+      doc_id: 'draft-doc',
+      title: 'Draft',
+      kind: 'guideline',
+      content: 'draft',
+      content_hash: hash('draft'),
+      status: 'proposed',
+      template_origin: null,
+      source_path: null,
+    });
+
+    const obs = makeObservation('obs-gap-2', {
+      payload: JSON.stringify({
+        target_files: ['src/a.ts'],
+        target_doc_id: 'draft-doc',
+        review_comment: 'content insufficient',
+      }),
+    });
+    const ctx: AnalysisContext = { observation: obs, compile_audit: null };
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts).toHaveLength(0);
+    expect(result.skipped_observation_ids).toEqual(['obs-gap-2']);
+  });
+
+  it('compile_miss with target_doc_id pointing to nonexistent doc → skip', async () => {
+    const obs = makeObservation('obs-gap-3', {
+      payload: JSON.stringify({
+        target_files: ['src/a.ts'],
+        target_doc_id: 'nonexistent',
+        review_comment: 'content insufficient',
+      }),
+    });
+    const ctx: AnalysisContext = { observation: obs, compile_audit: null };
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts).toHaveLength(0);
+    expect(result.skipped_observation_ids).toEqual(['obs-gap-3']);
+  });
+
+  it('compile_miss with both missing_doc and target_doc_id → prefers add_edge', async () => {
+    const obs = makeObservation('obs-gap-4', {
+      payload: JSON.stringify({
+        target_files: ['src/a.ts'],
+        missing_doc: 'some-doc',
+        target_doc_id: 'ddd-guide',
+        review_comment: 'both fields',
+      }),
+    });
+    const ctx: AnalysisContext = { observation: obs, compile_audit: null };
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts[0].proposal_type).toBe('add_edge');
   });
 });
 
@@ -936,7 +1044,7 @@ describe('AegisService — analyzeAndPropose', () => {
       'agent',
     );
 
-    const analyzer = new RuleBasedAnalyzer();
+    const analyzer = new RuleBasedAnalyzer(repo);
     const result = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
 
     expect(result.analysis.drafts).toHaveLength(1);
@@ -973,7 +1081,7 @@ describe('AegisService — analyzeAndPropose', () => {
       'agent',
     );
 
-    const analyzer = new RuleBasedAnalyzer();
+    const analyzer = new RuleBasedAnalyzer(repo);
 
     const first = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
     expect(first.proposals.created_proposal_ids).toHaveLength(1);
@@ -1016,7 +1124,7 @@ describe('AegisService — analyzeAndPropose', () => {
       'agent',
     );
 
-    const analyzer = new RuleBasedAnalyzer();
+    const analyzer = new RuleBasedAnalyzer(repo);
 
     // First run: processes both, skips the first, creates proposal for second
     const first = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
@@ -1046,7 +1154,7 @@ describe('AegisService — analyzeAndPropose', () => {
       'agent',
     );
 
-    const analyzer = new RuleBasedAnalyzer();
+    const analyzer = new RuleBasedAnalyzer(repo);
 
     // First analysis → proposal created
     const first = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
@@ -1062,7 +1170,7 @@ describe('AegisService — analyzeAndPropose', () => {
   });
 
   it('agent surface cannot call analyzeAndPropose', async () => {
-    const analyzer = new RuleBasedAnalyzer();
+    const analyzer = new RuleBasedAnalyzer(repo);
     await expect(adminService.analyzeAndPropose(analyzer, 'compile_miss', 'agent')).rejects.toThrow(
       SurfaceViolationError,
     );
@@ -1123,7 +1231,7 @@ describe('AegisService — analyzeAndPropose', () => {
       'agent',
     );
 
-    const analyzer = new RuleBasedAnalyzer();
+    const analyzer = new RuleBasedAnalyzer(repo);
     const result = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
 
     expect(result.analysis.drafts).toHaveLength(2);
@@ -1155,7 +1263,7 @@ describe('AegisService — analyzeAndPropose', () => {
       'agent',
     );
 
-    const analyzer = new RuleBasedAnalyzer();
+    const analyzer = new RuleBasedAnalyzer(repo);
 
     // First analysis: 2 proposals created
     const first = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
@@ -1471,7 +1579,7 @@ describe('AegisService — analyzeAndPropose', () => {
     expect(unanalyzed).toHaveLength(1);
 
     // Retry with a working analyzer succeeds
-    const analyzer = new RuleBasedAnalyzer();
+    const analyzer = new RuleBasedAnalyzer(repo);
     const result = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
     expect(result.proposals.created_proposal_ids).toHaveLength(1);
   });
@@ -1520,7 +1628,7 @@ describe('AegisService — analyzeAndPropose', () => {
     expect(unanalyzed).toHaveLength(1);
 
     // Retry with a correct analyzer succeeds
-    const analyzer = new RuleBasedAnalyzer();
+    const analyzer = new RuleBasedAnalyzer(repo);
     const result = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
     expect(result.proposals.created_proposal_ids).toHaveLength(1);
   });

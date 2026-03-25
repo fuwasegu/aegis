@@ -913,7 +913,122 @@ describe('ContextCompiler — notices', () => {
     const compiler = new ContextCompiler(repo);
     const result = await compiler.compile({ target_files: ['src/a.ts'] });
 
-    expect(result.notices).toHaveLength(0);
+    expect(result.notices.every((n) => !n.includes('observations need attention'))).toBe(true);
+  });
+
+  it('includes pending proposal notice when 1+ proposals are pending', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'c' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    // Create 2 pending proposals
+    for (let i = 0; i < 2; i++) {
+      repo.insertProposal({
+        proposal_id: `prop-${i}`,
+        proposal_type: 'add_edge',
+        payload: JSON.stringify({
+          edge_id: `new-e-${i}`,
+          source_type: 'path',
+          source_value: `lib${i}/**`,
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 1,
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+    }
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+
+    expect(result.notices.some((n) => n.includes('2 proposal(s) awaiting review'))).toBe(true);
+    expect(result.notices.some((n) => n.includes('aegis_list_proposals'))).toBe(true);
+  });
+
+  it('does not include pending proposal notice when no proposals are pending', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'c' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+
+    expect(result.notices.every((n) => !n.includes('proposal(s) awaiting review'))).toBe(true);
+  });
+
+  it('excludes non-pending proposals from count', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'Doc', kind: 'guideline', content: 'c' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    // 1 pending, 1 rejected — only pending should count
+    repo.insertProposal({
+      proposal_id: 'prop-pending',
+      proposal_type: 'add_edge',
+      payload: JSON.stringify({
+        edge_id: 'ne1',
+        source_type: 'path',
+        source_value: 'lib/**',
+        target_doc_id: 'd1',
+        edge_type: 'path_requires',
+        priority: 100,
+        specificity: 1,
+      }),
+      status: 'pending',
+      review_comment: null,
+    });
+    repo.insertProposal({
+      proposal_id: 'prop-rejected',
+      proposal_type: 'add_edge',
+      payload: JSON.stringify({
+        edge_id: 'ne2',
+        source_type: 'path',
+        source_value: 'test/**',
+        target_doc_id: 'd1',
+        edge_type: 'path_requires',
+        priority: 100,
+        specificity: 1,
+      }),
+      status: 'rejected',
+      review_comment: 'not needed',
+    });
+
+    const compiler = new ContextCompiler(repo);
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+
+    expect(result.notices.some((n) => n.includes('1 proposal(s) awaiting review'))).toBe(true);
   });
 });
 

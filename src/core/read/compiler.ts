@@ -271,6 +271,14 @@ export class ContextCompiler {
       notices.push('Aegis adapter templates may be outdated. Run `npx @fuwasegu/aegis deploy-adapters` to update.');
     }
 
+    const pendingProposalCount = this.repo.countPendingProposals();
+    if (pendingProposalCount > 0) {
+      notices.push(
+        `${pendingProposalCount} proposal(s) awaiting review. ` +
+          'Call aegis_list_proposals on the admin surface to review and approve/reject.',
+      );
+    }
+
     const OBSERVATION_TRIAGE_THRESHOLD = 5;
     const obsCounts = this.repo.countActionableObservations();
     const actionableTotal = obsCounts.pending + obsCounts.skipped;

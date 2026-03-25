@@ -71,7 +71,7 @@ export class AegisService {
   ) {
     this.compiler = new ContextCompiler(repo, tagger, adapterOutdated);
     this.analyzerRegistry = new Map<ObservationEventType, ObservationAnalyzer>([
-      ['compile_miss', new RuleBasedAnalyzer()],
+      ['compile_miss', new RuleBasedAnalyzer(repo)],
       ['review_correction', new ReviewCorrectionAnalyzer(repo)],
       ['pr_merged', new PrMergedAnalyzer(repo)],
       ['manual_note', new ManualNoteAnalyzer(repo)],
