@@ -565,9 +565,7 @@ export class Repository {
 
   /** Returns ALL documents with source_path (any status). Used for source_path migration. */
   getAllDocumentsWithSourcePath(): Document[] {
-    return this.db
-      .prepare('SELECT * FROM documents WHERE source_path IS NOT NULL')
-      .all() as Document[];
+    return this.db.prepare('SELECT * FROM documents WHERE source_path IS NOT NULL').all() as Document[];
   }
 
   /** Update source_path for a single document. Used for source_path migration. */

@@ -6,14 +6,8 @@
  * based on content_mode, budget, and source_path availability.
  */
 
-import type {
-  CompileAuditMeta,
-  ContentMode,
-  DeliveryStats,
-  DeliveryType,
-  ResolvedDoc,
-} from '../types.js';
-import { AUTO_INLINE_THRESHOLD_BYTES, BudgetExceededError, DEFAULT_MAX_INLINE_BYTES } from '../types.js';
+import type { CompileAuditMeta, ContentMode, DeliveryStats, DeliveryType } from '../types.js';
+import { AUTO_INLINE_THRESHOLD_BYTES, BudgetExceededError } from '../types.js';
 
 /** Which section the doc belongs to — determines stable order priority. */
 export type DocClass = 'template' | 'document' | 'expanded';
@@ -98,10 +92,7 @@ function inlineAdoptionOrder(a: DocCandidate, b: DocCandidate): number {
  * 4. content_mode rules for remaining docs (source_path present)
  * 5. Budget allocation — sort by inline adoption order, fill budget
  */
-export function allocateDelivery(
-  candidates: DocCandidate[],
-  options: AllocationOptions,
-): AllocationResult {
+export function allocateDelivery(candidates: DocCandidate[], options: AllocationOptions): AllocationResult {
   const { content_mode, max_inline_bytes, command, compile_id } = options;
 
   // Track policy-omitted doc_ids
@@ -140,20 +131,20 @@ export function allocateDelivery(
       case 'metadata':
         // source_path present → deferred
         return { ...c, delivery: 'deferred' as DeliveryType };
+      default: {
+        const _exhaustive: never = content_mode;
+        throw new Error(`Unknown content_mode: ${_exhaustive}`);
+      }
     }
   });
 
   // ── Step 3: Mandatory budget check ──
-  const mandatoryInlineDocs = allocated.filter(
-    (d) => d.delivery === 'inline' && !d.source_path,
-  );
+  const mandatoryInlineDocs = allocated.filter((d) => d.delivery === 'inline' && !d.source_path);
   const mandatoryBytes = mandatoryInlineDocs.reduce((sum, d) => sum + d.content_bytes, 0);
 
   if (mandatoryBytes > max_inline_bytes) {
     // Sort offending doc_ids by content_bytes descending
-    const offending = [...mandatoryInlineDocs]
-      .sort((a, b) => b.content_bytes - a.content_bytes)
-      .map((d) => d.doc_id);
+    const offending = [...mandatoryInlineDocs].sort((a, b) => b.content_bytes - a.content_bytes).map((d) => d.doc_id);
 
     throw new BudgetExceededError(compile_id, mandatoryBytes, max_inline_bytes, offending);
   }
@@ -214,9 +205,8 @@ export function allocateDelivery(
 
   const audit_meta: CompileAuditMeta = {
     delivery_stats: stats,
-    budget_utilization: max_inline_bytes > 0
-      ? Math.round((stats.inline_total_bytes / max_inline_bytes) * 100) / 100
-      : 0,
+    budget_utilization:
+      max_inline_bytes > 0 ? Math.round((stats.inline_total_bytes / max_inline_bytes) * 100) / 100 : 0,
     budget_exceeded: false,
     policy_omitted_doc_ids: policyOmittedDocIds,
   };

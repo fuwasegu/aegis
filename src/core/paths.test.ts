@@ -1,14 +1,9 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { beforeEach, afterEach, describe, expect, it } from 'vitest';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { migrateSourcePaths, normalizeSourcePath, resolveSourcePath, validateInsideProject } from './paths.js';
 import { createInMemoryDatabase, Repository } from './store/index.js';
-import {
-  migrateSourcePaths,
-  normalizeSourcePath,
-  resolveSourcePath,
-  validateInsideProject,
-} from './paths.js';
 
 describe('normalizeSourcePath', () => {
   let tmpDir: string;

@@ -5,8 +5,8 @@
  * These utilities convert between absolute ↔ repo-relative and validate workspace boundaries.
  */
 
-import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path';
 import { realpathSync } from 'node:fs';
+import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path';
 import type { Repository } from './store/repository.js';
 
 /**
@@ -77,9 +77,7 @@ export function validateInsideProject(absPath: string, projectRoot: string): voi
 
   // Allow exact match (path === root) or child (path starts with root + sep)
   if (normalizedPath !== normalizedRoot && !normalizedPath.startsWith(normalizedRoot + sep)) {
-    throw new Error(
-      `Path is outside the project root: ${absPath} (project root: ${projectRoot})`,
-    );
+    throw new Error(`Path is outside the project root: ${absPath} (project root: ${projectRoot})`);
   }
 }
 

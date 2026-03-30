@@ -22,7 +22,7 @@ import type {
   ResolvedEdge,
 } from '../types.js';
 import { BudgetExceededError, DEFAULT_MAX_INLINE_BYTES } from '../types.js';
-import { type AllocatedDoc, type DocCandidate, allocateDelivery } from './allocator.js';
+import { type AllocatedDoc, allocateDelivery, type DocCandidate } from './allocator.js';
 
 /**
  * Extract meaningful terms from a plan string for deterministic relevance scoring.
@@ -290,9 +290,7 @@ export class ContextCompiler {
 
     for (const doc of sortedDocs) {
       const order = docOrderMap.get(doc.doc_id) ?? { specificity: 0, priority: 100 };
-      const relevance = request.plan && planTerms.length > 0
-        ? computeRelevance(planTerms, doc)
-        : undefined;
+      const relevance = request.plan && planTerms.length > 0 ? computeRelevance(planTerms, doc) : undefined;
 
       if (doc.kind === 'template') {
         templateDocIds.push(doc.doc_id);
@@ -354,7 +352,7 @@ export class ContextCompiler {
 
     // ── Expanded context (best-effort, non-fatal) ──
     let expandedDocIds: string[] | null = null;
-    let expandedCandidates: DocCandidate[] = [];
+    const expandedCandidates: DocCandidate[] = [];
     let expandedConfidence = 0;
     let expandedReasoning = '';
     let expandedHasResult = false;
@@ -386,8 +384,12 @@ export class ContextCompiler {
           }
 
           expandedConfidence =
-            filtered.length > 0 ? Math.round((filtered.reduce((sum, c) => sum + c.max_confidence, 0) / filtered.length) * 100) / 100 : 0;
-          expandedReasoning = filtered.map((c) => `${c.doc_id} matched [${c.matched_tags.join(', ')}]`).join('; ') || 'No additional documents matched';
+            filtered.length > 0
+              ? Math.round((filtered.reduce((sum, c) => sum + c.max_confidence, 0) / filtered.length) * 100) / 100
+              : 0;
+          expandedReasoning =
+            filtered.map((c) => `${c.doc_id} matched [${c.matched_tags.join(', ')}]`).join('; ') ||
+            'No additional documents matched';
 
           expandedDocIds = expandedCandidates.map((d) => d.doc_id);
           expandedHasResult = true;
@@ -428,9 +430,12 @@ export class ContextCompiler {
         const mandatoryCount = err.offending_doc_ids.length;
         const failAuditMeta: CompileAuditMeta = {
           delivery_stats: {
-            inline_count: mandatoryCount, inline_total_bytes: err.mandatory_bytes,
-            deferred_count: 0, deferred_total_bytes: 0,
-            omitted_count: 0, omitted_total_bytes: 0,
+            inline_count: mandatoryCount,
+            inline_total_bytes: err.mandatory_bytes,
+            deferred_count: 0,
+            deferred_total_bytes: 0,
+            omitted_count: 0,
+            omitted_total_bytes: 0,
           },
           budget_utilization: maxInlineBytes > 0 ? Math.round((err.mandatory_bytes / maxInlineBytes) * 100) / 100 : 0,
           budget_exceeded: true,

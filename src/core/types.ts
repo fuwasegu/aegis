@@ -267,9 +267,7 @@ export class BudgetExceededError extends Error {
     /** Offending doc_ids sorted by content_bytes descending. */
     public readonly offending_doc_ids: string[],
   ) {
-    super(
-      `Mandatory inline documents exceed max_inline_bytes: ${mandatory_bytes} > ${max_inline_bytes}`,
-    );
+    super(`Mandatory inline documents exceed max_inline_bytes: ${mandatory_bytes} > ${max_inline_bytes}`);
     this.name = 'BudgetExceededError';
   }
 }

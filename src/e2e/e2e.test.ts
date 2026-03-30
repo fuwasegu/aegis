@@ -296,9 +296,7 @@ describe('E2E: Template-less Lifecycle (skip_template)', () => {
         doc_id: 'arch-guide',
         title: 'Architecture Guide',
         kind: 'guideline',
-        edge_hints: [
-          { source_type: 'path' as const, source_value: 'src/**', edge_type: 'path_requires' as const },
-        ],
+        edge_hints: [{ source_type: 'path' as const, source_value: 'src/**', edge_type: 'path_requires' as const }],
       },
       'admin',
     );

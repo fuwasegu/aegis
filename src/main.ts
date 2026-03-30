@@ -121,7 +121,18 @@ function parseArgs(): CliArgs {
   // Default DB path is relative to projectRoot (not cwd)
   const resolvedDbPath = dbPath ?? join(projectRoot, DEFAULT_DB_PATH);
 
-  return { surface, dbPath: resolvedDbPath, templatesRoot, extraTemplateDirs, projectRoot, model, enableSlm, useOllama, ollamaUrl, listModels };
+  return {
+    surface,
+    dbPath: resolvedDbPath,
+    templatesRoot,
+    extraTemplateDirs,
+    projectRoot,
+    model,
+    enableSlm,
+    useOllama,
+    ollamaUrl,
+    listModels,
+  };
 }
 
 async function createTagger(cliArgs: CliArgs): Promise<IntentTagger | null> {
@@ -279,7 +290,14 @@ async function main() {
     migrateSourcePaths(repo, projectRoot);
   }
 
-  const service = new AegisService(repo, templatesRoot, tagger, cliArgs.extraTemplateDirs, adapterOutdated, projectRoot);
+  const service = new AegisService(
+    repo,
+    templatesRoot,
+    tagger,
+    cliArgs.extraTemplateDirs,
+    adapterOutdated,
+    projectRoot,
+  );
   const server = createAegisServer(service, surface);
 
   const transport = new StdioServerTransport();

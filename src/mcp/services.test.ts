@@ -260,9 +260,7 @@ describe('AegisService — compile_context v2 contract', () => {
         doc_id: 'arch-guide',
         title: 'Architecture Guide',
         kind: 'guideline',
-        edge_hints: [
-          { source_type: 'path' as const, source_value: 'app/**', edge_type: 'path_requires' as const },
-        ],
+        edge_hints: [{ source_type: 'path' as const, source_value: 'app/**', edge_type: 'path_requires' as const }],
       },
       'admin',
     );
@@ -271,10 +269,7 @@ describe('AegisService — compile_context v2 contract', () => {
     }
 
     // Default (auto): large source_path doc → deferred
-    const autoResult = await service.compileContext(
-      { target_files: ['app/Domain/User/UserEntity.php'] },
-      'agent',
-    );
+    const autoResult = await service.compileContext({ target_files: ['app/Domain/User/UserEntity.php'] }, 'agent');
     const deferredDoc = autoResult.base.documents.find((d: any) => d.doc_id === 'arch-guide');
     expect(deferredDoc).toBeDefined();
     expect(deferredDoc!.delivery).toBe('deferred');
@@ -1677,10 +1672,10 @@ describe('AegisService — new_doc_hint.kind validation', () => {
 // BudgetExceededError — MCP handler (via InMemoryTransport)
 // ============================================================
 
-import { BudgetExceededError } from '../core/types.js';
-import { createAegisServer } from './server.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { BudgetExceededError } from '../core/types.js';
+import { createAegisServer } from './server.js';
 
 describe('BudgetExceededError — MCP handler', () => {
   function bootstrapLargeDoc(repo: Repository) {
@@ -1689,22 +1684,26 @@ describe('BudgetExceededError — MCP handler', () => {
       proposal_id: 'boot-budget',
       proposal_type: 'bootstrap',
       payload: JSON.stringify({
-        documents: [{
-          doc_id: 'big-doc',
-          title: 'Big',
-          kind: 'guideline',
-          content: largeContent,
-          content_hash: hash(largeContent),
-        }],
-        edges: [{
-          edge_id: 'e-big',
-          source_type: 'path',
-          source_value: 'src/**',
-          target_doc_id: 'big-doc',
-          edge_type: 'path_requires',
-          priority: 100,
-          specificity: 0,
-        }],
+        documents: [
+          {
+            doc_id: 'big-doc',
+            title: 'Big',
+            kind: 'guideline',
+            content: largeContent,
+            content_hash: hash(largeContent),
+          },
+        ],
+        edges: [
+          {
+            edge_id: 'e-big',
+            source_type: 'path',
+            source_value: 'src/**',
+            target_doc_id: 'big-doc',
+            edge_type: 'path_requires',
+            priority: 100,
+            specificity: 0,
+          },
+        ],
         layer_rules: [],
       }),
       status: 'pending',
@@ -1720,10 +1719,7 @@ describe('BudgetExceededError — MCP handler', () => {
     bootstrapLargeDoc(repo);
 
     try {
-      await service.compileContext(
-        { target_files: ['src/a.ts'], max_inline_bytes: 100 },
-        'agent',
-      );
+      await service.compileContext({ target_files: ['src/a.ts'], max_inline_bytes: 100 }, 'agent');
       expect.unreachable('should throw');
     } catch (e) {
       expect(e).toBeInstanceOf(BudgetExceededError);
@@ -1745,10 +1741,7 @@ describe('BudgetExceededError — MCP handler', () => {
     const client = new Client({ name: 'test-client', version: '0.0.1' });
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([
-      client.connect(clientTransport),
-      server.connect(serverTransport),
-    ]);
+    await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
 
     const response = await client.callTool({
       name: 'aegis_compile_context',

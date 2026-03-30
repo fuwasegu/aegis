@@ -1690,7 +1690,16 @@ describe('ContextCompiler — v2 delivery', () => {
   it('returns schema_version: 2', async () => {
     bootstrap(repo, {
       documents: [{ doc_id: 'd1', title: 'D1', kind: 'guideline', content: 'content' }],
-      edges: [{ edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'd1', edge_type: 'path_requires', priority: 100 }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
     });
 
     const result = await compiler.compile({ target_files: ['src/a.ts'] });
@@ -1704,8 +1713,22 @@ describe('ContextCompiler — v2 delivery', () => {
         { doc_id: 'd-tmpl', title: 'Template', kind: 'template', content: 'template body' },
       ],
       edges: [
-        { edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'd-guide', edge_type: 'path_requires', priority: 100 },
-        { edge_id: 'e2', source_type: 'path', source_value: 'src/**', target_doc_id: 'd-tmpl', edge_type: 'path_requires', priority: 100 },
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd-guide',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd-tmpl',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
       ],
     });
 
@@ -1726,8 +1749,22 @@ describe('ContextCompiler — v2 delivery', () => {
         { doc_id: 'd-tmpl', title: 'Template', kind: 'template', content: 'template body' },
       ],
       edges: [
-        { edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'd-guide', edge_type: 'path_requires', priority: 100 },
-        { edge_id: 'e2', source_type: 'path', source_value: 'src/**', target_doc_id: 'd-tmpl', edge_type: 'path_requires', priority: 100 },
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd-guide',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd-tmpl',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
       ],
     });
 
@@ -1745,7 +1782,16 @@ describe('ContextCompiler — v2 delivery', () => {
   it('documents have delivery, content_bytes, content_hash', async () => {
     bootstrap(repo, {
       documents: [{ doc_id: 'd1', title: 'D1', kind: 'guideline', content: 'hello world' }],
-      edges: [{ edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'd1', edge_type: 'path_requires', priority: 100 }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
     });
 
     const result = await compiler.compile({ target_files: ['src/a.ts'] });
@@ -1759,7 +1805,16 @@ describe('ContextCompiler — v2 delivery', () => {
   it('records audit_meta in compile_log', async () => {
     bootstrap(repo, {
       documents: [{ doc_id: 'd1', title: 'D1', kind: 'guideline', content: 'content' }],
-      edges: [{ edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'd1', edge_type: 'path_requires', priority: 100 }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
     });
 
     const result = await compiler.compile({ target_files: ['src/a.ts'] });
@@ -1776,7 +1831,16 @@ describe('ContextCompiler — v2 delivery', () => {
     // Simulate v1 compile_log by inserting directly without audit_meta
     bootstrap(repo, {
       documents: [{ doc_id: 'd1', title: 'D1', kind: 'guideline', content: 'content' }],
-      edges: [{ edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'd1', edge_type: 'path_requires', priority: 100 }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
     });
 
     const snapshot = repo.getCurrentSnapshot()!;
@@ -1802,19 +1866,37 @@ describe('ContextCompiler — v2 delivery', () => {
     const largeContent = 'x'.repeat(10_000);
     bootstrap(repo, {
       documents: [{ doc_id: 'big', title: 'Big Doc', kind: 'guideline', content: largeContent }],
-      edges: [{ edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'big', edge_type: 'path_requires', priority: 100 }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'big',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
     });
 
-    await expect(
-      compiler.compile({ target_files: ['src/a.ts'], max_inline_bytes: 100 }),
-    ).rejects.toThrow('Mandatory inline documents exceed max_inline_bytes');
+    await expect(compiler.compile({ target_files: ['src/a.ts'], max_inline_bytes: 100 })).rejects.toThrow(
+      'Mandatory inline documents exceed max_inline_bytes',
+    );
   });
 
   it('BudgetExceededError records audit before throwing', async () => {
     const largeContent = 'x'.repeat(5000);
     bootstrap(repo, {
       documents: [{ doc_id: 'big', title: 'Big', kind: 'guideline', content: largeContent }],
-      edges: [{ edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'big', edge_type: 'path_requires', priority: 100 }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'big',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
     });
 
     try {

@@ -9,7 +9,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { v4 as uuidv4 } from 'uuid';
-import { normalizeSourcePath, resolveSourcePath } from '../core/paths.js';
 import { deployClaudeAdapter } from '../adapters/claude/generate.js';
 import { deployCodexAdapter } from '../adapters/codex/generate.js';
 import { deployCursorAdapter } from '../adapters/cursor/generate.js';
@@ -25,6 +24,7 @@ import { RuleBasedAnalyzer } from '../core/automation/rule-analyzer.js';
 import type { InitPreview } from '../core/init/engine.js';
 import { initConfirm as coreInitConfirm, initDetect as coreInitDetect } from '../core/init/engine.js';
 import { detectUpgrade, generateUpgradeProposals, type UpgradePreview } from '../core/init/upgrade.js';
+import { normalizeSourcePath, resolveSourcePath } from '../core/paths.js';
 import { ContextCompiler } from '../core/read/compiler.js';
 import type { Repository } from '../core/store/repository.js';
 import type { IntentTagger } from '../core/tagging/tagger.js';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BudgetExceededError } from '../types.js';
-import { type DocCandidate, allocateDelivery } from './allocator.js';
+import { allocateDelivery, type DocCandidate } from './allocator.js';
 
 function candidate(overrides: Partial<DocCandidate> & { doc_id: string }): DocCandidate {
   return {
@@ -8,7 +8,7 @@ function candidate(overrides: Partial<DocCandidate> & { doc_id: string }): DocCa
     kind: 'guideline',
     content: overrides.content ?? 'x'.repeat(100),
     content_bytes: overrides.content_bytes ?? Buffer.byteLength(overrides.content ?? 'x'.repeat(100), 'utf8'),
-    content_hash: 'hash-' + overrides.doc_id,
+    content_hash: `hash-${overrides.doc_id}`,
     source_path: overrides.source_path ?? null,
     relevance: overrides.relevance ?? undefined,
     priority: overrides.priority ?? 100,
@@ -31,10 +31,7 @@ const defaultOptions = (overrides: Record<string, unknown> = {}) => ({
 
 describe('allocateDelivery — always mode', () => {
   it('inlines all docs regardless of source_path', () => {
-    const docs = [
-      candidate({ doc_id: 'a', source_path: 'src/a.ts' }),
-      candidate({ doc_id: 'b', source_path: null }),
-    ];
+    const docs = [candidate({ doc_id: 'a', source_path: 'src/a.ts' }), candidate({ doc_id: 'b', source_path: null })];
     const result = allocateDelivery(docs, defaultOptions());
     expect(result.docs.every((d) => d.delivery === 'inline')).toBe(true);
   });
@@ -53,9 +50,7 @@ describe('allocateDelivery — always mode', () => {
   });
 
   it('disables template policy omission', () => {
-    const docs = [
-      candidate({ doc_id: 't1', doc_class: 'template', kind: 'template' }),
-    ];
+    const docs = [candidate({ doc_id: 't1', doc_class: 'template', kind: 'template' })];
     const result = allocateDelivery(docs, defaultOptions({ command: 'review' }));
     // always mode: no policy omission
     expect(result.docs[0].delivery).toBe('inline');
@@ -81,42 +76,32 @@ describe('allocateDelivery — always mode', () => {
 
 describe('allocateDelivery — auto mode', () => {
   it('defers large source_path docs', () => {
-    const docs = [
-      candidate({ doc_id: 'large', source_path: 'big.ts', content_bytes: 5000 }),
-    ];
+    const docs = [candidate({ doc_id: 'large', source_path: 'big.ts', content_bytes: 5000 })];
     const result = allocateDelivery(docs, defaultOptions({ content_mode: 'auto' }));
     expect(result.docs[0].delivery).toBe('deferred');
   });
 
   it('inlines small source_path docs (≤ 2048 bytes)', () => {
-    const docs = [
-      candidate({ doc_id: 'small', source_path: 'small.ts', content_bytes: 2048 }),
-    ];
+    const docs = [candidate({ doc_id: 'small', source_path: 'small.ts', content_bytes: 2048 })];
     const result = allocateDelivery(docs, defaultOptions({ content_mode: 'auto' }));
     expect(result.docs[0].delivery).toBe('inline');
   });
 
   it('inlines docs without source_path (mandatory)', () => {
-    const docs = [
-      candidate({ doc_id: 'no-path', source_path: null, content_bytes: 5000 }),
-    ];
+    const docs = [candidate({ doc_id: 'no-path', source_path: null, content_bytes: 5000 })];
     const result = allocateDelivery(docs, defaultOptions({ content_mode: 'auto' }));
     expect(result.docs[0].delivery).toBe('inline');
   });
 
   it('applies template policy omission when command !== scaffold', () => {
-    const docs = [
-      candidate({ doc_id: 't1', doc_class: 'template', kind: 'template' }),
-    ];
+    const docs = [candidate({ doc_id: 't1', doc_class: 'template', kind: 'template' })];
     const result = allocateDelivery(docs, defaultOptions({ content_mode: 'auto', command: 'review' }));
     expect(result.docs[0].delivery).toBe('omitted');
     expect(result.docs[0].omit_reason).toBe('policy:non_scaffold_command');
   });
 
   it('does not omit templates when command is scaffold', () => {
-    const docs = [
-      candidate({ doc_id: 't1', doc_class: 'template', kind: 'template', source_path: null }),
-    ];
+    const docs = [candidate({ doc_id: 't1', doc_class: 'template', kind: 'template', source_path: null })];
     const result = allocateDelivery(docs, defaultOptions({ content_mode: 'auto', command: 'scaffold' }));
     expect(result.docs[0].delivery).toBe('inline');
   });
@@ -128,17 +113,13 @@ describe('allocateDelivery — auto mode', () => {
 
 describe('allocateDelivery — metadata mode', () => {
   it('defers all source_path docs', () => {
-    const docs = [
-      candidate({ doc_id: 'a', source_path: 'a.ts', content_bytes: 100 }),
-    ];
+    const docs = [candidate({ doc_id: 'a', source_path: 'a.ts', content_bytes: 100 })];
     const result = allocateDelivery(docs, defaultOptions({ content_mode: 'metadata' }));
     expect(result.docs[0].delivery).toBe('deferred');
   });
 
   it('mandatory inline for docs without source_path', () => {
-    const docs = [
-      candidate({ doc_id: 'no-path', source_path: null }),
-    ];
+    const docs = [candidate({ doc_id: 'no-path', source_path: null })];
     const result = allocateDelivery(docs, defaultOptions({ content_mode: 'metadata' }));
     expect(result.docs[0].delivery).toBe('inline');
   });
@@ -175,9 +156,7 @@ describe('allocateDelivery — BudgetExceededError', () => {
   });
 
   it('does not throw when source_path docs exceed budget (they get deferred)', () => {
-    const docs = [
-      candidate({ doc_id: 'a', source_path: 'a.ts', content_bytes: 100_000 }),
-    ];
+    const docs = [candidate({ doc_id: 'a', source_path: 'a.ts', content_bytes: 100_000 })];
     const result = allocateDelivery(docs, defaultOptions({ max_inline_bytes: 1000 }));
     expect(result.docs[0].delivery).toBe('deferred');
   });
@@ -199,8 +178,7 @@ describe('allocateDelivery — stable order', () => {
     const r1 = allocateDelivery(docs, defaultOptions({ max_inline_bytes: 12_000 }));
     const r2 = allocateDelivery(docs, defaultOptions({ max_inline_bytes: 12_000 }));
 
-    expect(r1.docs.map((d) => `${d.doc_id}:${d.delivery}`))
-      .toEqual(r2.docs.map((d) => `${d.doc_id}:${d.delivery}`));
+    expect(r1.docs.map((d) => `${d.doc_id}:${d.delivery}`)).toEqual(r2.docs.map((d) => `${d.doc_id}:${d.delivery}`));
   });
 
   it('templates are inlined before documents, documents before expanded', () => {
@@ -223,8 +201,20 @@ describe('allocateDelivery — stable order', () => {
 
   it('lower numeric priority is inlined first (matches compiler convention)', () => {
     const docs = [
-      candidate({ doc_id: 'low-prio', source_path: 'low.ts', content_bytes: 5000, priority: 200, doc_class: 'document' }),
-      candidate({ doc_id: 'high-prio', source_path: 'high.ts', content_bytes: 5000, priority: 10, doc_class: 'document' }),
+      candidate({
+        doc_id: 'low-prio',
+        source_path: 'low.ts',
+        content_bytes: 5000,
+        priority: 200,
+        doc_class: 'document',
+      }),
+      candidate({
+        doc_id: 'high-prio',
+        source_path: 'high.ts',
+        content_bytes: 5000,
+        priority: 10,
+        doc_class: 'document',
+      }),
     ];
     // Budget for only one
     const result = allocateDelivery(docs, defaultOptions({ max_inline_bytes: 6000 }));
@@ -256,9 +246,7 @@ describe('allocateDelivery — audit meta', () => {
   });
 
   it('records budget_utilization', () => {
-    const docs = [
-      candidate({ doc_id: 'a', source_path: null, content_bytes: 5000 }),
-    ];
+    const docs = [candidate({ doc_id: 'a', source_path: null, content_bytes: 5000 })];
     const result = allocateDelivery(docs, defaultOptions({ max_inline_bytes: 10_000 }));
     expect(result.audit_meta.budget_utilization).toBe(0.5);
   });
