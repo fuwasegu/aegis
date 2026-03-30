@@ -14,6 +14,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { BudgetExceededError } from '../core/types.js';
 import { type AegisService, ObserveValidationError, type Surface } from './services.js';
 
 type TextContent = { type: 'text'; text: string };
@@ -73,7 +74,7 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
 
   server.tool(
     'aegis_compile_context',
-    'Compile deterministic context for target files. Returns base documents, resolution path, and templates.',
+    'Compile deterministic context for target files. Returns base documents, resolution path, and templates. v2: delivery-aware with budget control.',
     {
       target_files: z.array(z.string()).describe('File paths being edited (required)'),
       target_layers: z
@@ -82,18 +83,42 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
         .describe('Explicit layer names (optional, inferred from path if omitted)'),
       command: z.string().optional().describe('Command name: scaffold, refactor, review, etc.'),
       plan: z.string().optional().describe('Natural-language plan text for expanded context (requires IntentTagger)'),
+      max_inline_bytes: z.number().optional().describe('Inline content budget in UTF-8 bytes (default: 131072 = 128KB)'),
+      content_mode: z.enum(['auto', 'always', 'metadata']).optional().describe('Content delivery mode (default: always)'),
     },
     async (params) => {
-      const result = await service.compileContext(
-        {
-          target_files: params.target_files,
-          target_layers: params.target_layers,
-          command: params.command,
-          plan: params.plan,
-        },
-        surface,
-      );
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      try {
+        const result = await service.compileContext(
+          {
+            target_files: params.target_files,
+            target_layers: params.target_layers,
+            command: params.command,
+            plan: params.plan,
+            max_inline_bytes: params.max_inline_bytes,
+            content_mode: params.content_mode,
+          },
+          surface,
+        );
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (e) {
+        if (e instanceof BudgetExceededError) {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                error: 'BUDGET_EXCEEDED_MANDATORY',
+                compile_id: e.compile_id,
+                message: e.message,
+                mandatory_bytes: e.mandatory_bytes,
+                max_inline_bytes: e.max_inline_bytes,
+                offending_doc_ids: e.offending_doc_ids,
+              }),
+            }],
+            isError: true,
+          };
+        }
+        throw e;
+      }
     },
   );
 

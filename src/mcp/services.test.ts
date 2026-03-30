@@ -1278,8 +1278,9 @@ describe('AegisService — importDoc file_path', () => {
   beforeEach(async () => {
     db = await createInMemoryDatabase();
     repo = new Repository(db);
-    service = new AegisService(repo, TEMPLATES_ROOT);
     tmpDir = mkdtempSync(join(tmpdir(), 'aegis-fp-'));
+    // Inject tmpDir as projectRoot so file_path normalization works
+    service = new AegisService(repo, TEMPLATES_ROOT, null, [], false, tmpDir);
   });
 
   afterEach(() => {
@@ -1326,21 +1327,24 @@ describe('AegisService — importDoc file_path', () => {
 
     const obs = repo.getObservation(result.observation_id);
     const payload = JSON.parse(obs!.payload);
-    expect(payload.source_path).toBe(filePath);
+    // source_path is now repo-relative (normalized against tmpDir as projectRoot)
+    expect(payload.source_path).toBe('auto-source.md');
   });
 
-  it('does not override explicit source_path', async () => {
+  it('does not override explicit source_path but normalizes it', async () => {
     const filePath = join(tmpDir, 'explicit.md');
     writeFileSync(filePath, 'content');
+    const customPath = join(tmpDir, 'custom/path');
 
     const result = await service.importDoc(
-      { file_path: filePath, doc_id: 'explicit-src', title: 'Ex', kind: 'guideline', source_path: '/custom/path' },
+      { file_path: filePath, doc_id: 'explicit-src', title: 'Ex', kind: 'guideline', source_path: customPath },
       'admin',
     );
 
     const obs = repo.getObservation(result.observation_id);
     const payload = JSON.parse(obs!.payload);
-    expect(payload.source_path).toBe('/custom/path');
+    // Explicit source_path is normalized to repo-relative
+    expect(payload.source_path).toBe('custom/path');
   });
 
   it('throws on non-existent file_path', async () => {
@@ -1372,8 +1376,9 @@ describe('AegisService — syncDocs', () => {
   beforeEach(async () => {
     db = await createInMemoryDatabase();
     repo = new Repository(db);
-    service = new AegisService(repo, TEMPLATES_ROOT);
     tmpDir = mkdtempSync(join(tmpdir(), 'aegis-sync-'));
+    // Inject tmpDir as projectRoot so resolveSourcePath works with repo-relative paths
+    service = new AegisService(repo, TEMPLATES_ROOT, null, [], false, tmpDir);
   });
 
   afterEach(() => {
@@ -1395,11 +1400,10 @@ describe('AegisService — syncDocs', () => {
   }
 
   it('detects stale document and creates update_doc proposal with evidence', () => {
-    const filePath = join(tmpDir, 'stale.md');
-    writeFileSync(filePath, 'original');
-    insertApprovedDoc('stale-doc', 'original', filePath);
+    writeFileSync(join(tmpDir, 'stale.md'), 'original');
+    insertApprovedDoc('stale-doc', 'original', 'stale.md');
 
-    writeFileSync(filePath, 'updated content');
+    writeFileSync(join(tmpDir, 'stale.md'), 'updated content');
     const result = service.syncDocs({}, 'admin');
 
     expect(result.checked).toBe(1);
@@ -1418,9 +1422,8 @@ describe('AegisService — syncDocs', () => {
   });
 
   it('reports up_to_date when file has not changed', () => {
-    const filePath = join(tmpDir, 'fresh.md');
-    writeFileSync(filePath, 'same content');
-    insertApprovedDoc('fresh-doc', 'same content', filePath);
+    writeFileSync(join(tmpDir, 'fresh.md'), 'same content');
+    insertApprovedDoc('fresh-doc', 'same content', 'fresh.md');
 
     const result = service.syncDocs({}, 'admin');
     expect(result.up_to_date).toBe(1);
@@ -1428,7 +1431,7 @@ describe('AegisService — syncDocs', () => {
   });
 
   it('reports not_found when source file is missing', () => {
-    insertApprovedDoc('missing-doc', 'content', '/nonexistent/file.md');
+    insertApprovedDoc('missing-doc', 'content', 'nonexistent/file.md');
 
     const result = service.syncDocs({}, 'admin');
     expect(result.not_found).toContain('missing-doc');
@@ -1436,10 +1439,9 @@ describe('AegisService — syncDocs', () => {
   });
 
   it('skips documents with pending update_doc proposals', () => {
-    const filePath = join(tmpDir, 'pending.md');
-    writeFileSync(filePath, 'original');
-    insertApprovedDoc('pending-doc', 'original', filePath);
-    writeFileSync(filePath, 'changed');
+    writeFileSync(join(tmpDir, 'pending.md'), 'original');
+    insertApprovedDoc('pending-doc', 'original', 'pending.md');
+    writeFileSync(join(tmpDir, 'pending.md'), 'changed');
 
     repo.insertProposal({
       proposal_id: 'existing-prop',
@@ -1455,10 +1457,9 @@ describe('AegisService — syncDocs', () => {
   });
 
   it('marks sync observations as analyzed', () => {
-    const filePath = join(tmpDir, 'analyzed.md');
-    writeFileSync(filePath, 'original');
-    insertApprovedDoc('analyzed-doc', 'original', filePath);
-    writeFileSync(filePath, 'changed');
+    writeFileSync(join(tmpDir, 'analyzed.md'), 'original');
+    insertApprovedDoc('analyzed-doc', 'original', 'analyzed.md');
+    writeFileSync(join(tmpDir, 'analyzed.md'), 'changed');
 
     service.syncDocs({}, 'admin');
 
@@ -1467,14 +1468,12 @@ describe('AegisService — syncDocs', () => {
   });
 
   it('filters by doc_ids when specified', () => {
-    const file1 = join(tmpDir, 'a.md');
-    const file2 = join(tmpDir, 'b.md');
-    writeFileSync(file1, 'old-a');
-    writeFileSync(file2, 'old-b');
-    insertApprovedDoc('doc-a', 'old-a', file1);
-    insertApprovedDoc('doc-b', 'old-b', file2);
-    writeFileSync(file1, 'new-a');
-    writeFileSync(file2, 'new-b');
+    writeFileSync(join(tmpDir, 'a.md'), 'old-a');
+    writeFileSync(join(tmpDir, 'b.md'), 'old-b');
+    insertApprovedDoc('doc-a', 'old-a', 'a.md');
+    insertApprovedDoc('doc-b', 'old-b', 'b.md');
+    writeFileSync(join(tmpDir, 'a.md'), 'new-a');
+    writeFileSync(join(tmpDir, 'b.md'), 'new-b');
 
     const result = service.syncDocs({ doc_ids: ['doc-a'] }, 'admin');
     expect(result.checked).toBe(1);
@@ -1482,10 +1481,9 @@ describe('AegisService — syncDocs', () => {
   });
 
   it('creates observation with full document_import contract payload', () => {
-    const filePath = join(tmpDir, 'contract.md');
-    writeFileSync(filePath, 'original');
-    insertApprovedDoc('contract-doc', 'original', filePath);
-    writeFileSync(filePath, 'new content');
+    writeFileSync(join(tmpDir, 'contract.md'), 'original');
+    insertApprovedDoc('contract-doc', 'original', 'contract.md');
+    writeFileSync(join(tmpDir, 'contract.md'), 'new content');
 
     service.syncDocs({}, 'admin');
 
@@ -1506,17 +1504,16 @@ describe('AegisService — syncDocs', () => {
   });
 
   it('reject and re-sync creates new observation and proposal', () => {
-    const filePath = join(tmpDir, 'reject.md');
-    writeFileSync(filePath, 'original');
-    insertApprovedDoc('reject-doc', 'original', filePath);
-    writeFileSync(filePath, 'v2');
+    writeFileSync(join(tmpDir, 'reject.md'), 'original');
+    insertApprovedDoc('reject-doc', 'original', 'reject.md');
+    writeFileSync(join(tmpDir, 'reject.md'), 'v2');
 
     const r1 = service.syncDocs({}, 'admin');
     expect(r1.proposals_created).toHaveLength(1);
 
     repo.rejectProposal(r1.proposals_created[0], 'not yet');
 
-    writeFileSync(filePath, 'v3');
+    writeFileSync(join(tmpDir, 'reject.md'), 'v3');
     const r2 = service.syncDocs({}, 'admin');
     expect(r2.proposals_created).toHaveLength(1);
 
@@ -1614,5 +1611,102 @@ describe('AegisService — new_doc_hint.kind validation', () => {
         'agent',
       ),
     ).toThrow('new_doc_hint.kind is required');
+  });
+});
+
+// ============================================================
+// BudgetExceededError — MCP handler (via InMemoryTransport)
+// ============================================================
+
+import { BudgetExceededError } from '../core/types.js';
+import { createAegisServer } from './server.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+
+describe('BudgetExceededError — MCP handler', () => {
+  function bootstrapLargeDoc(repo: Repository) {
+    const largeContent = 'x'.repeat(10_000);
+    repo.insertProposal({
+      proposal_id: 'boot-budget',
+      proposal_type: 'bootstrap',
+      payload: JSON.stringify({
+        documents: [{
+          doc_id: 'big-doc',
+          title: 'Big',
+          kind: 'guideline',
+          content: largeContent,
+          content_hash: hash(largeContent),
+        }],
+        edges: [{
+          edge_id: 'e-big',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'big-doc',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 0,
+        }],
+        layer_rules: [],
+      }),
+      status: 'pending',
+      review_comment: null,
+    });
+    repo.approveProposal('boot-budget');
+  }
+
+  it('service.compileContext throws BudgetExceededError with correct shape', async () => {
+    const db = await createInMemoryDatabase();
+    const repo = new Repository(db);
+    const service = new AegisService(repo, TEMPLATES_ROOT);
+    bootstrapLargeDoc(repo);
+
+    try {
+      await service.compileContext(
+        { target_files: ['src/a.ts'], max_inline_bytes: 100 },
+        'agent',
+      );
+      expect.unreachable('should throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(BudgetExceededError);
+      const err = e as BudgetExceededError;
+      expect(err.compile_id).toBeTruthy();
+      expect(err.mandatory_bytes).toBeGreaterThan(100);
+      expect(err.max_inline_bytes).toBe(100);
+      expect(err.offending_doc_ids).toContain('big-doc');
+    }
+  });
+
+  it('MCP server returns isError:true with BUDGET_EXCEEDED_MANDATORY via transport', async () => {
+    const db = await createInMemoryDatabase();
+    const repo = new Repository(db);
+    const service = new AegisService(repo, TEMPLATES_ROOT);
+    bootstrapLargeDoc(repo);
+
+    const server = createAegisServer(service, 'agent');
+    const client = new Client({ name: 'test-client', version: '0.0.1' });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([
+      client.connect(clientTransport),
+      server.connect(serverTransport),
+    ]);
+
+    const response = await client.callTool({
+      name: 'aegis_compile_context',
+      arguments: { target_files: ['src/a.ts'], max_inline_bytes: 100 },
+    });
+
+    expect(response.isError).toBe(true);
+    const content = response.content as Array<{ type: string; text: string }>;
+    expect(content).toHaveLength(1);
+    const body = JSON.parse(content[0].text);
+    expect(body.error).toBe('BUDGET_EXCEEDED_MANDATORY');
+    expect(body.compile_id).toBeTruthy();
+    expect(body.mandatory_bytes).toBeGreaterThan(100);
+    expect(body.max_inline_bytes).toBe(100);
+    expect(body.offending_doc_ids).toContain('big-doc');
+
+    await client.close();
+    await server.close();
   });
 });

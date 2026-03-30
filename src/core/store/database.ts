@@ -391,6 +391,10 @@ function applyMigrations(db: AegisDatabase): void {
   if (!hasColumn('documents', 'source_path')) {
     db.exec('ALTER TABLE documents ADD COLUMN source_path TEXT');
   }
+
+  if (!hasColumn('compile_log', 'audit_meta')) {
+    db.exec('ALTER TABLE compile_log ADD COLUMN audit_meta TEXT');
+  }
 }
 
 export async function createInMemoryDatabase(): Promise<AegisDatabase> {
