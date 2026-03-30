@@ -405,7 +405,7 @@ export class ContextCompiler {
     }
 
     // ── Allocate delivery (ADR-009) ──
-    const contentMode = request.content_mode ?? 'always'; // Phase 1 default
+    const contentMode = request.content_mode ?? 'auto';
     const maxInlineBytes = request.max_inline_bytes ?? DEFAULT_MAX_INLINE_BYTES;
     const allCandidates = [...baseCandidates, ...templateCandidates, ...expandedCandidates];
 

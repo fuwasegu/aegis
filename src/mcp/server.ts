@@ -38,6 +38,14 @@ const WORKFLOW_GUIDE = `# Aegis Workflow Guide
 1. **Read** — Before editing, call \`aegis_compile_context\` with your target files.
    Aegis returns relevant guidelines, patterns, constraints, and templates.
 
+   Each document has a \`delivery\` field:
+   - \`inline\`: Full content is included in the response. Read it directly.
+   - \`deferred\`: Content is not included. Use \`source_path\` to Read the file from the workspace.
+   - \`omitted\`: Excluded by budget or policy. Increase \`max_inline_bytes\` or use \`content_mode: "always"\` if needed.
+
+   The default \`content_mode\` is \`auto\`: documents with \`source_path\` are deferred (except small ones ≤ 2KB),
+   documents without \`source_path\` are always inlined. Use \`content_mode: "always"\` to force all documents inline.
+
 2. **Write** — After coding, report what happened via \`aegis_observe\`:
    - \`compile_miss\`: context didn't cover what was needed
    - \`review_correction\`: reviewer corrected an agent's output
@@ -84,7 +92,7 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       command: z.string().optional().describe('Command name: scaffold, refactor, review, etc.'),
       plan: z.string().optional().describe('Natural-language plan text for expanded context (requires IntentTagger)'),
       max_inline_bytes: z.number().optional().describe('Inline content budget in UTF-8 bytes (default: 131072 = 128KB)'),
-      content_mode: z.enum(['auto', 'always', 'metadata']).optional().describe('Content delivery mode (default: always)'),
+      content_mode: z.enum(['auto', 'always', 'metadata']).optional().describe('Content delivery mode (default: auto)'),
     },
     async (params) => {
       try {

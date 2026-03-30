@@ -115,7 +115,7 @@ You MUST consult Aegis for every coding-related interaction — implementation t
    - `target_files`: the files you plan to edit
    - `plan`: your natural-language plan (optional but recommended)
    - `command`: the type of operation (scaffold, refactor, review, etc.)
-3. **Read and follow** the returned architecture guidelines.
+3. **Read and follow** the returned architecture guidelines. Documents with `delivery: "deferred"` have no inline content — use `source_path` to Read the file. Documents with `delivery: "omitted"` were excluded by budget or policy; increase `max_inline_bytes` or use `content_mode: "always"` if needed.
 4. **Self-Review** — After writing code, check your implementation against the returned guidelines.
 5. **Report Compile Misses** — If Aegis failed to provide a needed guideline:
    ```
@@ -145,6 +145,11 @@ If the user asks about architecture, patterns, conventions, or how to write code
    - `plan`: the user's question in natural language
    - `command`: `"review"`
 3. **Answer using Aegis context** — Base your answer on the guidelines returned by Aegis, supplemented by your own knowledge. Cite specific guidelines when relevant. When documents include a `relevance` score, prioritize high-scoring documents and skim or skip low-scoring ones.
+
+### When Knowledge Base Is Empty
+
+If `aegis_compile_context` returns no documents, the knowledge base has not been populated yet.
+Ask the user to run initial setup using the **admin surface** with `aegis_import_doc` to add architecture documents with `edge_hints`.
 
 ### Rules
 

@@ -373,7 +373,7 @@ interface CompileAuditV2 {
 v1 の compile_log（`audit_meta = NULL`）を読み出す際は、新フィールドを全て `null` で返す。
 これにより既存の `getCompileAudit` は後方互換を維持する。
 
-### D-14: schema_version と段階ロールアウト
+### D-14: schema_version とロールアウト
 
 レスポンスに `schema_version` を追加する。
 
@@ -384,18 +384,16 @@ interface CompiledContext {
 }
 ```
 
-**ロールアウト手順:**
+**ロールアウト:** single-step。サーバー v2 対応・adapter 更新・デフォルト `auto` を同時リリース。
 
-| Phase | 内容 | デフォルト content_mode |
-|---|---|---|
-| Phase 0 | adapter / CLAUDE.md に `delivery` フィールドの行動規範を追記。サーバーは v1 のまま | — |
-| Phase 1 | サーバーを v2 対応。`schema_version: 2` を返す。`content_mode` パラメータ受付開始 | `always`（既存互換） |
-| Phase 2 | デフォルトを `auto` に変更 | `auto` |
+当初は Phase 1（`always` 既定）→ Phase 2（`auto` 既定）の段階ロールアウトを計画していたが、
+以下の運用条件により段階分割は不要と判断し、single-step に統合した:
 
-**Phase 1 → 2 の exit criteria:**
-- adapter 更新率: 主要 adapter（cursor, claude, codex）が全て v2 対応
-- `budget_utilization` のテレメトリ: 異常値（常時 0.95+ or 常時 0.05-）がないこと
-- E2E テストで `auto` モードが安定稼働していること
+- adapter（cursor, claude, codex）は同一リポジトリで同時更新可能
+- 利用者が実質 1 人であり、外部互換性の制約がない
+- `always` を引きずるコスト（サイズ削減が効かない）が段階的安全性より大きい
+
+`content_mode: "always"` は明示指定の退避路として残す。
 
 ## 実装順序
 

@@ -1697,7 +1697,29 @@ describe('ContextCompiler — v2 delivery', () => {
     expect(result.schema_version).toBe(2);
   });
 
-  it('templates are returned as ResolvedDoc with delivery field', async () => {
+  it('templates are returned as ResolvedDoc with delivery field (scaffold command)', async () => {
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'd-guide', title: 'Guide', kind: 'guideline', content: 'guide' },
+        { doc_id: 'd-tmpl', title: 'Template', kind: 'template', content: 'template body' },
+      ],
+      edges: [
+        { edge_id: 'e1', source_type: 'path', source_value: 'src/**', target_doc_id: 'd-guide', edge_type: 'path_requires', priority: 100 },
+        { edge_id: 'e2', source_type: 'path', source_value: 'src/**', target_doc_id: 'd-tmpl', edge_type: 'path_requires', priority: 100 },
+      ],
+    });
+
+    const result = await compiler.compile({ target_files: ['src/a.ts'], command: 'scaffold' });
+    expect(result.base.templates).toHaveLength(1);
+    const tmpl = result.base.templates[0];
+    expect(tmpl.doc_id).toBe('d-tmpl');
+    expect(tmpl.delivery).toBe('inline');
+    expect(tmpl.content).toBe('template body');
+    expect(tmpl.content_bytes).toBeGreaterThan(0);
+    expect(tmpl.content_hash).toBeDefined();
+  });
+
+  it('templates are policy-omitted by default (non-scaffold command, auto mode)', async () => {
     bootstrap(repo, {
       documents: [
         { doc_id: 'd-guide', title: 'Guide', kind: 'guideline', content: 'guide' },
@@ -1713,8 +1735,9 @@ describe('ContextCompiler — v2 delivery', () => {
     expect(result.base.templates).toHaveLength(1);
     const tmpl = result.base.templates[0];
     expect(tmpl.doc_id).toBe('d-tmpl');
-    expect(tmpl.delivery).toBe('inline');
-    expect(tmpl.content).toBe('template body');
+    expect(tmpl.delivery).toBe('omitted');
+    expect(tmpl.omit_reason).toBe('policy:non_scaffold_command');
+    expect(tmpl.content).toBeUndefined();
     expect(tmpl.content_bytes).toBeGreaterThan(0);
     expect(tmpl.content_hash).toBeDefined();
   });

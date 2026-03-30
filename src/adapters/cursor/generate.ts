@@ -25,7 +25,7 @@ You MUST consult Aegis for every coding-related interaction — implementation t
    - \`target_files\`: the files you plan to edit
    - \`plan\`: your natural-language plan (optional but recommended)
    - \`command\`: the type of operation (scaffold, refactor, review, etc.)
-3. **Read the returned documents** — Aegis returns architecture guidelines, patterns, and constraints relevant to your task. You MUST follow them.
+3. **Read the returned documents** — Aegis returns architecture guidelines, patterns, and constraints relevant to your task. You MUST follow them. Documents with \`delivery: "deferred"\` have no inline content — use \`source_path\` to Read the file. Documents with \`delivery: "omitted"\` were excluded by budget or policy; increase \`max_inline_bytes\` or use \`content_mode: "always"\` if needed.
 4. **Implement** — Write code that adheres to the returned guidelines.
 5. **Self-Review** — Check your implementation against the guidelines Aegis returned.
 6. **Report Compile Misses** — If Aegis did not provide a relevant guideline:

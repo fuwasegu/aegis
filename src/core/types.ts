@@ -175,7 +175,7 @@ export interface CompileRequest {
   plan?: string;
   /** Inline content budget in UTF-8 bytes. Default: 131,072 (128KB). */
   max_inline_bytes?: number;
-  /** Content delivery mode. Phase 1 default: 'always' (full inline, existing compat). */
+  /** Content delivery mode. Default: 'auto' (source_path docs deferred, small docs inline). */
   content_mode?: ContentMode;
 }
 

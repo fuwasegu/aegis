@@ -174,7 +174,7 @@ describe('AegisService — compile_context v2 contract', () => {
     createLaravelTestTemplate(templatesDir);
     db = await createInMemoryDatabase();
     repo = new Repository(db);
-    service = new AegisService(repo, templatesDir);
+    service = new AegisService(repo, templatesDir, null, [], false, tmpDir);
   });
 
   afterEach(() => {
@@ -212,12 +212,22 @@ describe('AegisService — compile_context v2 contract', () => {
     // Should have resolved some documents
     expect(result.base.documents.length).toBeGreaterThan(0);
 
-    // Each document should have the required fields
+    // Each document should have v2 delivery fields
     for (const doc of result.base.documents) {
       expect(doc.doc_id).toBeTruthy();
       expect(doc.title).toBeTruthy();
       expect(doc.kind).toBeTruthy();
-      expect(doc.content).toBeTruthy();
+      expect(doc.delivery).toBeDefined();
+      expect(['inline', 'deferred', 'omitted']).toContain(doc.delivery);
+      expect(doc.content_bytes).toBeGreaterThan(0);
+      expect(doc.content_hash).toBeTruthy();
+      if (doc.delivery === 'inline') {
+        expect(doc.content).toBeTruthy();
+      }
+      if (doc.delivery === 'deferred') {
+        expect(doc.source_path).toBeTruthy();
+        expect(doc.content).toBeUndefined();
+      }
     }
 
     // Resolution path should have edges
@@ -231,6 +241,55 @@ describe('AegisService — compile_context v2 contract', () => {
     }
 
     expect(result.notices).toEqual([]);
+  });
+
+  it('auto default: source_path docs are deferred, content_mode=always overrides', async () => {
+    createLaravelProject(tmpDir);
+
+    const preview = service.initDetect(tmpDir, 'admin');
+    service.initConfirm(preview.preview_hash, 'admin');
+
+    // Import a doc with source_path (large enough to exceed auto inline threshold)
+    const docPath = join(tmpDir, 'docs', 'arch.md');
+    mkdirSync(join(tmpDir, 'docs'), { recursive: true });
+    writeFileSync(docPath, '# Architecture Guide\n\n'.repeat(200));
+
+    const importResult = await service.importDoc(
+      {
+        file_path: docPath,
+        doc_id: 'arch-guide',
+        title: 'Architecture Guide',
+        kind: 'guideline',
+        edge_hints: [
+          { source_type: 'path' as const, source_value: 'app/**', edge_type: 'path_requires' as const },
+        ],
+      },
+      'admin',
+    );
+    for (const pid of importResult.proposal_ids) {
+      service.approveProposal(pid, undefined, 'admin');
+    }
+
+    // Default (auto): large source_path doc → deferred
+    const autoResult = await service.compileContext(
+      { target_files: ['app/Domain/User/UserEntity.php'] },
+      'agent',
+    );
+    const deferredDoc = autoResult.base.documents.find((d: any) => d.doc_id === 'arch-guide');
+    expect(deferredDoc).toBeDefined();
+    expect(deferredDoc!.delivery).toBe('deferred');
+    expect(deferredDoc!.content).toBeUndefined();
+    expect(deferredDoc!.source_path).toBeTruthy();
+
+    // Explicit always: same doc → inline
+    const alwaysResult = await service.compileContext(
+      { target_files: ['app/Domain/User/UserEntity.php'], content_mode: 'always' },
+      'agent',
+    );
+    const inlineDoc = alwaysResult.base.documents.find((d: any) => d.doc_id === 'arch-guide');
+    expect(inlineDoc).toBeDefined();
+    expect(inlineDoc!.delivery).toBe('inline');
+    expect(inlineDoc!.content).toBeTruthy();
   });
 });
 

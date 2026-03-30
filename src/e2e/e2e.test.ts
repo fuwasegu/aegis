@@ -280,6 +280,51 @@ describe('E2E: Template-less Lifecycle (skip_template)', () => {
     expect(compiled.base.documents[0].content).toContain('Repository Pattern');
   });
 
+  it('auto mode defers source_path docs, agent can use source_path to read', async () => {
+    const preview = adminService.initDetect(tmpDir, 'admin', { skip_template: true });
+    adminService.initConfirm(preview.preview_hash, 'admin');
+
+    // Create a real file in the tmp project
+    const docFilePath = join(tmpDir, 'docs', 'arch.md');
+    mkdirSync(join(tmpDir, 'docs'), { recursive: true });
+    writeFileSync(docFilePath, '# Architecture\n\nClean architecture patterns.\n'.repeat(100));
+
+    // Import with file_path → source_path gets auto-set
+    const importResult = await adminService.importDoc(
+      {
+        file_path: docFilePath,
+        doc_id: 'arch-guide',
+        title: 'Architecture Guide',
+        kind: 'guideline',
+        edge_hints: [
+          { source_type: 'path' as const, source_value: 'src/**', edge_type: 'path_requires' as const },
+        ],
+      },
+      'admin',
+    );
+    for (const pid of importResult.proposal_ids) {
+      adminService.approveProposal(pid, undefined, 'admin');
+    }
+
+    // Default auto mode: large doc with source_path → deferred
+    const compiled = await agentService.compileContext({ target_files: ['src/index.ts'] }, 'agent');
+    const doc = compiled.base.documents.find((d: any) => d.doc_id === 'arch-guide')!;
+    expect(doc).toBeDefined();
+    expect(doc.delivery).toBe('deferred');
+    expect(doc.content).toBeUndefined();
+    expect(doc.source_path).toBeDefined();
+    expect(doc.content_bytes).toBeGreaterThan(0);
+
+    // Explicit always mode: same doc → inline
+    const compiledAlways = await agentService.compileContext(
+      { target_files: ['src/index.ts'], content_mode: 'always' },
+      'agent',
+    );
+    const docAlways = compiledAlways.base.documents.find((d: any) => d.doc_id === 'arch-guide')!;
+    expect(docAlways.delivery).toBe('inline');
+    expect(docAlways.content).toContain('Architecture');
+  });
+
   it('import_doc without edge_hints warns about isolation', async () => {
     const preview = adminService.initDetect(tmpDir, 'admin', { skip_template: true });
     adminService.initConfirm(preview.preview_hash, 'admin');
