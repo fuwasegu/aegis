@@ -40,7 +40,7 @@ const WORKFLOW_GUIDE = `# Aegis Workflow Guide
 
    Each document has a \`delivery\` field:
    - \`inline\`: Full content is included in the response. Read it directly.
-   - \`deferred\`: Content is not included. Use \`source_path\` to Read the file from the workspace.
+   - \`deferred\`: Content is NOT included. You MUST Read the file via \`source_path\` before proceeding. Prioritize by \`relevance\` score (high first); skip only documents with very low relevance (< 0.25) unless specifically needed.
    - \`omitted\`: Excluded by budget or policy. Increase \`max_inline_bytes\` or use \`content_mode: "always"\` if needed.
 
    The default \`content_mode\` is \`auto\`: documents with \`source_path\` are deferred (except small ones ≤ 2KB),
@@ -91,7 +91,10 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
         .describe('Explicit layer names (optional, inferred from path if omitted)'),
       command: z.string().optional().describe('Command name: scaffold, refactor, review, etc.'),
       plan: z.string().optional().describe('Natural-language plan text for expanded context (requires IntentTagger)'),
-      max_inline_bytes: z.number().optional().describe('Inline content budget in UTF-8 bytes (default: 131072 = 128KB)'),
+      max_inline_bytes: z
+        .number()
+        .optional()
+        .describe('Inline content budget in UTF-8 bytes (default: 131072 = 128KB)'),
       content_mode: z.enum(['auto', 'always', 'metadata']).optional().describe('Content delivery mode (default: auto)'),
     },
     async (params) => {
@@ -111,17 +114,19 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       } catch (e) {
         if (e instanceof BudgetExceededError) {
           return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                error: 'BUDGET_EXCEEDED_MANDATORY',
-                compile_id: e.compile_id,
-                message: e.message,
-                mandatory_bytes: e.mandatory_bytes,
-                max_inline_bytes: e.max_inline_bytes,
-                offending_doc_ids: e.offending_doc_ids,
-              }),
-            }],
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'BUDGET_EXCEEDED_MANDATORY',
+                  compile_id: e.compile_id,
+                  message: e.message,
+                  mandatory_bytes: e.mandatory_bytes,
+                  max_inline_bytes: e.max_inline_bytes,
+                  offending_doc_ids: e.offending_doc_ids,
+                }),
+              },
+            ],
             isError: true,
           };
         }
