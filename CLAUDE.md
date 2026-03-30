@@ -81,7 +81,7 @@ src/
     ollama-client.ts — Ollama REST API client
     intent-tagger.ts — OllamaIntentTagger (IntentTagger implementation)
   e2e/          — End-to-end integration tests
-  main.ts       — Entry point (--surface, --db, --templates, --ollama-*)
+  main.ts       — Entry point (--surface, --db, --templates, --project-root, --ollama-*)
 templates/      — Reserved for custom user templates (--template-dir)
 ```
 

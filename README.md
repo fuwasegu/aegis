@@ -231,7 +231,7 @@ You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 
 | Tool | Description |
 |------|-------------|
-| `aegis_compile_context` | Compile deterministic context for target files |
+| `aegis_compile_context` | Compile deterministic context for target files. Supports `content_mode` (auto/always/metadata) and `max_inline_bytes` for output size control |
 | `aegis_observe` | Record observations (compile_miss, review_correction, pr_merged, manual_note, document_import) |
 | `aegis_get_compile_audit` | Retrieve audit log of a past compile |
 | `aegis_init_detect` | Analyze a project to generate initialization preview |
@@ -281,6 +281,7 @@ npx @fuwasegu/aegis --list-models                           # List available SLM
 | `--model` | `qwen3.5-4b` | SLM model name or HuggingFace URI (requires `--slm`) |
 | `--list-models` | | Show available models and exit |
 | `--ollama` | false | Use Ollama instead of built-in llama.cpp (implies `--slm`) |
+| `--project-root` | `cwd()` | Project root for repo-relative source_path resolution and default DB path |
 | `--ollama-url` | `http://localhost:11434` | Ollama API URL (with `--ollama`) |
 
 ---
@@ -291,7 +292,7 @@ npx @fuwasegu/aegis --list-models                           # List available SLM
 
 ```bash
 npm run build    # Compile TypeScript
-npm test         # Run all tests (335+)
+npm test         # Run all tests (406+)
 npm run test:watch
 ```
 

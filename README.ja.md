@@ -231,7 +231,7 @@ HuggingFace URI を直接指定することも可能: `--model hf:user/repo:file
 
 | ツール | 説明 |
 |--------|------|
-| `aegis_compile_context` | 対象ファイルの決定的コンテキストをコンパイル |
+| `aegis_compile_context` | 対象ファイルの決定的コンテキストをコンパイル。`content_mode`（auto/always/metadata）と `max_inline_bytes` による出力サイズ制御に対応 |
 | `aegis_observe` | オブザベーション記録（compile_miss, review_correction, pr_merged, manual_note, document_import） |
 | `aegis_get_compile_audit` | 過去のコンパイルの監査ログを取得 |
 | `aegis_init_detect` | プロジェクト分析と初期化プレビュー生成 |
@@ -281,6 +281,7 @@ npx @fuwasegu/aegis --list-models                           # 利用可能な SL
 | `--model` | `qwen3.5-4b` | SLM モデル名または HuggingFace URI（`--slm` 必須） |
 | `--list-models` | | 利用可能なモデルを表示して終了 |
 | `--ollama` | false | 内蔵 llama.cpp の代わりに Ollama を使用（`--slm` を暗黙的に有効化） |
+| `--project-root` | `cwd()` | プロジェクトルート（repo-relative source_path 解決とデフォルト DB パスの基準） |
 | `--ollama-url` | `http://localhost:11434` | Ollama API URL（`--ollama` 使用時） |
 
 ---
@@ -291,7 +292,7 @@ npx @fuwasegu/aegis --list-models                           # 利用可能な SL
 
 ```bash
 npm run build    # TypeScript コンパイル
-npm test         # 全テスト実行（335+）
+npm test         # 全テスト実行（406+）
 npm run test:watch
 ```
 
