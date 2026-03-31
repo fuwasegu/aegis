@@ -4,13 +4,25 @@
  *
  * base: deterministic DAG routing
  * expanded: best-effort SLM-inferred context via IntentTagger + tag_mappings
+ *
+ * v2 (ADR-009): delivery-aware output with budget allocation
  */
 
 import picomatch from 'picomatch';
 import { v4 as uuidv4 } from 'uuid';
 import type { Repository } from '../store/repository.js';
 import type { IntentTagger } from '../tagging/tagger.js';
-import type { CompiledContext, CompileRequest, Edge, ResolvedDoc, ResolvedEdge } from '../types.js';
+import type {
+  CompileAuditMeta,
+  CompiledContext,
+  CompileRequest,
+  Document,
+  Edge,
+  ResolvedDoc,
+  ResolvedEdge,
+} from '../types.js';
+import { BudgetExceededError, DEFAULT_MAX_INLINE_BYTES } from '../types.js';
+import { type AllocatedDoc, allocateDelivery, type DocCandidate } from './allocator.js';
 
 /**
  * Extract meaningful terms from a plan string for deterministic relevance scoring.
@@ -110,6 +122,57 @@ function sortEdges(edges: Edge[]): Edge[] {
   });
 }
 
+/** Convert a DB Document to a DocCandidate for the allocator. */
+function toCandidate(
+  doc: Document,
+  docClass: DocCandidate['doc_class'],
+  priority: number,
+  relevance: number | undefined,
+): DocCandidate {
+  return {
+    doc_id: doc.doc_id,
+    title: doc.title,
+    kind: doc.kind,
+    content: doc.content,
+    content_bytes: Buffer.byteLength(doc.content, 'utf8'),
+    content_hash: doc.content_hash,
+    source_path: doc.source_path,
+    relevance,
+    priority,
+    doc_class: docClass,
+  };
+}
+
+/** Convert an AllocatedDoc to a ResolvedDoc v2 for the response. */
+function toResolvedDoc(d: AllocatedDoc): ResolvedDoc {
+  const resolved: ResolvedDoc = {
+    doc_id: d.doc_id,
+    title: d.title,
+    kind: d.kind as ResolvedDoc['kind'],
+    delivery: d.delivery,
+    content_bytes: d.content_bytes,
+    content_hash: d.content_hash,
+  };
+
+  if (d.delivery === 'inline') {
+    resolved.content = d.content;
+  }
+
+  if (d.source_path) {
+    resolved.source_path = d.source_path;
+  }
+
+  if (d.omit_reason) {
+    resolved.omit_reason = d.omit_reason;
+  }
+
+  if (d.relevance !== undefined) {
+    resolved.relevance = d.relevance;
+  }
+
+  return resolved;
+}
+
 export class ContextCompiler {
   constructor(
     private repo: Repository,
@@ -121,6 +184,7 @@ export class ContextCompiler {
    * compile_context — deterministic base routing + best-effort expanded context.
    * Steps: path_requires → layer_requires → command_requires → doc_depends_on closure
    * Then: if plan + tagger → expanded via tag_mappings
+   * Finally: allocator assigns delivery state (ADR-009)
    */
   async compile(request: CompileRequest): Promise<CompiledContext> {
     const snapshot = this.repo.getCurrentSnapshot();
@@ -207,11 +271,6 @@ export class ContextCompiler {
     const allDocIds = [...collectedDocIds];
     const docs = this.repo.getApprovedDocumentsByIds(allDocIds);
 
-    // Separate templates from regular documents
-    const regularDocs: ResolvedDoc[] = [];
-    const templateDocIds: string[] = [];
-    const templates: { name: string; content: string }[] = [];
-
     // Sort by specificity DESC → priority ASC → doc_id ASC for deterministic display order
     const docOrderMap = this.buildDocOrderMap(collectedEdges);
     const sortedDocs = [...docs].sort((a, b) => {
@@ -224,21 +283,20 @@ export class ContextCompiler {
 
     const planTerms = request.plan ? extractPlanTerms(request.plan) : [];
 
+    // ── Build DocCandidate arrays (templates separate from regular docs) ──
+    const baseCandidates: DocCandidate[] = [];
+    const templateCandidates: DocCandidate[] = [];
+    const templateDocIds: string[] = [];
+
     for (const doc of sortedDocs) {
+      const order = docOrderMap.get(doc.doc_id) ?? { specificity: 0, priority: 100 };
+      const relevance = request.plan && planTerms.length > 0 ? computeRelevance(planTerms, doc) : undefined;
+
       if (doc.kind === 'template') {
         templateDocIds.push(doc.doc_id);
-        templates.push({ name: doc.title, content: doc.content });
+        templateCandidates.push(toCandidate(doc, 'template', order.priority, relevance));
       } else {
-        const resolved: ResolvedDoc = {
-          doc_id: doc.doc_id,
-          title: doc.title,
-          kind: doc.kind,
-          content: doc.content,
-        };
-        if (request.plan && planTerms.length > 0) {
-          resolved.relevance = computeRelevance(planTerms, doc);
-        }
-        regularDocs.push(resolved);
+        baseCandidates.push(toCandidate(doc, 'document', order.priority, relevance));
       }
     }
 
@@ -258,7 +316,7 @@ export class ContextCompiler {
       }
     }
 
-    // ── Build result ──
+    // ── Build result shell ──
     const compileId = uuidv4();
     const warnings: string[] = [];
 
@@ -292,21 +350,12 @@ export class ContextCompiler {
       );
     }
 
-    const result: CompiledContext = {
-      compile_id: compileId,
-      snapshot_id: snapshot.snapshot_id,
-      knowledge_version: snapshot.knowledge_version,
-      base: {
-        documents: regularDocs,
-        resolution_path: resolutionPath,
-        templates,
-      },
-      warnings,
-      notices,
-    };
-
     // ── Expanded context (best-effort, non-fatal) ──
     let expandedDocIds: string[] | null = null;
+    const expandedCandidates: DocCandidate[] = [];
+    let expandedConfidence = 0;
+    let expandedReasoning = '';
+    let expandedHasResult = false;
 
     if (request.plan && this.tagger) {
       try {
@@ -318,7 +367,7 @@ export class ContextCompiler {
           const candidates = this.repo.getDocumentsByTags(tagNames);
 
           // Exclude docs already in base (both documents and templates)
-          const baseDocIdSet = new Set([...regularDocs.map((d) => d.doc_id), ...templateDocIds]);
+          const baseDocIdSet = new Set([...baseCandidates.map((d) => d.doc_id), ...templateDocIds]);
           const filtered = candidates.filter((c) => !baseDocIdSet.has(c.doc_id));
 
           // Fetch full documents, preserving getDocumentsByTags order
@@ -326,57 +375,140 @@ export class ContextCompiler {
           const fetchedDocs = this.repo.getApprovedDocumentsByIds(expandedIds);
           const fetchedMap = new Map(fetchedDocs.map((d) => [d.doc_id, d]));
 
-          // Re-order to match getDocumentsByTags deterministic order
-          const expandedDocs: ResolvedDoc[] = [];
+          // Build expanded candidates
           for (const id of expandedIds) {
             const doc = fetchedMap.get(id);
             if (doc) {
-              expandedDocs.push({
-                doc_id: doc.doc_id,
-                title: doc.title,
-                kind: doc.kind,
-                content: doc.content,
-              });
+              expandedCandidates.push(toCandidate(doc, 'expanded', 100, undefined));
             }
           }
 
-          // Build confidence & reasoning from tag match data
-          const avgConfidence =
-            filtered.length > 0 ? filtered.reduce((sum, c) => sum + c.max_confidence, 0) / filtered.length : 0;
-          const reasoning = filtered.map((c) => `${c.doc_id} matched [${c.matched_tags.join(', ')}]`).join('; ');
+          expandedConfidence =
+            filtered.length > 0
+              ? Math.round((filtered.reduce((sum, c) => sum + c.max_confidence, 0) / filtered.length) * 100) / 100
+              : 0;
+          expandedReasoning =
+            filtered.map((c) => `${c.doc_id} matched [${c.matched_tags.join(', ')}]`).join('; ') ||
+            'No additional documents matched';
 
-          result.expanded = {
-            documents: expandedDocs,
-            confidence: Math.round(avgConfidence * 100) / 100,
-            reasoning: reasoning || 'No additional documents matched',
-            resolution_path: [],
-          };
-
-          expandedDocIds = expandedDocs.map((d) => d.doc_id);
+          expandedDocIds = expandedCandidates.map((d) => d.doc_id);
+          expandedHasResult = true;
         } else {
           // Tagger returned no tags
-          result.expanded = {
-            documents: [],
-            confidence: 0,
-            reasoning: 'Tagger returned no tags for the given plan',
-            resolution_path: [],
-          };
           expandedDocIds = [];
+          expandedConfidence = 0;
+          expandedReasoning = 'Tagger returned no tags for the given plan';
+          expandedHasResult = true;
         }
       } catch (err) {
         warnings.push(`Expanded context skipped: tagger failed (${(err as Error).message})`);
         // expanded stays undefined, expandedDocIds stays null
       }
     }
-    // else: no plan or no tagger → expanded stays undefined, expandedDocIds stays null
+
+    // ── Allocate delivery (ADR-009) ──
+    const contentMode = request.content_mode ?? 'auto';
+    const maxInlineBytes = request.max_inline_bytes ?? DEFAULT_MAX_INLINE_BYTES;
+    const allCandidates = [...baseCandidates, ...templateCandidates, ...expandedCandidates];
+
+    let auditMeta: CompileAuditMeta;
+    let allocatedDocs: AllocatedDoc[];
+
+    try {
+      const result = allocateDelivery(allCandidates, {
+        content_mode: contentMode,
+        max_inline_bytes: maxInlineBytes,
+        command: request.command,
+        compile_id: compileId,
+      });
+      allocatedDocs = result.docs;
+      auditMeta = result.audit_meta;
+    } catch (err) {
+      if (err instanceof BudgetExceededError) {
+        // Record audit BEFORE rethrowing (D-9)
+        // Stats reflect the state at failure: mandatory docs that would have been inline
+        const mandatoryCount = err.offending_doc_ids.length;
+        const failAuditMeta: CompileAuditMeta = {
+          delivery_stats: {
+            inline_count: mandatoryCount,
+            inline_total_bytes: err.mandatory_bytes,
+            deferred_count: 0,
+            deferred_total_bytes: 0,
+            omitted_count: 0,
+            omitted_total_bytes: 0,
+          },
+          budget_utilization: maxInlineBytes > 0 ? Math.round((err.mandatory_bytes / maxInlineBytes) * 100) / 100 : 0,
+          budget_exceeded: true,
+          policy_omitted_doc_ids: [],
+        };
+
+        this.repo.insertCompileLog({
+          compile_id: compileId,
+          snapshot_id: snapshot.snapshot_id,
+          request: JSON.stringify(request),
+          base_doc_ids: JSON.stringify(baseCandidates.map((d) => d.doc_id)),
+          expanded_doc_ids: expandedDocIds !== null ? JSON.stringify(expandedDocIds) : null,
+          audit_meta: JSON.stringify(failAuditMeta),
+        });
+
+        throw err;
+      }
+      throw err;
+    }
+
+    // ── Partition allocated docs back into base/templates/expanded ──
+    const allocatedMap = new Map(allocatedDocs.map((d) => [d.doc_id, d]));
+
+    const baseResolved: ResolvedDoc[] = [];
+    for (const c of baseCandidates) {
+      const d = allocatedMap.get(c.doc_id);
+      if (d) baseResolved.push(toResolvedDoc(d));
+    }
+
+    const templateResolved: ResolvedDoc[] = [];
+    for (const c of templateCandidates) {
+      const d = allocatedMap.get(c.doc_id);
+      if (d) templateResolved.push(toResolvedDoc(d));
+    }
+
+    const expandedResolved: ResolvedDoc[] = [];
+    for (const c of expandedCandidates) {
+      const d = allocatedMap.get(c.doc_id);
+      if (d) expandedResolved.push(toResolvedDoc(d));
+    }
+
+    // ── Build final result ──
+    const result: CompiledContext = {
+      schema_version: 2,
+      compile_id: compileId,
+      snapshot_id: snapshot.snapshot_id,
+      knowledge_version: snapshot.knowledge_version,
+      base: {
+        documents: baseResolved,
+        resolution_path: resolutionPath,
+        templates: templateResolved,
+      },
+      warnings,
+      notices,
+    };
+
+    if (expandedHasResult) {
+      result.expanded = {
+        documents: expandedResolved,
+        confidence: expandedConfidence,
+        reasoning: expandedReasoning,
+        resolution_path: [],
+      };
+    }
 
     // ── Record compile_log (INV-5) ──
     this.repo.insertCompileLog({
       compile_id: compileId,
       snapshot_id: snapshot.snapshot_id,
       request: JSON.stringify(request),
-      base_doc_ids: JSON.stringify(regularDocs.map((d) => d.doc_id)),
+      base_doc_ids: JSON.stringify(baseResolved.map((d) => d.doc_id)),
       expanded_doc_ids: expandedDocIds !== null ? JSON.stringify(expandedDocIds) : null,
+      audit_meta: JSON.stringify(auditMeta),
     });
 
     return result;
@@ -384,6 +516,8 @@ export class ContextCompiler {
 
   /**
    * get_compile_audit — retrieve a past compile_context invocation.
+   * v2: includes delivery_stats, budget_utilization, etc. from audit_meta.
+   * v1 compile_logs (audit_meta=null) return null for new fields.
    */
   getCompileAudit(compileId: string):
     | {
@@ -393,6 +527,10 @@ export class ContextCompiler {
         request: object;
         base_doc_ids: string[];
         expanded_doc_ids: string[] | null;
+        delivery_stats: CompileAuditMeta['delivery_stats'] | null;
+        budget_utilization: number | null;
+        budget_exceeded: boolean | null;
+        policy_omitted_doc_ids: string[] | null;
         created_at: string;
       }
     | undefined {
@@ -400,6 +538,7 @@ export class ContextCompiler {
     if (!log) return undefined;
 
     const snapshot = this.repo.getSnapshotById(log.snapshot_id);
+    const meta: CompileAuditMeta | null = log.audit_meta ? JSON.parse(log.audit_meta) : null;
 
     return {
       compile_id: log.compile_id,
@@ -408,6 +547,10 @@ export class ContextCompiler {
       request: JSON.parse(log.request),
       base_doc_ids: JSON.parse(log.base_doc_ids),
       expanded_doc_ids: log.expanded_doc_ids ? JSON.parse(log.expanded_doc_ids) : null,
+      delivery_stats: meta?.delivery_stats ?? null,
+      budget_utilization: meta?.budget_utilization ?? null,
+      budget_exceeded: meta?.budget_exceeded ?? null,
+      policy_omitted_doc_ids: meta?.policy_omitted_doc_ids ?? null,
       created_at: log.created_at,
     };
   }
@@ -525,6 +668,7 @@ export class ContextCompiler {
 
   private emptyResult(_request: CompileRequest, warnings: string[]): CompiledContext {
     return {
+      schema_version: 2,
       compile_id: '',
       snapshot_id: '',
       knowledge_version: 0,

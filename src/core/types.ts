@@ -129,6 +129,7 @@ export interface CompileLog {
   request: string; // JSON
   base_doc_ids: string; // JSON
   expanded_doc_ids: string | null; // JSON
+  audit_meta: string | null; // JSON: CompileAuditMeta | null
   created_at: string;
 }
 
@@ -156,21 +157,48 @@ export interface InitManifest {
 }
 
 // ============================================================
-// Read API Types (§3)
+// Read API Types (§3) — v2: delivery-aware (ADR-009)
 // ============================================================
+
+/** Default inline content budget in UTF-8 bytes (128KB). */
+export const DEFAULT_MAX_INLINE_BYTES = 131_072;
+
+/** In auto mode, source_path docs smaller than this are inlined. */
+export const AUTO_INLINE_THRESHOLD_BYTES = 4096;
+
+export type ContentMode = 'auto' | 'always' | 'metadata';
 
 export interface CompileRequest {
   target_files: string[];
   target_layers?: string[];
   command?: string;
   plan?: string;
+  /** Inline content budget in UTF-8 bytes. Default: 131,072 (128KB). */
+  max_inline_bytes?: number;
+  /** Content delivery mode. Default: 'auto' (source_path docs deferred, small docs inline). */
+  content_mode?: ContentMode;
 }
+
+export type DeliveryType = 'inline' | 'deferred' | 'omitted';
 
 export interface ResolvedDoc {
   doc_id: string;
   title: string;
   kind: DocumentKind;
-  content: string;
+
+  /** Delivery state (ADR-009 D-1). */
+  delivery: DeliveryType;
+  /** Full content. Present only when delivery === 'inline'. */
+  content?: string;
+  /** Repo-relative path. Present when stored in DB, regardless of delivery. */
+  source_path?: string;
+  /** UTF-8 byte length of content. Always present (for Read decision). */
+  content_bytes: number;
+  /** SHA-256 content hash. Always present (for consistency verification). */
+  content_hash: string;
+  /** Reason when delivery === 'omitted'. */
+  omit_reason?: string;
+
   /** Deterministic relevance score (0–1) based on plan keyword matching. Present only when plan is provided. */
   relevance?: number;
 }
@@ -184,13 +212,14 @@ export interface ResolvedEdge {
 }
 
 export interface CompiledContext {
+  schema_version: 2;
   compile_id: string;
   snapshot_id: string;
   knowledge_version: number;
   base: {
     documents: ResolvedDoc[];
     resolution_path: ResolvedEdge[];
-    templates: { name: string; content: string }[];
+    templates: ResolvedDoc[];
   };
   expanded?: {
     documents: ResolvedDoc[];
@@ -201,6 +230,46 @@ export interface CompiledContext {
   warnings: string[];
   /** Operational notices (P-1 excluded): may vary by server runtime state, not recorded in compile_log */
   notices: string[];
+}
+
+// ============================================================
+// Compile Audit Meta (ADR-009 D-13)
+// ============================================================
+
+export interface DeliveryStats {
+  inline_count: number;
+  inline_total_bytes: number;
+  deferred_count: number;
+  deferred_total_bytes: number;
+  omitted_count: number;
+  omitted_total_bytes: number;
+}
+
+export interface CompileAuditMeta {
+  delivery_stats: DeliveryStats;
+  /** inline_total_bytes / max_inline_bytes (0.0–1.0) */
+  budget_utilization: number;
+  /** true if mandatory inline docs exceeded budget */
+  budget_exceeded: boolean;
+  /** doc_ids omitted by policy (e.g. non-scaffold templates) */
+  policy_omitted_doc_ids: string[];
+}
+
+/**
+ * Thrown when mandatory inline documents (no source_path) exceed max_inline_bytes.
+ * Caught by server.ts and converted to MCP isError: true response.
+ */
+export class BudgetExceededError extends Error {
+  constructor(
+    public readonly compile_id: string,
+    public readonly mandatory_bytes: number,
+    public readonly max_inline_bytes: number,
+    /** Offending doc_ids sorted by content_bytes descending. */
+    public readonly offending_doc_ids: string[],
+  ) {
+    super(`Mandatory inline documents exceed max_inline_bytes: ${mandatory_bytes} > ${max_inline_bytes}`);
+    this.name = 'BudgetExceededError';
+  }
 }
 
 // ============================================================

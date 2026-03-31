@@ -24,6 +24,7 @@ import { RuleBasedAnalyzer } from '../core/automation/rule-analyzer.js';
 import type { InitPreview } from '../core/init/engine.js';
 import { initConfirm as coreInitConfirm, initDetect as coreInitDetect } from '../core/init/engine.js';
 import { detectUpgrade, generateUpgradeProposals, type UpgradePreview } from '../core/init/upgrade.js';
+import { normalizeSourcePath, resolveSourcePath } from '../core/paths.js';
 import { ContextCompiler } from '../core/read/compiler.js';
 import type { Repository } from '../core/store/repository.js';
 import type { IntentTagger } from '../core/tagging/tagger.js';
@@ -68,6 +69,7 @@ export class AegisService {
     tagger: IntentTagger | null = null,
     private extraTemplateDirs: string[] = [],
     adapterOutdated = false,
+    private projectRoot: string = process.cwd(),
   ) {
     this.compiler = new ContextCompiler(repo, tagger, adapterOutdated);
     this.analyzerRegistry = new Map<ObservationEventType, ObservationAnalyzer>([
@@ -498,9 +500,14 @@ export class AegisService {
       }
       payload.content = readFileSync(params.file_path, 'utf-8');
       if (!params.source_path) {
-        payload.source_path = params.file_path;
+        payload.source_path = normalizeSourcePath(params.file_path, this.projectRoot);
       }
       delete payload.file_path;
+    }
+
+    // Normalize explicit source_path to repo-relative
+    if (payload.source_path && typeof payload.source_path === 'string') {
+      payload.source_path = normalizeSourcePath(payload.source_path as string, this.projectRoot);
     }
 
     if (!payload.content && !params.file_path) {
@@ -566,12 +573,13 @@ export class AegisService {
     const drafts: Array<{ draft: import('../core/types.js').ProposalDraft; obsId: string }> = [];
 
     for (const doc of docs) {
-      if (!existsSync(doc.source_path!)) {
+      const absPath = resolveSourcePath(doc.source_path!, this.projectRoot);
+      if (!existsSync(absPath)) {
         not_found.push(doc.doc_id);
         continue;
       }
 
-      const fileContent = readFileSync(doc.source_path!, 'utf-8');
+      const fileContent = readFileSync(absPath, 'utf-8');
       const fileHash = createHash('sha256').update(fileContent).digest('hex');
 
       if (fileHash === doc.content_hash) {

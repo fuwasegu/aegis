@@ -553,14 +553,24 @@ export class Repository {
   insertCompileLog(log: Omit<CompileLog, 'created_at'>): void {
     this.db
       .prepare(`
-      INSERT INTO compile_log (compile_id, snapshot_id, request, base_doc_ids, expanded_doc_ids)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO compile_log (compile_id, snapshot_id, request, base_doc_ids, expanded_doc_ids, audit_meta)
+      VALUES (?, ?, ?, ?, ?, ?)
     `)
-      .run(log.compile_id, log.snapshot_id, log.request, log.base_doc_ids, log.expanded_doc_ids);
+      .run(log.compile_id, log.snapshot_id, log.request, log.base_doc_ids, log.expanded_doc_ids, log.audit_meta);
   }
 
   getCompileLog(compileId: string): CompileLog | undefined {
     return this.db.prepare('SELECT * FROM compile_log WHERE compile_id = ?').get(compileId) as CompileLog | undefined;
+  }
+
+  /** Returns ALL documents with source_path (any status). Used for source_path migration. */
+  getAllDocumentsWithSourcePath(): Document[] {
+    return this.db.prepare('SELECT * FROM documents WHERE source_path IS NOT NULL').all() as Document[];
+  }
+
+  /** Update source_path for a single document. Used for source_path migration. */
+  updateDocumentSourcePath(docId: string, sourcePath: string | null): void {
+    this.db.prepare('UPDATE documents SET source_path = ? WHERE doc_id = ?').run(sourcePath, docId);
   }
 
   // ============================================================

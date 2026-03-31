@@ -447,7 +447,7 @@ describe('ContextCompiler', () => {
     expect(result.base.documents).toHaveLength(1);
     expect(result.base.documents[0].doc_id).toBe('d-guide');
     expect(result.base.templates).toHaveLength(1);
-    expect(result.base.templates[0].name).toBe('Entity Template');
+    expect(result.base.templates[0].title).toBe('Entity Template');
   });
 
   // ── Edge case: uninitialised project returns warnings, no compile_log ──
@@ -1258,7 +1258,7 @@ describe('ContextCompiler — expanded context', () => {
 
     // tmpl-doc is in base.templates, so must NOT appear in expanded
     expect(result.base.templates).toHaveLength(1);
-    expect(result.base.templates[0].name).toBe('Entity Template');
+    expect(result.base.templates[0].title).toBe('Entity Template');
 
     const expandedIds = result.expanded!.documents.map((d) => d.doc_id);
     expect(expandedIds).not.toContain('tmpl-doc');
@@ -1669,5 +1669,251 @@ describe('ContextCompiler — plan relevance scoring', () => {
     // so neither \b nor CamelCase boundary fires. This is a known limitation;
     // standalone "api" and "client" in word-doc DO match at word boundaries.
     expect(wordDoc.relevance!).toBeGreaterThan(snakeDoc.relevance!);
+  });
+});
+
+// ============================================================
+// v2: delivery-aware output (ADR-009)
+// ============================================================
+
+describe('ContextCompiler — v2 delivery', () => {
+  let db: AegisDatabase;
+  let repo: Repository;
+  let compiler: ContextCompiler;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+    compiler = new ContextCompiler(repo);
+  });
+
+  it('returns schema_version: 2', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'D1', kind: 'guideline', content: 'content' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+    expect(result.schema_version).toBe(2);
+  });
+
+  it('templates are returned as ResolvedDoc with delivery field (scaffold command)', async () => {
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'd-guide', title: 'Guide', kind: 'guideline', content: 'guide' },
+        { doc_id: 'd-tmpl', title: 'Template', kind: 'template', content: 'template body' },
+      ],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd-guide',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd-tmpl',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const result = await compiler.compile({ target_files: ['src/a.ts'], command: 'scaffold' });
+    expect(result.base.templates).toHaveLength(1);
+    const tmpl = result.base.templates[0];
+    expect(tmpl.doc_id).toBe('d-tmpl');
+    expect(tmpl.delivery).toBe('inline');
+    expect(tmpl.content).toBe('template body');
+    expect(tmpl.content_bytes).toBeGreaterThan(0);
+    expect(tmpl.content_hash).toBeDefined();
+  });
+
+  it('templates are policy-omitted by default (non-scaffold command, auto mode)', async () => {
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'd-guide', title: 'Guide', kind: 'guideline', content: 'guide' },
+        { doc_id: 'd-tmpl', title: 'Template', kind: 'template', content: 'template body' },
+      ],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd-guide',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd-tmpl',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+    expect(result.base.templates).toHaveLength(1);
+    const tmpl = result.base.templates[0];
+    expect(tmpl.doc_id).toBe('d-tmpl');
+    expect(tmpl.delivery).toBe('omitted');
+    expect(tmpl.omit_reason).toBe('policy:non_scaffold_command');
+    expect(tmpl.content).toBeUndefined();
+    expect(tmpl.content_bytes).toBeGreaterThan(0);
+    expect(tmpl.content_hash).toBeDefined();
+  });
+
+  it('documents have delivery, content_bytes, content_hash', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'D1', kind: 'guideline', content: 'hello world' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+    const doc = result.base.documents[0];
+    expect(doc.delivery).toBe('inline');
+    expect(doc.content_bytes).toBe(Buffer.byteLength('hello world', 'utf8'));
+    expect(doc.content_hash).toBeDefined();
+    expect(doc.content).toBe('hello world');
+  });
+
+  it('records audit_meta in compile_log', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'D1', kind: 'guideline', content: 'content' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+    const audit = compiler.getCompileAudit(result.compile_id);
+    expect(audit).toBeDefined();
+    expect(audit!.delivery_stats).toBeDefined();
+    expect(audit!.delivery_stats!.inline_count).toBeGreaterThan(0);
+    expect(audit!.budget_utilization).toBeGreaterThanOrEqual(0);
+    expect(audit!.budget_exceeded).toBe(false);
+    expect(audit!.policy_omitted_doc_ids).toEqual([]);
+  });
+
+  it('v1 audit (no audit_meta) returns null for new fields', async () => {
+    // Simulate v1 compile_log by inserting directly without audit_meta
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'D1', kind: 'guideline', content: 'content' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const snapshot = repo.getCurrentSnapshot()!;
+    repo.insertCompileLog({
+      compile_id: 'legacy-compile',
+      snapshot_id: snapshot.snapshot_id,
+      request: '{}',
+      base_doc_ids: '["d1"]',
+      expanded_doc_ids: null,
+      audit_meta: null,
+    });
+
+    const audit = compiler.getCompileAudit('legacy-compile');
+    expect(audit).toBeDefined();
+    expect(audit!.delivery_stats).toBeNull();
+    expect(audit!.budget_utilization).toBeNull();
+    expect(audit!.budget_exceeded).toBeNull();
+    expect(audit!.policy_omitted_doc_ids).toBeNull();
+  });
+
+  it('throws BudgetExceededError when mandatory docs exceed budget', async () => {
+    // Create a large document without source_path
+    const largeContent = 'x'.repeat(10_000);
+    bootstrap(repo, {
+      documents: [{ doc_id: 'big', title: 'Big Doc', kind: 'guideline', content: largeContent }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'big',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    await expect(compiler.compile({ target_files: ['src/a.ts'], max_inline_bytes: 100 })).rejects.toThrow(
+      'Mandatory inline documents exceed max_inline_bytes',
+    );
+  });
+
+  it('BudgetExceededError records audit before throwing', async () => {
+    const largeContent = 'x'.repeat(5000);
+    bootstrap(repo, {
+      documents: [{ doc_id: 'big', title: 'Big', kind: 'guideline', content: largeContent }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'big',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    try {
+      await compiler.compile({ target_files: ['src/a.ts'], max_inline_bytes: 100 });
+      expect.unreachable('should throw');
+    } catch (e: unknown) {
+      const err = e as import('../types.js').BudgetExceededError;
+      expect(err.name).toBe('BudgetExceededError');
+      // Audit should have been recorded
+      const audit = compiler.getCompileAudit(err.compile_id);
+      expect(audit).toBeDefined();
+      expect(audit!.budget_exceeded).toBe(true);
+    }
+  });
+
+  it('empty result also has schema_version 2', async () => {
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+    expect(result.schema_version).toBe(2);
   });
 });

@@ -26,6 +26,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { migrateSourcePaths } from './core/paths.js';
 import { createDatabase } from './core/store/database.js';
 import { Repository } from './core/store/repository.js';
 import type { IntentTagger } from './core/tagging/tagger.js';
@@ -48,6 +49,7 @@ interface CliArgs {
   dbPath: string;
   templatesRoot: string;
   extraTemplateDirs: string[];
+  projectRoot: string;
   model: string;
   enableSlm: boolean;
   useOllama: boolean;
@@ -58,9 +60,10 @@ interface CliArgs {
 function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
   let surface: Surface = 'agent';
-  let dbPath = DEFAULT_DB_PATH;
+  let dbPath: string | undefined;
   let templatesRoot = join(import.meta.dirname, '../templates');
   const extraTemplateDirs: string[] = [];
+  let projectRoot = process.cwd();
   let model = DEFAULT_MODEL;
   let enableSlm = false;
   let useOllama = false;
@@ -81,6 +84,9 @@ function parseArgs(): CliArgs {
         break;
       case '--templates':
         templatesRoot = args[++i];
+        break;
+      case '--project-root':
+        projectRoot = resolve(args[++i]);
         break;
       case '--model':
         model = args[++i];
@@ -112,7 +118,21 @@ function parseArgs(): CliArgs {
     }
   }
 
-  return { surface, dbPath, templatesRoot, extraTemplateDirs, model, enableSlm, useOllama, ollamaUrl, listModels };
+  // Default DB path is relative to projectRoot (not cwd)
+  const resolvedDbPath = dbPath ?? join(projectRoot, DEFAULT_DB_PATH);
+
+  return {
+    surface,
+    dbPath: resolvedDbPath,
+    templatesRoot,
+    extraTemplateDirs,
+    projectRoot,
+    model,
+    enableSlm,
+    useOllama,
+    ollamaUrl,
+    listModels,
+  };
 }
 
 async function createTagger(cliArgs: CliArgs): Promise<IntentTagger | null> {
@@ -242,7 +262,7 @@ async function main() {
     process.exit(0);
   }
 
-  const { surface, dbPath, templatesRoot } = cliArgs;
+  const { surface, dbPath, templatesRoot, projectRoot } = cliArgs;
 
   // Ensure DB directory exists, with self-contained .gitignore
   const dbDir = join(dbPath, '..');
@@ -265,7 +285,19 @@ async function main() {
     }
   }
 
-  const service = new AegisService(repo, templatesRoot, tagger, cliArgs.extraTemplateDirs, adapterOutdated);
+  // Admin-only: migrate absolute source_path values to repo-relative (INV-6)
+  if (surface === 'admin') {
+    migrateSourcePaths(repo, projectRoot);
+  }
+
+  const service = new AegisService(
+    repo,
+    templatesRoot,
+    tagger,
+    cliArgs.extraTemplateDirs,
+    adapterOutdated,
+    projectRoot,
+  );
   const server = createAegisServer(service, surface);
 
   const transport = new StdioServerTransport();
