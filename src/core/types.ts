@@ -164,7 +164,7 @@ export interface InitManifest {
 export const DEFAULT_MAX_INLINE_BYTES = 131_072;
 
 /** In auto mode, source_path docs smaller than this are inlined. */
-export const AUTO_INLINE_THRESHOLD_BYTES = 2048;
+export const AUTO_INLINE_THRESHOLD_BYTES = 4096;
 
 export type ContentMode = 'auto' | 'always' | 'metadata';
 

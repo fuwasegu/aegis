@@ -43,7 +43,7 @@ const WORKFLOW_GUIDE = `# Aegis Workflow Guide
    - \`deferred\`: Content is NOT included. You MUST Read the file via \`source_path\` before proceeding. Prioritize by \`relevance\` score (high first); skip only documents with very low relevance (< 0.25) unless specifically needed.
    - \`omitted\`: Excluded by budget or policy. Increase \`max_inline_bytes\` or use \`content_mode: "always"\` if needed.
 
-   The default \`content_mode\` is \`auto\`: documents with \`source_path\` are deferred (except small ones ≤ 2KB),
+   The default \`content_mode\` is \`auto\`: documents with \`source_path\` are deferred (except small ones ≤ 4KB),
    documents without \`source_path\` are always inlined. Use \`content_mode: "always"\` to force all documents inline.
 
 2. **Write** — After coding, report what happened via \`aegis_observe\`:

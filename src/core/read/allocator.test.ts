@@ -81,8 +81,8 @@ describe('allocateDelivery — auto mode', () => {
     expect(result.docs[0].delivery).toBe('deferred');
   });
 
-  it('inlines small source_path docs (≤ 2048 bytes)', () => {
-    const docs = [candidate({ doc_id: 'small', source_path: 'small.ts', content_bytes: 2048 })];
+  it('inlines small source_path docs (≤ 4096 bytes)', () => {
+    const docs = [candidate({ doc_id: 'small', source_path: 'small.ts', content_bytes: 4096 })];
     const result = allocateDelivery(docs, defaultOptions({ content_mode: 'auto' }));
     expect(result.docs[0].delivery).toBe('inline');
   });
@@ -238,10 +238,10 @@ describe('allocateDelivery — audit meta', () => {
     ];
     const result = allocateDelivery(docs, defaultOptions({ content_mode: 'auto', command: 'review' }));
 
-    // t1 is omitted (policy), a is mandatory inline, b is deferred (auto, > 2048? no, 2000 ≤ 2048)
+    // t1 is omitted (policy), a is mandatory inline, b is deferred (auto, > 4096? no, 2000 ≤ 4096)
     const stats = result.audit_meta.delivery_stats;
     expect(stats.omitted_count).toBe(1); // t1
-    expect(stats.inline_count).toBe(2); // a (mandatory) + b (small ≤ 2048)
+    expect(stats.inline_count).toBe(2); // a (mandatory) + b (small ≤ 4096)
     expect(stats.deferred_count).toBe(0);
   });
 

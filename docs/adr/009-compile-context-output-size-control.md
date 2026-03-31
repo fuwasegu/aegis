@@ -116,10 +116,10 @@ interface CompileRequest {
 ### D-5: auto モードの短い doc インライン閾値
 
 `content_mode='auto'` のとき、`source_path` がある doc でも
-`content_bytes <= 2048` ならインラインで返す。
+`content_bytes <= 4096` ならインラインで返す。
 Read の往復コストの方が高いケースを削減する。
 
-定数: `AUTO_INLINE_THRESHOLD_BYTES = 2048`
+定数: `AUTO_INLINE_THRESHOLD_BYTES = 4096`
 
 閾値の単位は budget と同じ UTF-8 bytes で統一する（D-6 準拠）。
 `chars` と `bytes` が混在すると実装時にブレるため、全てのサイズ関連定数を bytes に揃える。
