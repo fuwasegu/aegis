@@ -1576,6 +1576,99 @@ describe('AegisService — syncDocs', () => {
     const payload = JSON.parse(proposal!.payload);
     expect(payload.content).toBe('v3');
   });
+
+  it('dryRun reports would_create_proposals without proposals or observations', () => {
+    writeFileSync(join(tmpDir, 'dry.md'), 'original');
+    insertApprovedDoc('dry-doc', 'original', 'dry.md');
+    writeFileSync(join(tmpDir, 'dry.md'), 'changed');
+
+    const result = service.syncDocs({ dryRun: true }, 'admin');
+    expect(result.dry_run).toBe(true);
+    expect(result.would_create_proposals).toEqual(['dry-doc']);
+    expect(result.proposals_created).toHaveLength(0);
+    expect(repo.listProposals('pending', 100, 0).proposals).toHaveLength(0);
+  });
+});
+
+// ============================================================
+// maintenance (ADR-014)
+// ============================================================
+
+describe('AegisService — maintenance', () => {
+  let db: AegisDatabase;
+  let repo: Repository;
+  let service: AegisService;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+    service = new AegisService(repo, TEMPLATES_ROOT);
+  });
+
+  it('rejects agent surface', async () => {
+    await expect(service.runMaintenance('agent', { dryRun: true })).rejects.toThrow(SurfaceViolationError);
+  });
+
+  it('dry-run leaves pending observations unprocessed', async () => {
+    repo.insertObservation({
+      observation_id: 'obs-m',
+      event_type: 'compile_miss',
+      payload: JSON.stringify({ target_files: ['a.ts'], review_comment: 'x' }),
+      related_compile_id: 'c1',
+      related_snapshot_id: 's1',
+    });
+
+    const r = await service.runMaintenance('admin', { dryRun: true });
+    expect(r.dry_run).toBe(true);
+    expect(r.process_observations.pending_total).toBeGreaterThanOrEqual(1);
+    expect(repo.getUnanalyzedObservations('compile_miss')).toHaveLength(1);
+  });
+
+  it('executed run marks pending compile_miss observations analyzed (may skip proposals)', async () => {
+    repo.insertObservation({
+      observation_id: 'obs-exec',
+      event_type: 'compile_miss',
+      payload: JSON.stringify({ target_files: ['a.ts'], review_comment: 'x' }),
+      related_compile_id: 'c1',
+      related_snapshot_id: 's1',
+    });
+
+    const r = await service.runMaintenance('admin', { dryRun: false });
+    expect(r.dry_run).toBe(false);
+    expect(repo.getUnanalyzedObservations('compile_miss')).toHaveLength(0);
+    // RuleBasedAnalyzer skips when missing_doc is absent → processed count can be 0
+    expect(r.process_observations.processed).toBe(0);
+  });
+
+  it('dry-run pending_total reflects full backlog beyond 50 per type', async () => {
+    for (let i = 0; i < 55; i++) {
+      repo.insertObservation({
+        observation_id: `obs-bulk-${i}`,
+        event_type: 'compile_miss',
+        payload: JSON.stringify({ target_files: ['a.ts'], review_comment: 'x' }),
+        related_compile_id: 'c1',
+        related_snapshot_id: 's1',
+      });
+    }
+    expect(repo.countUnanalyzedObservations('compile_miss')).toBe(55);
+    const r = await service.runMaintenance('admin', { dryRun: true });
+    expect(r.process_observations.pending_by_type.compile_miss).toBe(55);
+    expect(r.process_observations.pending_total).toBe(55);
+  });
+
+  it('processObservations drains backlog beyond default fetch limit', async () => {
+    for (let i = 0; i < 55; i++) {
+      repo.insertObservation({
+        observation_id: `obs-drain-${i}`,
+        event_type: 'compile_miss',
+        payload: JSON.stringify({ target_files: ['a.ts'], review_comment: 'x' }),
+        related_compile_id: 'c1',
+        related_snapshot_id: 's1',
+      });
+    }
+    await service.processObservations('compile_miss', 'admin');
+    expect(repo.countUnanalyzedObservations('compile_miss')).toBe(0);
+  });
 });
 
 // ============================================================

@@ -41,6 +41,32 @@ import type {
 
 export type Surface = 'agent' | 'admin';
 
+/** Result of `runMaintenance` (ADR-014 maintenance CLI). */
+export interface MaintenanceRunResult {
+  dry_run: boolean;
+  process_observations: {
+    pending_by_type: Record<string, number>;
+    pending_total: number;
+    processed?: number;
+    proposals_created?: number;
+    errors?: string[];
+  };
+  sync_docs: {
+    checked: number;
+    up_to_date: number;
+    proposals_created: string[];
+    skipped_pending: string[];
+    not_found: string[];
+    dry_run?: boolean;
+    would_create_proposals?: string[];
+  };
+  archive_observations: {
+    eligible_count: number;
+    archived_count?: number;
+  };
+  check_upgrade: UpgradePreview | { not_found: true; template_id: string } | null;
+}
+
 export class SurfaceViolationError extends Error {
   constructor(tool: string, surface: Surface) {
     super(`Tool '${tool}' is not available on the '${surface}' surface`);
@@ -403,6 +429,62 @@ export class AegisService {
   }
 
   /**
+   * ADR-014: orchestrate process_observations → sync_docs → archive_observations → check_upgrade.
+   * Does not approve proposals (P-3). When `dryRun`, no Canonical mutations except read-only checks.
+   */
+  async runMaintenance(
+    surface: Surface,
+    options: { dryRun: boolean; archiveDays?: number },
+  ): Promise<MaintenanceRunResult> {
+    this.assertAdmin('aegis_maintenance', surface);
+    const dryRun = options.dryRun;
+    const archiveDays = options.archiveDays ?? 90;
+
+    const pending_by_type: Record<string, number> = {};
+    let pending_total = 0;
+    for (const et of this.analyzerRegistry.keys()) {
+      const n = this.repo.countUnanalyzedObservations(et);
+      pending_by_type[et] = n;
+      pending_total += n;
+    }
+
+    let process_observations: MaintenanceRunResult['process_observations'];
+    if (dryRun) {
+      process_observations = { pending_by_type, pending_total };
+    } else {
+      const r = await this.processObservations(undefined, surface);
+      process_observations = {
+        pending_by_type,
+        pending_total,
+        processed: r.processed,
+        proposals_created: r.proposals_created,
+        errors: r.errors,
+      };
+    }
+
+    const sync_docs = this.syncDocs({ dryRun }, surface);
+
+    const eligible_count = this.repo.countObservationsEligibleForArchive(archiveDays);
+    let archive_observations: MaintenanceRunResult['archive_observations'];
+    if (dryRun) {
+      archive_observations = { eligible_count };
+    } else {
+      const archived_count = this.repo.archiveOldObservations(archiveDays);
+      archive_observations = { eligible_count, archived_count };
+    }
+
+    const check_upgrade = this.checkUpgrade(surface);
+
+    return {
+      dry_run: dryRun,
+      process_observations,
+      sync_docs,
+      archive_observations,
+      check_upgrade,
+    };
+  }
+
+  /**
    * List observations with outcome-based filtering.
    * Per ADR-008: outcome is derived from proposal_evidence JOIN, not analyzed_at alone.
    */
@@ -546,9 +628,12 @@ export class AegisService {
    * Synchronize documents that have a source_path with their source files.
    * Detects stale documents via content_hash comparison and creates
    * update_doc proposals with full evidence chain (P-3 compliant).
+   *
+   * When `dryRun` is true, no observations or proposals are written; `would_create_proposals`
+   * lists doc_ids that would receive update_doc proposals.
    */
   syncDocs(
-    params: { doc_ids?: string[] },
+    params: { doc_ids?: string[]; dryRun?: boolean },
     surface: Surface,
   ): {
     checked: number;
@@ -556,6 +641,8 @@ export class AegisService {
     proposals_created: string[];
     skipped_pending: string[];
     not_found: string[];
+    dry_run?: boolean;
+    would_create_proposals?: string[];
   } {
     this.assertAdmin('aegis_sync_docs', surface);
 
@@ -568,6 +655,7 @@ export class AegisService {
     const up_to_date_ids: string[] = [];
     const not_found: string[] = [];
     const skipped_pending: string[] = [];
+    const would_create_proposals: string[] = [];
 
     const observationIds: string[] = [];
     const drafts: Array<{ draft: import('../core/types.js').ProposalDraft; obsId: string }> = [];
@@ -594,6 +682,11 @@ export class AegisService {
       });
       if (hasPending) {
         skipped_pending.push(doc.doc_id);
+        continue;
+      }
+
+      if (params.dryRun) {
+        would_create_proposals.push(doc.doc_id);
         continue;
       }
 
@@ -626,6 +719,18 @@ export class AegisService {
           evidence_observation_ids: [obsId],
         },
       });
+    }
+
+    if (params.dryRun) {
+      return {
+        checked: docs.length,
+        up_to_date: up_to_date_ids.length,
+        proposals_created: [],
+        skipped_pending,
+        not_found,
+        dry_run: true,
+        would_create_proposals,
+      };
     }
 
     if (drafts.length === 0) {
@@ -674,6 +779,10 @@ export class AegisService {
   /**
    * Process pending observations by running the analyzer registry.
    * Per ADR-003 D-2: admin-only explicit operation.
+   *
+   * Drains the queue in batches of 50 (same as {@link Repository.getUnanalyzedObservations} default).
+   * `processed` counts observations completed without analyzer-level failure (excludes
+   * `analysis.errors` entries; skipped rule-based items are not counted as processed).
    */
   async processObservations(
     eventType: ObservationEventType | undefined,
@@ -695,18 +804,22 @@ export class AegisService {
       const analyzer = this.analyzerRegistry.get(et);
       if (!analyzer) continue;
 
-      const unanalyzed = this.repo.getUnanalyzedObservations(et);
-      if (unanalyzed.length === 0) continue;
+      // Process in batches of 50 (getUnanalyzedObservations default limit) until queue is empty.
+      while (true) {
+        const unanalyzed = this.repo.getUnanalyzedObservations(et);
+        if (unanalyzed.length === 0) break;
 
-      try {
-        const { analysis, proposals } = await this.analyzeAndPropose(analyzer, et, surface);
-        totalProcessed += unanalyzed.length - analysis.skipped_observation_ids.length;
-        totalCreated += proposals.created_proposal_ids.length;
-        for (const err of analysis.errors) {
-          allErrors.push(`[${et}] ${err.observation_id}: ${err.reason}`);
+        try {
+          const { analysis, proposals } = await this.analyzeAndPropose(analyzer, et, surface);
+          totalProcessed += unanalyzed.length - analysis.skipped_observation_ids.length - analysis.errors.length;
+          totalCreated += proposals.created_proposal_ids.length;
+          for (const err of analysis.errors) {
+            allErrors.push(`[${et}] ${err.observation_id}: ${err.reason}`);
+          }
+        } catch (e) {
+          allErrors.push(`[${et}] Pipeline error: ${e instanceof Error ? e.message : String(e)}`);
+          break;
         }
-      } catch (e) {
-        allErrors.push(`[${et}] Pipeline error: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 

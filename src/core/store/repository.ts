@@ -283,6 +283,21 @@ export class Repository {
       .all(eventType, limit) as Observation[];
   }
 
+  /** Full pending count (no LIMIT); use for maintenance previews and backlog metrics. */
+  countUnanalyzedObservations(eventType: string): number {
+    const row = this.db
+      .prepare(
+        `
+      SELECT COUNT(*) as cnt FROM observations o
+      WHERE o.event_type = ?
+        AND o.archived_at IS NULL
+        AND o.analyzed_at IS NULL
+    `,
+      )
+      .get(eventType) as { cnt: number };
+    return row.cnt;
+  }
+
   markObservationsAnalyzed(observationIds: string[]): void {
     if (observationIds.length === 0) return;
     const now = new Date().toISOString();
@@ -956,6 +971,27 @@ export class Repository {
     `)
       .run(days);
     return result.changes;
+  }
+
+  /** Same eligibility predicate as {@link archiveOldObservations}, without mutating. */
+  countObservationsEligibleForArchive(days: number): number {
+    const row = this.db
+      .prepare(
+        `
+      SELECT COUNT(*) as cnt FROM observations
+      WHERE archived_at IS NULL
+        AND analyzed_at IS NOT NULL
+        AND created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-' || ? || ' days')
+        AND NOT EXISTS (
+          SELECT 1 FROM proposal_evidence pe
+          JOIN proposals p ON p.proposal_id = pe.proposal_id
+          WHERE pe.observation_id = observations.observation_id
+            AND p.status = 'pending'
+        )
+    `,
+      )
+      .get(days) as { cnt: number };
+    return row.cnt;
   }
 
   getArchivedObservationCount(): number {
