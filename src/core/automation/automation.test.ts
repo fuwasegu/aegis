@@ -217,9 +217,9 @@ describe('RuleBasedAnalyzer', () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  // ── Content gap: compile_miss with target_doc_id (no missing_doc) ──
+  // ── Content gap: compile_miss with target_doc_id (no missing_doc) → skip (ADR-008 D-2) ──
 
-  it('compile_miss with target_doc_id (no missing_doc) produces update_doc draft', async () => {
+  it('compile_miss with target_doc_id (no missing_doc) is skipped per ADR-008 D-2', async () => {
     // Bootstrap an approved document
     repo.insertProposal({
       proposal_id: 'boot',
@@ -245,15 +245,8 @@ describe('RuleBasedAnalyzer', () => {
 
     const result = await analyzer.analyze([ctx]);
 
-    expect(result.drafts).toHaveLength(1);
-    expect(result.skipped_observation_ids).toHaveLength(0);
-    const draft = result.drafts[0];
-    expect(draft.proposal_type).toBe('update_doc');
-    expect(draft.payload.doc_id).toBe('ddd-guide');
-    expect(draft.payload.review_comment).toBe('missing validation section in DDD guide');
-    expect(draft.payload.content).toBeDefined();
-    expect(draft.payload.content_hash).toBeDefined();
-    expect(draft.evidence_observation_ids).toEqual(['obs-gap-1']);
+    expect(result.drafts).toHaveLength(0);
+    expect(result.skipped_observation_ids).toEqual(['obs-gap-1']);
   });
 
   it('compile_miss with target_doc_id but doc not approved → skip', async () => {
