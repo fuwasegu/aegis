@@ -9,6 +9,7 @@
 
 import { closeSync, constants, existsSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
+import { ALL_MIGRATIONS, runMigrations } from './migrations/index.js';
 import { SCHEMA_SQL } from './schema.js';
 
 const LOCK_TIMEOUT_MS = 5_000;
@@ -368,7 +369,7 @@ export async function createDatabase(dbPath: string): Promise<AegisDatabase> {
 
   wrapper.exec(SCHEMA_SQL);
 
-  applyMigrations(wrapper);
+  runMigrations(wrapper, ALL_MIGRATIONS);
 
   const meta = wrapper.prepare('SELECT id FROM knowledge_meta WHERE id = 1').get();
   if (!meta) {
@@ -376,67 +377,6 @@ export async function createDatabase(dbPath: string): Promise<AegisDatabase> {
   }
 
   return wrapper;
-}
-
-function applyMigrations(db: AegisDatabase): void {
-  const hasColumn = (table: string, column: string): boolean => {
-    const cols = db.pragma(`table_info(${table})`) as Array<{ name: string }>;
-    return cols.some((c) => c.name === column);
-  };
-
-  if (!hasColumn('observations', 'analyzed_at')) {
-    db.exec('ALTER TABLE observations ADD COLUMN analyzed_at TEXT');
-  }
-
-  if (!hasColumn('documents', 'source_path')) {
-    db.exec('ALTER TABLE documents ADD COLUMN source_path TEXT');
-  }
-
-  if (!hasColumn('compile_log', 'audit_meta')) {
-    db.exec('ALTER TABLE compile_log ADD COLUMN audit_meta TEXT');
-  }
-
-  // ADR-010: Document Ownership model
-  if (!hasColumn('documents', 'ownership')) {
-    db.exec("ALTER TABLE documents ADD COLUMN ownership TEXT NOT NULL DEFAULT 'standalone'");
-    // Backfill: source_path present → file-anchored
-    db.exec("UPDATE documents SET ownership = 'file-anchored' WHERE source_path IS NOT NULL");
-  }
-
-  // ADR-002: Add document_import to observations CHECK constraint.
-  // SQLite cannot ALTER CHECK constraints, so recreate the table if needed.
-  migrateObservationsCheckConstraint(db);
-}
-
-function migrateObservationsCheckConstraint(db: AegisDatabase): void {
-  const rows = db.pragma('table_info(observations)') as Array<{ name: string }>;
-  if (rows.length === 0) return;
-
-  const sqlRows = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='observations'").get() as
-    | { sql: string }
-    | undefined;
-  if (!sqlRows?.sql) return;
-  if (sqlRows.sql.includes('document_import')) return;
-
-  db.exec(`
-    CREATE TABLE observations_new (
-        observation_id      TEXT PRIMARY KEY,
-        event_type          TEXT NOT NULL
-                            CHECK (event_type IN ('compile_miss', 'review_correction',
-                                                  'pr_merged', 'manual_note', 'document_import')),
-        payload             TEXT NOT NULL,
-        related_compile_id  TEXT,
-        related_snapshot_id TEXT,
-        created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-        archived_at         TEXT,
-        analyzed_at         TEXT
-    );
-    INSERT INTO observations_new SELECT * FROM observations;
-    DROP TABLE observations;
-    ALTER TABLE observations_new RENAME TO observations;
-    CREATE INDEX IF NOT EXISTS idx_observations_type ON observations(event_type);
-    CREATE INDEX IF NOT EXISTS idx_observations_snap ON observations(related_snapshot_id);
-  `);
 }
 
 export async function createInMemoryDatabase(): Promise<AegisDatabase> {
