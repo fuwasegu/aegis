@@ -559,7 +559,7 @@ export class AegisService {
   } {
     this.assertAdmin('aegis_sync_docs', surface);
 
-    let docs = this.repo.getDocumentsWithSourcePath();
+    let docs = this.repo.getFileAnchoredDocuments();
     if (params.doc_ids && params.doc_ids.length > 0) {
       const filterSet = new Set(params.doc_ids);
       docs = docs.filter((d) => filterSet.has(d.doc_id));

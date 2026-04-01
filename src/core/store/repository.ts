@@ -81,8 +81,8 @@ export class Repository {
   insertDocument(doc: Omit<Document, 'created_at' | 'updated_at'>): void {
     this.db
       .prepare(`
-      INSERT INTO documents (doc_id, title, kind, content, content_hash, status, template_origin, source_path)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO documents (doc_id, title, kind, content, content_hash, status, ownership, template_origin, source_path)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
       .run(
         doc.doc_id,
@@ -91,6 +91,7 @@ export class Repository {
         doc.content,
         doc.content_hash,
         doc.status,
+        doc.ownership ?? 'standalone',
         doc.template_origin ?? null,
         doc.source_path ?? null,
       );
@@ -100,9 +101,9 @@ export class Repository {
     return this.db.prepare('SELECT * FROM documents WHERE doc_id = ?').get(docId) as Document | undefined;
   }
 
-  getDocumentsWithSourcePath(): Document[] {
+  getFileAnchoredDocuments(): Document[] {
     return this.db
-      .prepare("SELECT * FROM documents WHERE source_path IS NOT NULL AND status = 'approved'")
+      .prepare("SELECT * FROM documents WHERE ownership = 'file-anchored' AND status = 'approved'")
       .all() as Document[];
   }
 
@@ -772,6 +773,7 @@ export class Repository {
   private _applyNewDoc(payload: Omit<Document, 'created_at' | 'updated_at' | 'status'>): void {
     this.insertDocument({
       ...payload,
+      ownership: payload.ownership ?? (payload.source_path ? 'file-anchored' : 'standalone'),
       template_origin: payload.template_origin ?? null,
       source_path: payload.source_path ?? null,
       status: 'approved',
@@ -784,6 +786,7 @@ export class Repository {
     content_hash: string;
     title?: string;
     source_path?: string;
+    ownership?: string;
   }): void {
     const existing = this.db.prepare('SELECT doc_id FROM documents WHERE doc_id = ?').get(payload.doc_id);
     if (!existing) {
@@ -804,6 +807,10 @@ export class Repository {
     if (payload.source_path !== undefined) {
       sets.push('source_path = ?');
       params.push(payload.source_path);
+    }
+    if (payload.ownership !== undefined) {
+      sets.push('ownership = ?');
+      params.push(payload.ownership);
     }
     params.push(payload.doc_id);
     this.db.prepare(`UPDATE documents SET ${sets.join(', ')} WHERE doc_id = ?`).run(...params);
