@@ -26,8 +26,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { migrateSourcePaths } from './core/paths.js';
 import { createDatabase } from './core/store/database.js';
+import { runInitialBaselineSourcePathMigration } from './core/store/migrations/index.js';
 import { Repository } from './core/store/repository.js';
 import type { IntentTagger } from './core/tagging/tagger.js';
 import { OllamaIntentTagger } from './expansion/intent-tagger.js';
@@ -285,9 +285,9 @@ async function main() {
     }
   }
 
-  // Admin-only: migrate absolute source_path values to repo-relative (INV-6)
+  // Admin-only: migration 001 data step — source_path normalization (INV-6, ADR-013)
   if (surface === 'admin') {
-    migrateSourcePaths(repo, projectRoot);
+    runInitialBaselineSourcePathMigration(repo, projectRoot);
   }
 
   const service = new AegisService(
