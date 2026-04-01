@@ -16,6 +16,8 @@
  *   npx aegis deploy-adapters --targets cursor,codex
  *   npx aegis deploy-adapters --project-root /path/to/project
  *   npx aegis deploy-adapters --db path/to/aegis.db  # Use custom DB path
+ *   npx aegis maintenance                        # process_observations → sync_docs → archive → check_upgrade
+ *   npx aegis maintenance --dry-run                # Report only (no writes)
  *   npx aegis --list-models                      # List available SLM models
  *
  * SLM is disabled by default (ADR-004). Enable with --slm for expanded context.
@@ -37,7 +39,7 @@ import { DEFAULT_MODEL, MODEL_CATALOG } from './expansion/models.js';
 import { OllamaClient } from './expansion/ollama-client.js';
 import { createAegisServer } from './mcp/server.js';
 import type { Surface } from './mcp/services.js';
-import { AegisService } from './mcp/services.js';
+import { AegisService, type MaintenanceRunResult } from './mcp/services.js';
 
 const PACKAGE_VERSION: string = JSON.parse(readFileSync(join(import.meta.dirname, '../package.json'), 'utf-8')).version;
 
@@ -247,11 +249,135 @@ async function handleDeployAdapters(): Promise<void> {
   console.log('');
 }
 
+function printMaintenanceSummary(result: MaintenanceRunResult): void {
+  const mode = result.dry_run ? '(dry-run)' : '';
+  console.log(`\nAegis maintenance ${mode}\n`);
+
+  console.log('1. process_observations');
+  const po = result.process_observations;
+  if (result.dry_run) {
+    console.log(`   pending_total: ${po.pending_total}`);
+    for (const [et, n] of Object.entries(po.pending_by_type)) {
+      console.log(`   - ${et}: ${n}`);
+    }
+  } else {
+    console.log(`   processed (observations): ${po.processed ?? 0}`);
+    console.log(`   proposals_created: ${po.proposals_created ?? 0}`);
+    if (po.errors?.length) {
+      console.log(`   errors:`);
+      for (const e of po.errors) {
+        console.log(`     - ${e}`);
+      }
+    }
+  }
+
+  console.log('\n2. sync_docs');
+  const sd = result.sync_docs;
+  console.log(`   checked: ${sd.checked}, up_to_date: ${sd.up_to_date}`);
+  if (sd.dry_run && sd.would_create_proposals?.length) {
+    console.log(
+      `   would_create_proposals (${sd.would_create_proposals.length}): ${sd.would_create_proposals.join(', ')}`,
+    );
+  } else {
+    console.log(`   proposals_created: ${sd.proposals_created.length}`);
+    if (sd.proposals_created.length) {
+      console.log(`     ${sd.proposals_created.join(', ')}`);
+    }
+  }
+  if (sd.skipped_pending.length) {
+    console.log(`   skipped_pending: ${sd.skipped_pending.join(', ')}`);
+  }
+  if (sd.not_found.length) {
+    console.log(`   not_found: ${sd.not_found.join(', ')}`);
+  }
+
+  console.log('\n3. archive_observations');
+  const ar = result.archive_observations;
+  console.log(`   eligible (older than threshold, no pending block): ${ar.eligible_count}`);
+  if (!result.dry_run && ar.archived_count !== undefined) {
+    console.log(`   archived: ${ar.archived_count}`);
+  }
+
+  console.log('\n4. check_upgrade');
+  const cu = result.check_upgrade;
+  if (!cu) {
+    console.log('   (no init manifest or no template)');
+  } else if ('not_found' in cu && cu.not_found) {
+    console.log(`   no upgrade preview (template_id: ${cu.template_id})`);
+  } else if ('has_changes' in cu) {
+    console.log(`   has_changes: ${cu.has_changes}, template_id: ${cu.template_id}`);
+  } else {
+    console.log('   (unexpected check_upgrade shape)');
+  }
+
+  console.log('');
+}
+
+async function handleMaintenance(): Promise<void> {
+  const args = process.argv.slice(3);
+  let projectRoot = process.cwd();
+  let dryRun = false;
+  let archiveDays = 90;
+  let customDbPath: string | undefined;
+  let templatesRoot = join(import.meta.dirname, '../templates');
+  const extraTemplateDirs: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case '--dry-run':
+        dryRun = true;
+        break;
+      case '--days':
+        archiveDays = parseInt(args[++i], 10);
+        if (Number.isNaN(archiveDays) || archiveDays < 1) {
+          console.error('[aegis] --days must be a positive integer');
+          process.exit(1);
+        }
+        break;
+      case '--project-root':
+        projectRoot = resolve(args[++i]);
+        break;
+      case '--db':
+        customDbPath = args[++i];
+        break;
+      case '--templates':
+        templatesRoot = args[++i];
+        break;
+      case '--template-dir':
+        extraTemplateDirs.push(args[++i]);
+        break;
+    }
+  }
+
+  const dbPath = customDbPath ?? join(projectRoot, DEFAULT_DB_PATH);
+  if (!existsSync(dbPath)) {
+    console.error(`[aegis] Database not found at ${dbPath}`);
+    console.error('[aegis] Run aegis init first, or specify --project-root / --db.');
+    process.exit(1);
+  }
+
+  const db = await createDatabase(dbPath);
+  const repo = new Repository(db);
+  // Dry-run must not mutate Canonical; skip ADR-013 source_path baseline (same as avoiding writes in runMaintenance).
+  if (repo.isInitialized() && !dryRun) {
+    runInitialBaselineSourcePathMigration(repo, projectRoot);
+  }
+
+  const service = new AegisService(repo, templatesRoot, null, extraTemplateDirs, false, projectRoot);
+  const result = await service.runMaintenance('admin', { dryRun, archiveDays });
+  printMaintenanceSummary(result);
+}
+
 async function main() {
   const subcommand = process.argv[2];
 
   if (subcommand === 'deploy-adapters') {
     handleDeployAdapters();
+    return;
+  }
+
+  if (subcommand === 'maintenance') {
+    await handleMaintenance();
     return;
   }
 

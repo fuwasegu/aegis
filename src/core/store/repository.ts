@@ -958,6 +958,27 @@ export class Repository {
     return result.changes;
   }
 
+  /** Same eligibility predicate as {@link archiveOldObservations}, without mutating. */
+  countObservationsEligibleForArchive(days: number): number {
+    const row = this.db
+      .prepare(
+        `
+      SELECT COUNT(*) as cnt FROM observations
+      WHERE archived_at IS NULL
+        AND analyzed_at IS NOT NULL
+        AND created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-' || ? || ' days')
+        AND NOT EXISTS (
+          SELECT 1 FROM proposal_evidence pe
+          JOIN proposals p ON p.proposal_id = pe.proposal_id
+          WHERE pe.observation_id = observations.observation_id
+            AND p.status = 'pending'
+        )
+    `,
+      )
+      .get(days) as { cnt: number };
+    return row.cnt;
+  }
+
   getArchivedObservationCount(): number {
     const row = this.db.prepare('SELECT COUNT(*) as cnt FROM observations WHERE archived_at IS NOT NULL').get() as {
       cnt: number;
