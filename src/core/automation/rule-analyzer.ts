@@ -11,13 +11,10 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import type { Repository } from '../store/repository.js';
 import type { AnalysisContext, AnalysisResult, ProposalDraft } from '../types.js';
 import type { ObservationAnalyzer } from './analyzer.js';
 
 export class RuleBasedAnalyzer implements ObservationAnalyzer {
-  constructor(private _repo: Repository) {}
-
   async analyze(contexts: AnalysisContext[]): Promise<AnalysisResult> {
     const drafts: ProposalDraft[] = [];
     const skipped_observation_ids: string[] = [];

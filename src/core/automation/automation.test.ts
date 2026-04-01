@@ -48,7 +48,7 @@ describe('RuleBasedAnalyzer', () => {
   beforeEach(async () => {
     db = await createInMemoryDatabase();
     repo = new Repository(db);
-    analyzer = new RuleBasedAnalyzer(repo);
+    analyzer = new RuleBasedAnalyzer();
   });
 
   it('compile_miss with missing_doc produces add_edge draft', async () => {
@@ -1037,7 +1037,7 @@ describe('AegisService — analyzeAndPropose', () => {
       'agent',
     );
 
-    const analyzer = new RuleBasedAnalyzer(repo);
+    const analyzer = new RuleBasedAnalyzer();
     const result = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
 
     expect(result.analysis.drafts).toHaveLength(1);
@@ -1074,7 +1074,7 @@ describe('AegisService — analyzeAndPropose', () => {
       'agent',
     );
 
-    const analyzer = new RuleBasedAnalyzer(repo);
+    const analyzer = new RuleBasedAnalyzer();
 
     const first = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
     expect(first.proposals.created_proposal_ids).toHaveLength(1);
@@ -1117,7 +1117,7 @@ describe('AegisService — analyzeAndPropose', () => {
       'agent',
     );
 
-    const analyzer = new RuleBasedAnalyzer(repo);
+    const analyzer = new RuleBasedAnalyzer();
 
     // First run: processes both, skips the first, creates proposal for second
     const first = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
@@ -1147,7 +1147,7 @@ describe('AegisService — analyzeAndPropose', () => {
       'agent',
     );
 
-    const analyzer = new RuleBasedAnalyzer(repo);
+    const analyzer = new RuleBasedAnalyzer();
 
     // First analysis → proposal created
     const first = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
@@ -1163,7 +1163,7 @@ describe('AegisService — analyzeAndPropose', () => {
   });
 
   it('agent surface cannot call analyzeAndPropose', async () => {
-    const analyzer = new RuleBasedAnalyzer(repo);
+    const analyzer = new RuleBasedAnalyzer();
     await expect(adminService.analyzeAndPropose(analyzer, 'compile_miss', 'agent')).rejects.toThrow(
       SurfaceViolationError,
     );
@@ -1224,7 +1224,7 @@ describe('AegisService — analyzeAndPropose', () => {
       'agent',
     );
 
-    const analyzer = new RuleBasedAnalyzer(repo);
+    const analyzer = new RuleBasedAnalyzer();
     const result = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
 
     expect(result.analysis.drafts).toHaveLength(2);
@@ -1256,7 +1256,7 @@ describe('AegisService — analyzeAndPropose', () => {
       'agent',
     );
 
-    const analyzer = new RuleBasedAnalyzer(repo);
+    const analyzer = new RuleBasedAnalyzer();
 
     // First analysis: 2 proposals created
     const first = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
@@ -1572,7 +1572,7 @@ describe('AegisService — analyzeAndPropose', () => {
     expect(unanalyzed).toHaveLength(1);
 
     // Retry with a working analyzer succeeds
-    const analyzer = new RuleBasedAnalyzer(repo);
+    const analyzer = new RuleBasedAnalyzer();
     const result = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
     expect(result.proposals.created_proposal_ids).toHaveLength(1);
   });
@@ -1621,7 +1621,7 @@ describe('AegisService — analyzeAndPropose', () => {
     expect(unanalyzed).toHaveLength(1);
 
     // Retry with a correct analyzer succeeds
-    const analyzer = new RuleBasedAnalyzer(repo);
+    const analyzer = new RuleBasedAnalyzer();
     const result = await adminService.analyzeAndPropose(analyzer, 'compile_miss', 'admin');
     expect(result.proposals.created_proposal_ids).toHaveLength(1);
   });
