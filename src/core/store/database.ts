@@ -409,12 +409,12 @@ function applyMigrations(db: AegisDatabase): void {
 }
 
 function migrateObservationsCheckConstraint(db: AegisDatabase): void {
-  const rows = db.pragma("table_info(observations)") as Array<{ name: string }>;
+  const rows = db.pragma('table_info(observations)') as Array<{ name: string }>;
   if (rows.length === 0) return;
 
-  const sqlRows = db.prepare(
-    "SELECT sql FROM sqlite_master WHERE type='table' AND name='observations'"
-  ).get() as { sql: string } | undefined;
+  const sqlRows = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='observations'").get() as
+    | { sql: string }
+    | undefined;
   if (!sqlRows?.sql) return;
   if (sqlRows.sql.includes('document_import')) return;
 
