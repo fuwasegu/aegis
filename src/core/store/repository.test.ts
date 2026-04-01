@@ -578,41 +578,55 @@ describe('Repository', () => {
       expect(doc?.source_path).toBeNull();
     });
 
-    it('getDocumentsWithSourcePath returns only approved docs with source_path', () => {
+    it('getFileAnchoredDocuments returns only approved file-anchored docs', () => {
       repo.insertDocument({
-        doc_id: 'has-sp',
-        title: 'Has',
+        doc_id: 'anchored',
+        title: 'Anchored',
         kind: 'guideline',
         content: 'c1',
         content_hash: hash('c1'),
         status: 'approved',
+        ownership: 'file-anchored',
         template_origin: null,
         source_path: '/a.md',
       });
       repo.insertDocument({
-        doc_id: 'no-sp',
-        title: 'No',
+        doc_id: 'standalone-with-sp',
+        title: 'Standalone with source_path',
         kind: 'guideline',
         content: 'c2',
         content_hash: hash('c2'),
         status: 'approved',
+        ownership: 'standalone',
+        template_origin: null,
+        source_path: '/b.md',
+      });
+      repo.insertDocument({
+        doc_id: 'standalone-no-sp',
+        title: 'Standalone no source_path',
+        kind: 'guideline',
+        content: 'c3',
+        content_hash: hash('c3'),
+        status: 'approved',
+        ownership: 'standalone',
         template_origin: null,
         source_path: null,
       });
       repo.insertDocument({
-        doc_id: 'dep-sp',
-        title: 'Dep',
+        doc_id: 'anchored-deprecated',
+        title: 'Deprecated anchored',
         kind: 'guideline',
-        content: 'c3',
-        content_hash: hash('c3'),
+        content: 'c4',
+        content_hash: hash('c4'),
         status: 'deprecated',
+        ownership: 'file-anchored',
         template_origin: null,
-        source_path: '/b.md',
+        source_path: '/c.md',
       });
 
-      const result = repo.getDocumentsWithSourcePath();
+      const result = repo.getFileAnchoredDocuments();
       expect(result).toHaveLength(1);
-      expect(result[0].doc_id).toBe('has-sp');
+      expect(result[0].doc_id).toBe('anchored');
     });
 
     it('_applyUpdateDoc updates deprecated doc to approved', () => {

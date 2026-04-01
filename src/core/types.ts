@@ -9,6 +9,7 @@
 
 export type DocumentKind = 'guideline' | 'pattern' | 'constraint' | 'template' | 'reference';
 export type EntityStatus = 'draft' | 'proposed' | 'approved' | 'deprecated';
+export type DocOwnership = 'file-anchored' | 'standalone' | 'derived';
 
 export interface Document {
   doc_id: string;
@@ -17,6 +18,7 @@ export interface Document {
   content: string;
   content_hash: string;
   status: EntityStatus;
+  ownership: DocOwnership;
   template_origin: string | null;
   source_path: string | null;
   created_at: string;

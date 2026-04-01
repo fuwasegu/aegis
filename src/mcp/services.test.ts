@@ -1448,6 +1448,7 @@ describe('AegisService — syncDocs', () => {
       content,
       content_hash: contentHash,
       status: 'approved',
+      ownership: 'file-anchored',
       template_origin: null,
       source_path: sourcePath,
     });

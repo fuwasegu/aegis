@@ -395,6 +395,48 @@ function applyMigrations(db: AegisDatabase): void {
   if (!hasColumn('compile_log', 'audit_meta')) {
     db.exec('ALTER TABLE compile_log ADD COLUMN audit_meta TEXT');
   }
+
+  // ADR-010: Document Ownership model
+  if (!hasColumn('documents', 'ownership')) {
+    db.exec("ALTER TABLE documents ADD COLUMN ownership TEXT NOT NULL DEFAULT 'standalone'");
+    // Backfill: source_path present → file-anchored
+    db.exec("UPDATE documents SET ownership = 'file-anchored' WHERE source_path IS NOT NULL");
+  }
+
+  // ADR-002: Add document_import to observations CHECK constraint.
+  // SQLite cannot ALTER CHECK constraints, so recreate the table if needed.
+  migrateObservationsCheckConstraint(db);
+}
+
+function migrateObservationsCheckConstraint(db: AegisDatabase): void {
+  const rows = db.pragma("table_info(observations)") as Array<{ name: string }>;
+  if (rows.length === 0) return;
+
+  const sqlRows = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='observations'"
+  ).get() as { sql: string } | undefined;
+  if (!sqlRows?.sql) return;
+  if (sqlRows.sql.includes('document_import')) return;
+
+  db.exec(`
+    CREATE TABLE observations_new (
+        observation_id      TEXT PRIMARY KEY,
+        event_type          TEXT NOT NULL
+                            CHECK (event_type IN ('compile_miss', 'review_correction',
+                                                  'pr_merged', 'manual_note', 'document_import')),
+        payload             TEXT NOT NULL,
+        related_compile_id  TEXT,
+        related_snapshot_id TEXT,
+        created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        archived_at         TEXT,
+        analyzed_at         TEXT
+    );
+    INSERT INTO observations_new SELECT * FROM observations;
+    DROP TABLE observations;
+    ALTER TABLE observations_new RENAME TO observations;
+    CREATE INDEX IF NOT EXISTS idx_observations_type ON observations(event_type);
+    CREATE INDEX IF NOT EXISTS idx_observations_snap ON observations(related_snapshot_id);
+  `);
 }
 
 export async function createInMemoryDatabase(): Promise<AegisDatabase> {
