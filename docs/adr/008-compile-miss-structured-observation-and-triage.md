@@ -42,10 +42,13 @@ expanded / template 由来のドキュメントは対象外である。
 ### D-2: `target_doc_id` からの自動 proposal 生成は行わない
 
 `target_doc_id` は構造化メタデータとしてのみ保存する。
-RuleBasedAnalyzer のコード変更は行わない。
 
 既存の `missing_doc` → `add_edge` パスは変更せずそのまま残す。
 `target_doc_id` は将来の拡張ポイントとして予約する。
+
+> **015-01 で適用済み**: `RuleBasedAnalyzer` が `target_doc_id` のみの compile_miss に対して
+> placeholder 付き `update_doc` proposal を生成していた暫定実装を除去し、skip に変更した。
+> これにより D-2 の方針と実装が一致する。
 
 #### 却下した自動 proposal パス
 

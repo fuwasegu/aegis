@@ -5,20 +5,18 @@
  *
  * Rules:
  * - compile_miss with missing_doc → propose add_edge (path_requires)
- * - compile_miss with target_doc_id (no missing_doc) → propose update_doc (content gap)
+ * - compile_miss with target_doc_id (no missing_doc) → skip (ADR-008 D-2: no auto-proposal)
  * - compile_miss without missing_doc or target_doc_id → skip (cannot auto-propose)
  * - non-compile_miss → skip
  */
 
-import { createHash } from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
 import type { Repository } from '../store/repository.js';
 import type { AnalysisContext, AnalysisResult, ProposalDraft } from '../types.js';
-import { PENDING_CONTENT_PLACEHOLDER } from '../types.js';
 import type { ObservationAnalyzer } from './analyzer.js';
 
 export class RuleBasedAnalyzer implements ObservationAnalyzer {
-  constructor(private repo: Repository) {}
+  constructor(private _repo: Repository) {}
 
   async analyze(contexts: AnalysisContext[]): Promise<AnalysisResult> {
     const drafts: ProposalDraft[] = [];
@@ -68,15 +66,11 @@ export class RuleBasedAnalyzer implements ObservationAnalyzer {
       );
     }
 
-    // Rule 2: target_doc_id present (no missing_doc) → update_doc (content gap)
-    if (payload.target_doc_id) {
-      return this.proposeUpdateDoc(
-        { target_doc_id: payload.target_doc_id, review_comment: payload.review_comment },
-        ctx,
-      );
-    }
+    // Rule 2: target_doc_id only (no missing_doc) → skip
+    // ADR-008 D-2: target_doc_id is structured metadata only; no auto-proposal.
+    // Future: delegate to 015-02 doc_gap_detected derived observation.
 
-    // Neither field → skip
+    // Neither field or target_doc_id only → skip
     return [];
   }
 
@@ -102,32 +96,6 @@ export class RuleBasedAnalyzer implements ObservationAnalyzer {
       },
       evidence_observation_ids: [ctx.observation.observation_id],
     }));
-  }
-
-  private proposeUpdateDoc(
-    payload: { target_doc_id: string; review_comment: string },
-    ctx: AnalysisContext,
-  ): ProposalDraft[] {
-    // Verify target doc exists and is approved
-    const docs = this.repo.getApprovedDocumentsByIds([payload.target_doc_id]);
-    if (docs.length === 0) {
-      return [];
-    }
-
-    const contentHash = createHash('sha256').update(PENDING_CONTENT_PLACEHOLDER).digest('hex');
-
-    return [
-      {
-        proposal_type: 'update_doc' as const,
-        payload: {
-          doc_id: payload.target_doc_id,
-          content: PENDING_CONTENT_PLACEHOLDER,
-          content_hash: contentHash,
-          review_comment: payload.review_comment,
-        },
-        evidence_observation_ids: [ctx.observation.observation_id],
-      },
-    ];
   }
 
   /**

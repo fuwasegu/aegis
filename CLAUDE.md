@@ -95,7 +95,7 @@ templates/      — Reserved for custom user templates (--template-dir)
 - SQLite + recursive CTE for DAG traversal (no graph DB needed)
 - content_hash is always server-computed (never trust client-provided hashes)
 - observe events are validated per event_type at service boundary
-- Automation: `compile_miss` with `missing_doc` → `add_edge`, `compile_miss` with `target_doc_id` (no `missing_doc`) → `update_doc` (content gap, placeholder content — human provides via modifications) (RuleBasedAnalyzer), `review_correction` → `update_doc` (ReviewCorrectionAnalyzer)
+- Automation: `compile_miss` with `missing_doc` → `add_edge`, `compile_miss` with `target_doc_id` (no `missing_doc`) → skip (ADR-008 D-2: no auto-proposal) (RuleBasedAnalyzer), `review_correction` → `update_doc` (ReviewCorrectionAnalyzer)
 - `review_correction` requires both `target_doc_id` + `proposed_content` for automation (otherwise skipped)
 - `pr_merged` → `add_edge` for uncovered paths (PrMergedAnalyzer)
 - `manual_note` → `update_doc` or `new_doc` depending on hints (ManualNoteAnalyzer)
