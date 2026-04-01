@@ -443,7 +443,7 @@ export class AegisService {
     const pending_by_type: Record<string, number> = {};
     let pending_total = 0;
     for (const et of this.analyzerRegistry.keys()) {
-      const n = this.repo.getUnanalyzedObservations(et).length;
+      const n = this.repo.countUnanalyzedObservations(et);
       pending_by_type[et] = n;
       pending_total += n;
     }
@@ -779,6 +779,10 @@ export class AegisService {
   /**
    * Process pending observations by running the analyzer registry.
    * Per ADR-003 D-2: admin-only explicit operation.
+   *
+   * Drains the queue in batches of 50 (same as {@link Repository.getUnanalyzedObservations} default).
+   * `processed` counts observations completed without analyzer-level failure (excludes
+   * `analysis.errors` entries; skipped rule-based items are not counted as processed).
    */
   async processObservations(
     eventType: ObservationEventType | undefined,
@@ -800,18 +804,22 @@ export class AegisService {
       const analyzer = this.analyzerRegistry.get(et);
       if (!analyzer) continue;
 
-      const unanalyzed = this.repo.getUnanalyzedObservations(et);
-      if (unanalyzed.length === 0) continue;
+      // Process in batches of 50 (getUnanalyzedObservations default limit) until queue is empty.
+      while (true) {
+        const unanalyzed = this.repo.getUnanalyzedObservations(et);
+        if (unanalyzed.length === 0) break;
 
-      try {
-        const { analysis, proposals } = await this.analyzeAndPropose(analyzer, et, surface);
-        totalProcessed += unanalyzed.length - analysis.skipped_observation_ids.length;
-        totalCreated += proposals.created_proposal_ids.length;
-        for (const err of analysis.errors) {
-          allErrors.push(`[${et}] ${err.observation_id}: ${err.reason}`);
+        try {
+          const { analysis, proposals } = await this.analyzeAndPropose(analyzer, et, surface);
+          totalProcessed += unanalyzed.length - analysis.skipped_observation_ids.length - analysis.errors.length;
+          totalCreated += proposals.created_proposal_ids.length;
+          for (const err of analysis.errors) {
+            allErrors.push(`[${et}] ${err.observation_id}: ${err.reason}`);
+          }
+        } catch (e) {
+          allErrors.push(`[${et}] Pipeline error: ${e instanceof Error ? e.message : String(e)}`);
+          break;
         }
-      } catch (e) {
-        allErrors.push(`[${et}] Pipeline error: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 

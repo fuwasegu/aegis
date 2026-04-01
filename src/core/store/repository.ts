@@ -283,6 +283,21 @@ export class Repository {
       .all(eventType, limit) as Observation[];
   }
 
+  /** Full pending count (no LIMIT); use for maintenance previews and backlog metrics. */
+  countUnanalyzedObservations(eventType: string): number {
+    const row = this.db
+      .prepare(
+        `
+      SELECT COUNT(*) as cnt FROM observations o
+      WHERE o.event_type = ?
+        AND o.archived_at IS NULL
+        AND o.analyzed_at IS NULL
+    `,
+      )
+      .get(eventType) as { cnt: number };
+    return row.cnt;
+  }
+
   markObservationsAnalyzed(observationIds: string[]): void {
     if (observationIds.length === 0) return;
     const now = new Date().toISOString();

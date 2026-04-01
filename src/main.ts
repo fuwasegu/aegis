@@ -366,6 +366,9 @@ async function handleMaintenance(): Promise<void> {
   const service = new AegisService(repo, templatesRoot, null, extraTemplateDirs, false, projectRoot);
   const result = await service.runMaintenance('admin', { dryRun, archiveDays });
   printMaintenanceSummary(result);
+  if (!dryRun && result.process_observations.errors?.length) {
+    process.exit(1);
+  }
 }
 
 async function main() {

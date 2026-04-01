@@ -1639,6 +1639,36 @@ describe('AegisService — maintenance', () => {
     // RuleBasedAnalyzer skips when missing_doc is absent → processed count can be 0
     expect(r.process_observations.processed).toBe(0);
   });
+
+  it('dry-run pending_total reflects full backlog beyond 50 per type', async () => {
+    for (let i = 0; i < 55; i++) {
+      repo.insertObservation({
+        observation_id: `obs-bulk-${i}`,
+        event_type: 'compile_miss',
+        payload: JSON.stringify({ target_files: ['a.ts'], review_comment: 'x' }),
+        related_compile_id: 'c1',
+        related_snapshot_id: 's1',
+      });
+    }
+    expect(repo.countUnanalyzedObservations('compile_miss')).toBe(55);
+    const r = await service.runMaintenance('admin', { dryRun: true });
+    expect(r.process_observations.pending_by_type.compile_miss).toBe(55);
+    expect(r.process_observations.pending_total).toBe(55);
+  });
+
+  it('processObservations drains backlog beyond default fetch limit', async () => {
+    for (let i = 0; i < 55; i++) {
+      repo.insertObservation({
+        observation_id: `obs-drain-${i}`,
+        event_type: 'compile_miss',
+        payload: JSON.stringify({ target_files: ['a.ts'], review_comment: 'x' }),
+        related_compile_id: 'c1',
+        related_snapshot_id: 's1',
+      });
+    }
+    await service.processObservations('compile_miss', 'admin');
+    expect(repo.countUnanalyzedObservations('compile_miss')).toBe(0);
+  });
 });
 
 // ============================================================
