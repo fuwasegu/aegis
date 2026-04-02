@@ -282,8 +282,14 @@ function templatelessPreview(
  * init_confirm — Stage 3+4: verify preview_hash, create bootstrap proposal, approve, record manifest.
  *
  * Reuses repo.approveProposal() — no Canonical bypass.
+ * @param projectRoot Same root as init_detect (source_path normalization / containment).
  */
-export function initConfirm(repo: Repository, preview: InitPreview, confirmPreviewHash: string): CanonicalVersion {
+export function initConfirm(
+  repo: Repository,
+  preview: InitPreview,
+  confirmPreviewHash: string,
+  projectRoot: string,
+): CanonicalVersion {
   // Guard: already initialized
   if (repo.isInitialized()) {
     throw new AlreadyInitializedError();
@@ -316,7 +322,7 @@ export function initConfirm(repo: Repository, preview: InitPreview, confirmPrevi
   });
 
   // ── Stage 4: approve (reuses standard governance) ──
-  const result = repo.approveProposal(proposalId);
+  const result = repo.approveProposal(proposalId, undefined, projectRoot);
 
   // Record template provenance on bootstrapped documents (ADR-006 D-7)
   const provenanceTag = `${preview.template_id}:${preview.template_version}`;

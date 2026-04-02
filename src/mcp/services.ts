@@ -58,6 +58,10 @@ export interface MaintenanceRunResult {
     proposals_created: string[];
     skipped_pending: string[];
     not_found: string[];
+    /**
+     * Skipped file-anchored docs: missing/blank source_path, path outside project, or resolveSourcePath failure.
+     */
+    skipped_invalid_anchor: string[];
     dry_run?: boolean;
     would_create_proposals?: string[];
   };
@@ -351,7 +355,7 @@ export class AegisService {
     surface: Surface,
   ): CanonicalVersion {
     this.assertAdmin('aegis_approve_proposal', surface);
-    return this.repo.approveProposal(proposalId, modifications);
+    return this.repo.approveProposal(proposalId, modifications, this.projectRoot);
   }
 
   rejectProposal(proposalId: string, reason: string, surface: Surface): { proposal_id: string; status: 'rejected' } {
@@ -418,8 +422,8 @@ export class AegisService {
       throw new Error(`No cached preview found for hash '${previewHash.slice(0, 12)}...'. Run init_detect first.`);
     }
 
-    const { preview } = cached;
-    const result = coreInitConfirm(this.repo, preview, previewHash);
+    const { preview, projectRoot } = cached;
+    const result = coreInitConfirm(this.repo, preview, previewHash, projectRoot);
 
     this.previewCache.delete(previewHash);
 
@@ -664,9 +668,11 @@ export class AegisService {
   }
 
   /**
-   * Synchronize documents that have a source_path with their source files.
+   * Synchronize approved **file-anchored** documents with repo files (ADR-010).
    * Detects stale documents via content_hash comparison and creates
    * update_doc proposals with full evidence chain (P-3 compliant).
+   *
+   * `skipped_invalid_anchor`: missing/blank `source_path`, path outside `projectRoot`, or `resolveSourcePath` failure.
    *
    * When `dryRun` is true, no observations or proposals are written; `would_create_proposals`
    * lists doc_ids that would receive update_doc proposals.
@@ -680,6 +686,7 @@ export class AegisService {
     proposals_created: string[];
     skipped_pending: string[];
     not_found: string[];
+    skipped_invalid_anchor: string[];
     dry_run?: boolean;
     would_create_proposals?: string[];
   } {
@@ -694,13 +701,24 @@ export class AegisService {
     const up_to_date_ids: string[] = [];
     const not_found: string[] = [];
     const skipped_pending: string[] = [];
+    const skipped_invalid_anchor: string[] = [];
     const would_create_proposals: string[] = [];
 
     const observationIds: string[] = [];
     const drafts: Array<{ draft: import('../core/types.js').ProposalDraft; obsId: string }> = [];
 
     for (const doc of docs) {
-      const absPath = resolveSourcePath(doc.source_path!, this.projectRoot);
+      if (doc.source_path == null || String(doc.source_path).trim() === '') {
+        skipped_invalid_anchor.push(doc.doc_id);
+        continue;
+      }
+      let absPath: string;
+      try {
+        absPath = resolveSourcePath(doc.source_path, this.projectRoot);
+      } catch {
+        skipped_invalid_anchor.push(doc.doc_id);
+        continue;
+      }
       if (!existsSync(absPath)) {
         not_found.push(doc.doc_id);
         continue;
@@ -767,6 +785,7 @@ export class AegisService {
         proposals_created: [],
         skipped_pending,
         not_found,
+        skipped_invalid_anchor,
         dry_run: true,
         would_create_proposals,
       };
@@ -779,6 +798,7 @@ export class AegisService {
         proposals_created: [],
         skipped_pending,
         not_found,
+        skipped_invalid_anchor,
       };
     }
 
@@ -808,6 +828,7 @@ export class AegisService {
         proposals_created: result.created_proposal_ids,
         skipped_pending,
         not_found,
+        skipped_invalid_anchor,
       };
     } catch (err) {
       this.repo.resetObservationsAnalyzed(observationIds);
