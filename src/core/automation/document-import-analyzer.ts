@@ -75,6 +75,7 @@ export class DocumentImportAnalyzer implements ObservationAnalyzer {
       }
       if (payload.source_path) {
         updatePayload.source_path = payload.source_path;
+        updatePayload.ownership = 'file-anchored';
       }
       if (payload.tags && payload.tags.length > 0) {
         updatePayload.tags = payload.tags;

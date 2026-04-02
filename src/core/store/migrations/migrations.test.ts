@@ -2,10 +2,16 @@ import initSqlJs from 'sql.js';
 import { describe, expect, it } from 'vitest';
 import { AegisDatabase, createInMemoryDatabase } from '../database.js';
 import { migrateObservationsCheckConstraint } from './001_initial_baseline.js';
-import { ALL_MIGRATIONS, runMigrations, upAddAuditMeta, upAddDocGapEventType } from './index.js';
+import {
+  ALL_MIGRATIONS,
+  runMigrations,
+  upAddAuditMeta,
+  upAddDocGapEventType,
+  upAddDocumentsOwnership,
+} from './index.js';
 
 describe('schema migrations (ADR-013)', () => {
-  it('records migrations 001–003 on first open', async () => {
+  it('records migrations 001–004 on first open', async () => {
     const db = await createInMemoryDatabase();
     const rows = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all() as {
       version: number;
@@ -15,6 +21,7 @@ describe('schema migrations (ADR-013)', () => {
       { version: 1, name: 'initial_baseline' },
       { version: 2, name: 'add_audit_meta' },
       { version: 3, name: 'add_doc_gap_event_type' },
+      { version: 4, name: 'add_documents_ownership' },
     ]);
   });
 
@@ -24,8 +31,8 @@ describe('schema migrations (ADR-013)', () => {
     const rows = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as {
       version: number;
     }[];
-    expect(rows).toHaveLength(3);
-    expect(rows.map((r) => r.version)).toEqual([1, 2, 3]);
+    expect(rows).toHaveLength(4);
+    expect(rows.map((r) => r.version)).toEqual([1, 2, 3, 4]);
   });
 
   it('applies baseline DDL including compile_log.audit_meta', async () => {
@@ -143,5 +150,35 @@ describe('schema migrations (ADR-013)', () => {
       sql: string;
     };
     expect(master.sql).toContain('doc_gap_detected');
+  });
+
+  it('upAddDocumentsOwnership adds ownership when documents predates ADR-010', async () => {
+    const SQL = await initSqlJs();
+    const raw = new SQL.Database();
+    raw.run('PRAGMA foreign_keys = ON');
+    raw.exec(`
+      CREATE TABLE documents (
+        doc_id          TEXT PRIMARY KEY,
+        title           TEXT NOT NULL,
+        kind            TEXT NOT NULL,
+        content         TEXT NOT NULL,
+        content_hash    TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'approved',
+        template_origin TEXT,
+        source_path     TEXT,
+        created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      INSERT INTO documents (doc_id, title, kind, content, content_hash, status, source_path)
+        VALUES ('a', 'A', 'guideline', 'c', 'h', 'approved', 'docs/x.md');
+      INSERT INTO documents (doc_id, title, kind, content, content_hash, status, source_path)
+        VALUES ('b', 'B', 'guideline', 'c2', 'h2', 'approved', NULL);
+    `);
+    const db = new AegisDatabase(raw, null, SQL);
+    upAddDocumentsOwnership(db);
+    const rowA = db.prepare("SELECT ownership FROM documents WHERE doc_id = 'a'").get() as { ownership: string };
+    const rowB = db.prepare("SELECT ownership FROM documents WHERE doc_id = 'b'").get() as { ownership: string };
+    expect(rowA.ownership).toBe('file-anchored');
+    expect(rowB.ownership).toBe('standalone');
   });
 });

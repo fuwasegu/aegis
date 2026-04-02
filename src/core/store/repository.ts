@@ -4,9 +4,11 @@
  */
 
 import { createHash } from 'node:crypto';
+import { normalizeSourcePath } from '../paths.js';
 import {
   type CanonicalVersion,
   type CompileLog,
+  type DocOwnership,
   type Document,
   type Edge,
   type EdgeSourceType,
@@ -24,6 +26,27 @@ import {
   type TagMapping,
 } from '../types.js';
 import type { AegisDatabase } from './database.js';
+
+const DOC_OWNERSHIP_SET = new Set<DocOwnership>(['file-anchored', 'standalone', 'derived']);
+
+/** Validates payload / modification ownership strings (legacy DBs may lack schema CHECK). */
+function normalizeDocOwnership(raw: unknown): DocOwnership {
+  if (typeof raw !== 'string' || !DOC_OWNERSHIP_SET.has(raw as DocOwnership)) {
+    throw new Error(
+      `Invalid ownership: must be one of ${[...DOC_OWNERSHIP_SET].join(', ')} (got ${JSON.stringify(raw)})`,
+    );
+  }
+  return raw as DocOwnership;
+}
+
+/** ADR-010: file-anchored docs participate in sync_docs and require a concrete source_path. */
+function assertOwnershipSourcePathInvariant(ownership: DocOwnership, sourcePath: string | null | undefined): void {
+  if (ownership === 'file-anchored') {
+    if (sourcePath == null || String(sourcePath).trim() === '') {
+      throw new Error("Invalid document state: ownership 'file-anchored' requires a non-empty source_path");
+    }
+  }
+}
 
 export class CycleDetectedError extends Error {
   constructor(sourceDocId: string, targetDocId: string) {
@@ -79,6 +102,9 @@ export class Repository {
   }
 
   insertDocument(doc: Omit<Document, 'created_at' | 'updated_at'>): void {
+    const ownership = normalizeDocOwnership(doc.ownership ?? 'standalone');
+    const sourcePath = doc.source_path ?? null;
+    assertOwnershipSourcePathInvariant(ownership, sourcePath);
     this.db
       .prepare(`
       INSERT INTO documents (doc_id, title, kind, content, content_hash, status, ownership, template_origin, source_path)
@@ -91,9 +117,9 @@ export class Repository {
         doc.content,
         doc.content_hash,
         doc.status,
-        doc.ownership ?? 'standalone',
+        ownership,
         doc.template_origin ?? null,
-        doc.source_path ?? null,
+        sourcePath,
       );
   }
 
@@ -625,7 +651,7 @@ export class Repository {
   // Single transaction: validate → mutate → version++ → snapshot
   // ============================================================
 
-  approveProposal(proposalId: string, modifications?: Record<string, unknown>): CanonicalVersion {
+  approveProposal(proposalId: string, modifications?: Record<string, unknown>, projectRoot?: string): CanonicalVersion {
     return this.db.transaction(() => {
       const proposal = this.getProposal(proposalId);
       if (!proposal) throw new Error(`Proposal ${proposalId} not found`);
@@ -638,6 +664,13 @@ export class Repository {
       if (modifications && Object.keys(modifications).length > 0) {
         this._applyModifications(payload, proposal.proposal_type as ProposalType, modifications);
         // Persist modified payload so get_proposal returns the actually-approved content
+        this.db
+          .prepare('UPDATE proposals SET payload = ? WHERE proposal_id = ?')
+          .run(JSON.stringify(payload), proposalId);
+      }
+
+      if (projectRoot) {
+        this._normalizeStoredSourcePathsForApprove(payload, proposal.proposal_type as ProposalType, projectRoot);
         this.db
           .prepare('UPDATE proposals SET payload = ? WHERE proposal_id = ?')
           .run(JSON.stringify(payload), proposalId);
@@ -720,8 +753,8 @@ export class Repository {
     modifications: Record<string, unknown>,
   ): void {
     const allowedFields: Record<string, string[]> = {
-      new_doc: ['title', 'content', 'kind', 'source_path'],
-      update_doc: ['title', 'content', 'source_path'],
+      new_doc: ['title', 'content', 'kind', 'source_path', 'ownership'],
+      update_doc: ['title', 'content', 'source_path', 'ownership'],
       add_edge: ['priority', 'source_value', 'target_doc_id'],
       deprecate: [],
       bootstrap: [],
@@ -738,6 +771,39 @@ export class Repository {
     // Re-derive content_hash whenever content is present to prevent hash/content mismatch
     if (typeof payload.content === 'string') {
       payload.content_hash = createHash('sha256').update(payload.content).digest('hex');
+    }
+  }
+
+  /**
+   * ADR-009: store repo-relative source_path and reject workspace escape (same as import_doc).
+   * When `projectRoot` is omitted, paths are not rewritten (unit tests / legacy callers).
+   */
+  private _normalizeStoredSourcePathsForApprove(
+    payload: Record<string, unknown>,
+    proposalType: ProposalType,
+    projectRoot: string,
+  ): void {
+    const norm = (sp: string) => normalizeSourcePath(sp, projectRoot);
+
+    if (proposalType === 'new_doc' || proposalType === 'update_doc') {
+      const sp = payload.source_path;
+      if (typeof sp === 'string' && sp.length > 0) {
+        payload.source_path = norm(sp);
+      }
+      return;
+    }
+
+    if (proposalType === 'bootstrap') {
+      const docs = payload.documents;
+      if (!Array.isArray(docs)) return;
+      for (const raw of docs) {
+        if (!raw || typeof raw !== 'object') continue;
+        const d = raw as Record<string, unknown>;
+        const sp = d.source_path;
+        if (typeof sp === 'string' && sp.length > 0) {
+          d.source_path = norm(sp);
+        }
+      }
     }
   }
 
@@ -786,11 +852,19 @@ export class Repository {
   }
 
   private _applyNewDoc(payload: Omit<Document, 'created_at' | 'updated_at' | 'status'>): void {
+    const sourcePath = payload.source_path ?? null;
+    let ownership: DocOwnership;
+    if (payload.ownership !== undefined && payload.ownership !== null) {
+      ownership = normalizeDocOwnership(payload.ownership);
+    } else {
+      ownership = sourcePath ? 'file-anchored' : 'standalone';
+    }
+    assertOwnershipSourcePathInvariant(ownership, sourcePath);
     this.insertDocument({
       ...payload,
-      ownership: payload.ownership ?? (payload.source_path ? 'file-anchored' : 'standalone'),
+      ownership,
       template_origin: payload.template_origin ?? null,
-      source_path: payload.source_path ?? null,
+      source_path: sourcePath,
       status: 'approved',
     });
   }
@@ -800,13 +874,20 @@ export class Repository {
     content: string;
     content_hash: string;
     title?: string;
-    source_path?: string;
+    source_path?: string | null;
     ownership?: string;
   }): void {
-    const existing = this.db.prepare('SELECT doc_id FROM documents WHERE doc_id = ?').get(payload.doc_id);
+    const existing = this.getDocumentById(payload.doc_id);
     if (!existing) {
       throw new Error(`Cannot update document '${payload.doc_id}': not found`);
     }
+
+    const mergedSourcePath = payload.source_path !== undefined ? payload.source_path : existing.source_path;
+    const mergedOwnership =
+      payload.ownership !== undefined
+        ? normalizeDocOwnership(payload.ownership)
+        : normalizeDocOwnership(existing.ownership);
+    assertOwnershipSourcePathInvariant(mergedOwnership, mergedSourcePath);
 
     const sets: string[] = [
       'content = ?',
@@ -825,7 +906,7 @@ export class Repository {
     }
     if (payload.ownership !== undefined) {
       sets.push('ownership = ?');
-      params.push(payload.ownership);
+      params.push(mergedOwnership);
     }
     params.push(payload.doc_id);
     this.db.prepare(`UPDATE documents SET ${sets.join(', ')} WHERE doc_id = ?`).run(...params);

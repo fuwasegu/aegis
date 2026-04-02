@@ -432,12 +432,14 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
 
     server.tool(
       'aegis_sync_docs',
-      'Synchronize imported documents with their source files. Detects stale documents via content_hash and creates update_doc proposals.',
+      'Synchronize file-anchored documents with their source files. Detects stale documents via content_hash and creates update_doc proposals. Returns skipped_invalid_anchor for unusable paths (missing, outside project, or resolve errors).',
       {
         doc_ids: z
           .array(z.string())
           .optional()
-          .describe('Specific document IDs to sync. If omitted, syncs all documents with source_path.'),
+          .describe(
+            'Subset of document IDs to sync. If omitted, syncs all approved documents with ownership=file-anchored.',
+          ),
       },
       async (params) => {
         try {

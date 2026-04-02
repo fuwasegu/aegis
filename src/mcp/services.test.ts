@@ -1600,6 +1600,64 @@ describe('AegisService — syncDocs', () => {
     expect(result.proposals_created).toHaveLength(0);
   });
 
+  it('skips file-anchored docs whose source_path fails resolveSourcePath (e.g. escapes root)', () => {
+    repo.insertDocument({
+      doc_id: 'bad-rel',
+      title: 'Bad rel',
+      kind: 'guideline',
+      content: 'body',
+      content_hash: hash('body'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: '../../../etc/passwd',
+    });
+
+    const result = service.syncDocs({}, 'admin');
+    expect(result.skipped_invalid_anchor).toContain('bad-rel');
+    expect(result.proposals_created).toHaveLength(0);
+  });
+
+  it('skips file-anchored docs with missing source_path without throwing', () => {
+    const contentHash = hash('body');
+    repo.insertDocument({
+      doc_id: 'corrupt-anchor',
+      title: 'Corrupt',
+      kind: 'guideline',
+      content: 'body',
+      content_hash: contentHash,
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: 'x.md',
+    });
+    db.prepare('UPDATE documents SET source_path = NULL WHERE doc_id = ?').run('corrupt-anchor');
+
+    const result = service.syncDocs({}, 'admin');
+    expect(result.skipped_invalid_anchor).toContain('corrupt-anchor');
+    expect(result.proposals_created).toHaveLength(0);
+  });
+
+  it('does not sync standalone docs even when source_path is set (ADR-010)', () => {
+    writeFileSync(join(tmpDir, 'solo.md'), 'a');
+    repo.insertDocument({
+      doc_id: 'standalone-sync-skip',
+      title: 'Standalone',
+      kind: 'guideline',
+      content: 'a',
+      content_hash: hash('a'),
+      status: 'approved',
+      ownership: 'standalone',
+      template_origin: null,
+      source_path: 'solo.md',
+    });
+    writeFileSync(join(tmpDir, 'solo.md'), 'changed on disk');
+
+    const result = service.syncDocs({}, 'admin');
+    expect(result.checked).toBe(0);
+    expect(result.proposals_created).toHaveLength(0);
+  });
+
   it('skips documents with pending update_doc proposals', () => {
     writeFileSync(join(tmpDir, 'pending.md'), 'original');
     insertApprovedDoc('pending-doc', 'original', 'pending.md');

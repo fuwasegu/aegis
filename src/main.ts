@@ -290,6 +290,9 @@ function printMaintenanceSummary(result: MaintenanceRunResult): void {
   if (sd.not_found.length) {
     console.log(`   not_found: ${sd.not_found.join(', ')}`);
   }
+  if (sd.skipped_invalid_anchor.length) {
+    console.log(`   skipped_invalid_anchor: ${sd.skipped_invalid_anchor.join(', ')}`);
+  }
 
   console.log('\n3. archive_observations');
   const ar = result.archive_observations;

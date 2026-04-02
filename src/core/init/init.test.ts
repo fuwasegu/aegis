@@ -135,7 +135,7 @@ describe('Init Engine', () => {
     expect(preview.has_blocking_warnings).toBe(false);
     expect(preview.template_id).toBe('test-template');
 
-    const result = initConfirm(repo, preview, preview.preview_hash);
+    const result = initConfirm(repo, preview, preview.preview_hash, tmpDir);
     expect(result.knowledge_version).toBe(1);
     expect(repo.isInitialized()).toBe(true);
   });
@@ -146,10 +146,10 @@ describe('Init Engine', () => {
     mkdirSync(join(tmpDir, 'src'), { recursive: true });
 
     const preview = initDetect(tmpDir, templatesDir);
-    initConfirm(repo, preview, preview.preview_hash);
+    initConfirm(repo, preview, preview.preview_hash, tmpDir);
 
     const preview2 = initDetect(tmpDir, templatesDir);
-    expect(() => initConfirm(repo, preview2, preview2.preview_hash)).toThrow(AlreadyInitializedError);
+    expect(() => initConfirm(repo, preview2, preview2.preview_hash, tmpDir)).toThrow(AlreadyInitializedError);
   });
 
   it('init_confirm throws PreviewHashMismatchError on wrong hash', () => {
@@ -158,7 +158,7 @@ describe('Init Engine', () => {
     mkdirSync(join(tmpDir, 'src'), { recursive: true });
 
     const preview = initDetect(tmpDir, templatesDir);
-    expect(() => initConfirm(repo, preview, 'wrong-hash')).toThrow(PreviewHashMismatchError);
+    expect(() => initConfirm(repo, preview, 'wrong-hash', tmpDir)).toThrow(PreviewHashMismatchError);
   });
 
   it('generates documents, edges from template', () => {
@@ -180,7 +180,7 @@ describe('Init Engine', () => {
     mkdirSync(join(tmpDir, 'src'), { recursive: true });
 
     const preview = initDetect(tmpDir, templatesDir);
-    const result = initConfirm(repo, preview, preview.preview_hash);
+    const result = initConfirm(repo, preview, preview.preview_hash, tmpDir);
 
     expect(result.knowledge_version).toBe(1);
     const snapshot = repo.getCurrentSnapshot();
@@ -201,7 +201,7 @@ describe('Init Engine', () => {
     preview.has_blocking_warnings = true;
     preview.warnings.push({ severity: 'block', message: 'test block' });
 
-    expect(() => initConfirm(repo, preview, preview.preview_hash)).toThrow('blocking warnings');
+    expect(() => initConfirm(repo, preview, preview.preview_hash, tmpDir)).toThrow('blocking warnings');
   });
 
   // ── skip_template (empty init) ──
@@ -224,7 +224,7 @@ describe('Init Engine', () => {
 
   it('skip_template → init_confirm succeeds with empty snapshot', () => {
     const preview = initDetect(tmpDir, templatesDir, undefined, { skip_template: true });
-    const result = initConfirm(repo, preview, preview.preview_hash);
+    const result = initConfirm(repo, preview, preview.preview_hash, tmpDir);
 
     expect(result.knowledge_version).toBe(1);
     expect(repo.isInitialized()).toBe(true);
@@ -257,7 +257,7 @@ describe('Init Engine', () => {
 
   it('no profiles matched → init_confirm succeeds', () => {
     const preview = initDetect(tmpDir, templatesDir);
-    const result = initConfirm(repo, preview, preview.preview_hash);
+    const result = initConfirm(repo, preview, preview.preview_hash, tmpDir);
 
     expect(result.knowledge_version).toBe(1);
     expect(repo.isInitialized()).toBe(true);
@@ -277,7 +277,7 @@ describe('Init Engine', () => {
     expect(blockWarns.length).toBeGreaterThan(0);
     expect(preview.has_blocking_warnings).toBe(true);
 
-    expect(() => initConfirm(repo, preview, preview.preview_hash)).toThrow('blocking warnings');
+    expect(() => initConfirm(repo, preview, preview.preview_hash, tmpDir)).toThrow('blocking warnings');
   });
 });
 

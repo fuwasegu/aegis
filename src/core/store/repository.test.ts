@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { PENDING_CONTENT_PLACEHOLDER } from '../types.js';
 import {
@@ -683,6 +686,131 @@ describe('Repository', () => {
       repo.approveProposal('p-upd-sp');
       const doc = repo.getDocumentById('upd-sp');
       expect(doc?.source_path).toBe('/new/path.md');
+    });
+
+    it('rejects update_doc approval when modification sets file-anchored without source_path', () => {
+      repo.insertDocument({
+        doc_id: 'own-mismatch',
+        title: 'T',
+        kind: 'guideline',
+        content: 'c',
+        content_hash: hash('c'),
+        status: 'approved',
+        ownership: 'standalone',
+        template_origin: null,
+        source_path: null,
+      });
+
+      repo.insertProposal({
+        proposal_id: 'p-own-bad',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({
+          doc_id: 'own-mismatch',
+          content: 'new',
+          content_hash: hash('new'),
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      expect(() => repo.approveProposal('p-own-bad', { ownership: 'file-anchored' })).toThrow(
+        /requires a non-empty source_path/,
+      );
+    });
+
+    it('rejects update_doc approval when modification sets invalid ownership', () => {
+      repo.insertDocument({
+        doc_id: 'own-typo',
+        title: 'T',
+        kind: 'guideline',
+        content: 'c',
+        content_hash: hash('c'),
+        status: 'approved',
+        ownership: 'standalone',
+        template_origin: null,
+        source_path: null,
+      });
+
+      repo.insertProposal({
+        proposal_id: 'p-own-typo',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({
+          doc_id: 'own-typo',
+          content: 'new',
+          content_hash: hash('new'),
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      expect(() => repo.approveProposal('p-own-typo', { ownership: 'file_anchored' })).toThrow('Invalid ownership');
+    });
+
+    it('rejects new_doc when payload requests file-anchored without source_path', () => {
+      repo.insertProposal({
+        proposal_id: 'p-new-anchor',
+        proposal_type: 'new_doc',
+        payload: JSON.stringify({
+          doc_id: 'bad-new',
+          title: 'T',
+          kind: 'guideline',
+          content: 'c',
+          content_hash: hash('c'),
+          ownership: 'file-anchored',
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      expect(() => repo.approveProposal('p-new-anchor')).toThrow(/requires a non-empty source_path/);
+    });
+
+    it('rejects source_path outside project when projectRoot is provided (approve)', () => {
+      const root = mkdtempSync(join(tmpdir(), 'aegis-repo-'));
+      try {
+        repo.insertProposal({
+          proposal_id: 'p-out',
+          proposal_type: 'new_doc',
+          payload: JSON.stringify({
+            doc_id: 'out-doc',
+            title: 'O',
+            kind: 'guideline',
+            content: 'c',
+            content_hash: hash('c'),
+          }),
+          status: 'pending',
+          review_comment: null,
+        });
+        const outside = join(root, '..', 'totally-outside-partner', 'x.md');
+        expect(() => repo.approveProposal('p-out', { source_path: outside }, root)).toThrow(/outside/);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('normalizes source_path to repo-relative when projectRoot is provided (approve)', () => {
+      const root = mkdtempSync(join(tmpdir(), 'aegis-repo-'));
+      try {
+        writeFileSync(join(root, 'in-root.md'), '# x');
+        repo.insertProposal({
+          proposal_id: 'p-rel',
+          proposal_type: 'new_doc',
+          payload: JSON.stringify({
+            doc_id: 'rel-doc',
+            title: 'R',
+            kind: 'guideline',
+            content: 'c',
+            content_hash: hash('c'),
+          }),
+          status: 'pending',
+          review_comment: null,
+        });
+        repo.approveProposal('p-rel', { source_path: join(root, 'in-root.md') }, root);
+        const doc = repo.getDocumentById('rel-doc');
+        expect(doc?.source_path).toBe('in-root.md');
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     });
 
     it('_applyModifications allows source_path for new_doc and update_doc', () => {

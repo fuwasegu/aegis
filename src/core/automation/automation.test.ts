@@ -1801,6 +1801,7 @@ describe('DocumentImportAnalyzer', () => {
       content: 'old content',
       content_hash: 'oldhash',
       status: 'approved',
+      ownership: 'standalone',
       template_origin: null,
       source_path: null,
     });
@@ -1821,6 +1822,36 @@ describe('DocumentImportAnalyzer', () => {
     expect(result.drafts[0].payload.title).toBe('Existing Updated');
   });
 
+  it('sets ownership file-anchored on update_doc when source_path is provided', async () => {
+    repo.insertDocument({
+      doc_id: 'anchor-later',
+      title: 'Later',
+      kind: 'guideline',
+      content: 'old',
+      content_hash: 'h1',
+      status: 'approved',
+      ownership: 'standalone',
+      template_origin: null,
+      source_path: null,
+    });
+
+    const ctx = makeContext({
+      content: 'new body',
+      doc_id: 'anchor-later',
+      title: 'Later',
+      kind: 'guideline',
+      source_path: 'docs/anchored.md',
+    });
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts[0].proposal_type).toBe('update_doc');
+    expect(result.drafts[0].payload).toMatchObject({
+      ownership: 'file-anchored',
+      source_path: 'docs/anchored.md',
+    });
+  });
+
   it('generates update_doc when doc_id exists with non-approved status', async () => {
     repo.insertDocument({
       doc_id: 'deprecated-doc',
@@ -1829,6 +1860,7 @@ describe('DocumentImportAnalyzer', () => {
       content: 'old',
       content_hash: 'h',
       status: 'deprecated',
+      ownership: 'standalone',
       template_origin: null,
       source_path: null,
     });
@@ -1868,6 +1900,7 @@ describe('DocumentImportAnalyzer', () => {
       content: 'old',
       content_hash: 'h',
       status: 'approved',
+      ownership: 'standalone',
       template_origin: null,
       source_path: null,
     });
