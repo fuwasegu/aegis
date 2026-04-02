@@ -76,6 +76,15 @@ class FailingTagger implements IntentTagger {
   }
 }
 
+class CountingTagger implements IntentTagger {
+  callCount = 0;
+
+  async extractTags(_plan: string, _knownTags: string[]): Promise<IntentTag[]> {
+    this.callCount++;
+    return [{ tag: 'authentication', confidence: 0.9 }];
+  }
+}
+
 describe('ContextCompiler', () => {
   let db: AegisDatabase;
   let repo: Repository;
@@ -1281,6 +1290,110 @@ describe('ContextCompiler — expanded context', () => {
     const r2 = await compilerEmpty.compile({ target_files: ['src/a.ts'], plan: 'empty plan' });
     const a2 = compilerEmpty.getCompileAudit(r2.compile_id);
     expect(a2!.expanded_doc_ids).toEqual([]);
+  });
+
+  // ── intent_tags: explicit opt-out ──
+  it('intent_tags [] opts out of expanded even with plan and tagger', async () => {
+    setupBaseAndTags();
+    const tagger = new FailingTagger();
+    const compiler = new ContextCompiler(repo, tagger);
+
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      plan: 'add auth',
+      intent_tags: [],
+    });
+
+    expect(result.expanded).toBeUndefined();
+    expect(result.warnings).toHaveLength(0);
+    const audit = compiler.getCompileAudit(result.compile_id);
+    expect(audit!.expanded_doc_ids).toBeNull();
+  });
+
+  // ── intent_tags: agent path does not invoke tagger ──
+  it('intent_tags provided: SLM tagger is not called', async () => {
+    setupBaseAndTags();
+    const tagger = new CountingTagger();
+    const compiler = new ContextCompiler(repo, tagger);
+
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      plan: 'this would normally hit the tagger',
+      intent_tags: ['authentication'],
+    });
+
+    expect(tagger.callCount).toBe(0);
+    expect(result.expanded).toBeDefined();
+    expect(result.expanded!.documents.map((d) => d.doc_id)).toEqual(
+      expect.arrayContaining(['auth-doc', 'security-doc']),
+    );
+  });
+
+  // ── intent_tags: undefined keeps SLM fallback ──
+  it('intent_tags undefined: tagger runs when plan is set', async () => {
+    setupBaseAndTags();
+    const tagger = new CountingTagger();
+    const compiler = new ContextCompiler(repo, tagger);
+
+    await compiler.compile({
+      target_files: ['src/a.ts'],
+      plan: 'add auth',
+    });
+
+    expect(tagger.callCount).toBe(1);
+  });
+
+  // ── intent_tags: normalization (trim, dedupe, sort) ──
+  it('intent_tags are normalized for lookup (trim, dedupe, sort)', async () => {
+    setupBaseAndTags();
+    const compiler = new ContextCompiler(repo, new CountingTagger());
+
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      intent_tags: ['  security ', '', 'authentication', ' security ', 'authentication'],
+    });
+
+    const expandedIds = result.expanded!.documents.map((d) => d.doc_id);
+    expect(expandedIds).toContain('auth-doc');
+    expect(expandedIds).toContain('security-doc');
+
+    const audit = compiler.getCompileAudit(result.compile_id);
+    const req = audit!.request as { intent_tags: string[] };
+    expect(req.intent_tags).toEqual(['  security ', '', 'authentication', ' security ', 'authentication']);
+  });
+
+  // ── intent_tags: unknown tags excluded with warnings ──
+  it('unknown intent_tags are excluded with warnings; known tags still match', async () => {
+    setupBaseAndTags();
+    const compiler = new ContextCompiler(repo, new CountingTagger());
+
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      intent_tags: ['not-a-real-tag', 'authentication'],
+    });
+
+    expect(result.warnings.some((w) => w.includes('Unknown intent_tag'))).toBe(true);
+    expect(result.warnings.some((w) => w.includes('not-a-real-tag'))).toBe(true);
+    const expandedIds = result.expanded!.documents.map((d) => d.doc_id);
+    expect(expandedIds).toContain('auth-doc');
+    expect(expandedIds).toContain('security-doc');
+  });
+
+  // ── intent_tags: whitespace-only normalizes to empty expanded run ──
+  it('intent_tags whitespace-only strings normalize to empty known set', async () => {
+    setupBaseAndTags();
+    const compiler = new ContextCompiler(repo, new CountingTagger());
+
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      intent_tags: ['  ', ''],
+    });
+
+    expect(result.expanded).toBeDefined();
+    expect(result.expanded!.documents).toHaveLength(0);
+    expect(result.expanded!.reasoning).toMatch(/normalized to empty/);
+    const audit = compiler.getCompileAudit(result.compile_id);
+    expect(audit!.expanded_doc_ids).toEqual([]);
   });
 });
 

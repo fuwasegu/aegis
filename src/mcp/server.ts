@@ -93,6 +93,13 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
         .describe('Explicit layer names (optional, inferred from path if omitted)'),
       command: z.string().optional().describe('Command name: scaffold, refactor, review, etc.'),
       plan: z.string().optional().describe('Natural-language plan text for expanded context (requires IntentTagger)'),
+      intent_tags: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'Explicit intent tags for expanded context. When set (including []), the SLM tagger is not used. ' +
+            'Omit for SLM fallback from plan.',
+        ),
       max_inline_bytes: z
         .number()
         .optional()
@@ -107,6 +114,7 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
             target_layers: params.target_layers,
             command: params.command,
             plan: params.plan,
+            intent_tags: params.intent_tags,
             max_inline_bytes: params.max_inline_bytes,
             content_mode: params.content_mode,
           },
