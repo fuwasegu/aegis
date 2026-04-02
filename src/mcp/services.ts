@@ -15,6 +15,7 @@ import { deployCursorAdapter } from '../adapters/cursor/generate.js';
 import { deploySkills } from '../adapters/skills.js';
 import type { AdapterConfig, AdapterResult } from '../adapters/types.js';
 import type { ObservationAnalyzer } from '../core/automation/analyzer.js';
+import { DocGapAnalyzer } from '../core/automation/doc-gap-analyzer.js';
 import { DocumentImportAnalyzer } from '../core/automation/document-import-analyzer.js';
 import { ManualNoteAnalyzer } from '../core/automation/manual-note-analyzer.js';
 import { PrMergedAnalyzer } from '../core/automation/pr-merged-analyzer.js';
@@ -104,6 +105,7 @@ export class AegisService {
       ['pr_merged', new PrMergedAnalyzer(repo)],
       ['manual_note', new ManualNoteAnalyzer(repo)],
       ['document_import', new DocumentImportAnalyzer(repo)],
+      ['doc_gap_detected', new DocGapAnalyzer()],
     ]);
   }
 
@@ -127,7 +129,7 @@ export class AegisService {
       observation_id: observationId,
       event_type: event.event_type,
       payload: JSON.stringify(event.payload),
-      related_compile_id: 'related_compile_id' in event ? event.related_compile_id : null,
+      related_compile_id: 'related_compile_id' in event ? (event.related_compile_id ?? null) : null,
       related_snapshot_id: 'related_snapshot_id' in event ? (event.related_snapshot_id ?? null) : null,
     });
     return { observation_id: observationId };
@@ -225,6 +227,47 @@ export class AegisService {
       case 'document_import':
         this.validateDocumentImportPayload(p);
         break;
+      case 'doc_gap_detected': {
+        const gapKinds = ['content_gap', 'split_candidate', 'routing_gap'];
+        if (typeof p.gap_kind !== 'string' || !gapKinds.includes(p.gap_kind)) {
+          throw new ObserveValidationError(`doc_gap_detected gap_kind must be one of: ${gapKinds.join(', ')}`);
+        }
+        if (!Array.isArray(p.scope_patterns) || !p.scope_patterns.every((x) => typeof x === 'string')) {
+          throw new ObserveValidationError('doc_gap_detected scope_patterns must be an array of strings');
+        }
+        if (p.target_doc_id !== undefined && typeof p.target_doc_id !== 'string') {
+          throw new ObserveValidationError('doc_gap_detected target_doc_id must be a string if provided');
+        }
+        if (
+          !Array.isArray(p.evidence_observation_ids) ||
+          !p.evidence_observation_ids.every((x) => typeof x === 'string')
+        ) {
+          throw new ObserveValidationError('doc_gap_detected evidence_observation_ids must be an array of strings');
+        }
+        if (!Array.isArray(p.evidence_compile_ids) || !p.evidence_compile_ids.every((x) => typeof x === 'string')) {
+          throw new ObserveValidationError('doc_gap_detected evidence_compile_ids must be an array of strings');
+        }
+        const m = p.metrics as Record<string, unknown> | undefined;
+        if (!m || typeof m !== 'object') {
+          throw new ObserveValidationError('doc_gap_detected metrics is required');
+        }
+        for (const key of ['exposure_count', 'content_gap_count', 'distinct_clusters', 'cohort_gap_rate'] as const) {
+          const v = m[key];
+          if (typeof v !== 'number' || !Number.isFinite(v)) {
+            throw new ObserveValidationError(`doc_gap_detected metrics.${key} must be a finite number`);
+          }
+        }
+        const actions = ['review_doc', 'split_doc', 'create_doc'];
+        if (typeof p.suggested_next_action !== 'string' || !actions.includes(p.suggested_next_action)) {
+          throw new ObserveValidationError(
+            `doc_gap_detected suggested_next_action must be one of: ${actions.join(', ')}`,
+          );
+        }
+        if (typeof p.algorithm_version !== 'string' || !p.algorithm_version.trim()) {
+          throw new ObserveValidationError('doc_gap_detected algorithm_version must be a non-empty string');
+        }
+        break;
+      }
     }
   }
 
@@ -327,7 +370,7 @@ export class AegisService {
    */
   async analyzeAndPropose(
     analyzer: ObservationAnalyzer,
-    eventType: 'compile_miss' | 'review_correction' | 'pr_merged' | 'manual_note' | 'document_import',
+    eventType: ObservationEventType,
     surface: Surface,
   ): Promise<{ analysis: AnalysisResult; proposals: ProposeResult }> {
     this.assertAdmin('analyzeAndPropose', surface);
@@ -488,6 +531,8 @@ export class AegisService {
       observation_id: string;
       event_type: string;
       outcome: 'proposed' | 'skipped' | 'pending';
+      /** Parsed observation payload (same shape as stored JSON). Admin triage: full doc_gap_detected diagnostics. */
+      payload: Record<string, unknown> | null;
       review_comment: string | null;
       target_doc_id: string | null;
       target_files: string[] | null;
@@ -508,23 +553,30 @@ export class AegisService {
 
     return {
       observations: result.observations.map((obs) => {
+        let payload: Record<string, unknown> | null = null;
         let review_comment: string | null = null;
         let target_doc_id: string | null = null;
         let target_files: string[] | null = null;
         try {
-          const payload = JSON.parse(obs.payload);
-          review_comment = payload.review_comment ?? null;
-          target_doc_id = payload.target_doc_id ?? null;
-          if (Array.isArray(payload.target_files)) {
-            target_files = payload.target_files;
+          const parsed = JSON.parse(obs.payload) as Record<string, unknown>;
+          payload = parsed;
+          review_comment =
+            (typeof parsed.review_comment === 'string' ? parsed.review_comment : null) ??
+            (typeof parsed.gap_kind === 'string' && typeof parsed.suggested_next_action === 'string'
+              ? `${parsed.gap_kind} → ${parsed.suggested_next_action}`
+              : null);
+          target_doc_id = typeof parsed.target_doc_id === 'string' ? parsed.target_doc_id : null;
+          if (Array.isArray(parsed.target_files) && parsed.target_files.every((x) => typeof x === 'string')) {
+            target_files = parsed.target_files as string[];
           }
         } catch {
-          // payload parse failure — leave as null
+          // payload parse failure — leave payload and derived fields null
         }
         return {
           observation_id: obs.observation_id,
           event_type: obs.event_type,
           outcome: obs.outcome,
+          payload,
           review_comment,
           target_doc_id,
           target_files,

@@ -59,7 +59,34 @@ export type ObservationEventType =
   | 'review_correction'
   | 'pr_merged'
   | 'manual_note'
-  | 'document_import';
+  | 'document_import'
+  | 'doc_gap_detected';
+
+/** ADR-015 §3 — persisted contract for `doc_gap_detected` (optimization layer input). */
+export type DocGapKind = 'content_gap' | 'split_candidate' | 'routing_gap';
+
+export type DocGapSuggestedNextAction = 'review_doc' | 'split_doc' | 'create_doc';
+
+export interface DocGapMetrics {
+  exposure_count: number;
+  content_gap_count: number;
+  distinct_clusters: number;
+  cohort_gap_rate: number;
+}
+
+/** Payload for doc_gap_detected (ADR-015): diagnostic record for content gaps / split candidates / routing. */
+export interface DocGapPayload {
+  gap_kind: DocGapKind;
+  target_doc_id?: string;
+  /** Normalized directory globs (ADR-015). */
+  scope_patterns: string[];
+  evidence_observation_ids: string[];
+  evidence_compile_ids: string[];
+  metrics: DocGapMetrics;
+  suggested_next_action: DocGapSuggestedNextAction;
+  /** Reproducibility / invalidation (e.g. threshold changes). */
+  algorithm_version: string;
+}
 
 export interface Observation {
   observation_id: string;
@@ -339,6 +366,12 @@ export type ObserveEvent =
         tags?: string[];
         source_path?: string;
       };
+    }
+  | {
+      event_type: 'doc_gap_detected';
+      related_compile_id?: string | null;
+      related_snapshot_id?: string | null;
+      payload: DocGapPayload;
     };
 
 export interface CanonicalVersion {

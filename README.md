@@ -232,7 +232,7 @@ You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 | Tool | Description |
 |------|-------------|
 | `aegis_compile_context` | Compile deterministic context for target files. Supports `content_mode` (auto/always/metadata) and `max_inline_bytes` for output size control |
-| `aegis_observe` | Record observations (compile_miss, review_correction, pr_merged, manual_note, document_import) |
+| `aegis_observe` | Record observations (compile_miss, review_correction, pr_merged, manual_note, document_import, doc_gap_detected) |
 | `aegis_get_compile_audit` | Retrieve audit log of a past compile |
 | `aegis_init_detect` | Analyze a project to generate initialization preview |
 

@@ -18,7 +18,7 @@ npm test               # run all tests
 ## Agent Surface Tools (4 tools)
 
 - `aegis_compile_context` — Primary tool. Given target_files, returns deterministic context.
-- `aegis_observe` — Record observations (compile_miss, review_correction, pr_merged, manual_note).
+- `aegis_observe` — Record observations (compile_miss, review_correction, pr_merged, manual_note, document_import, doc_gap_detected).
 - `aegis_get_compile_audit` — Retrieve audit log of a past compile invocation.
 - `aegis_init_detect` — Analyze a project to generate initialization preview (read-only).
 

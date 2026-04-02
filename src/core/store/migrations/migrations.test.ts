@@ -2,10 +2,10 @@ import initSqlJs from 'sql.js';
 import { describe, expect, it } from 'vitest';
 import { AegisDatabase, createInMemoryDatabase } from '../database.js';
 import { migrateObservationsCheckConstraint } from './001_initial_baseline.js';
-import { ALL_MIGRATIONS, runMigrations, upAddAuditMeta } from './index.js';
+import { ALL_MIGRATIONS, runMigrations, upAddAuditMeta, upAddDocGapEventType } from './index.js';
 
 describe('schema migrations (ADR-013)', () => {
-  it('records migrations 001 and 002 on first open', async () => {
+  it('records migrations 001–003 on first open', async () => {
     const db = await createInMemoryDatabase();
     const rows = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all() as {
       version: number;
@@ -14,6 +14,7 @@ describe('schema migrations (ADR-013)', () => {
     expect(rows).toEqual([
       { version: 1, name: 'initial_baseline' },
       { version: 2, name: 'add_audit_meta' },
+      { version: 3, name: 'add_doc_gap_event_type' },
     ]);
   });
 
@@ -23,8 +24,8 @@ describe('schema migrations (ADR-013)', () => {
     const rows = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as {
       version: number;
     }[];
-    expect(rows).toHaveLength(2);
-    expect(rows.map((r) => r.version)).toEqual([1, 2]);
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => r.version)).toEqual([1, 2, 3]);
   });
 
   it('applies baseline DDL including compile_log.audit_meta', async () => {
@@ -100,5 +101,47 @@ describe('schema migrations (ADR-013)', () => {
     expect(master.sql).toContain('document_import');
     const count = db.prepare('SELECT COUNT(*) as c FROM proposal_evidence').get() as { c: number };
     expect(count.c).toBe(1);
+  });
+
+  it('upAddDocGapEventType adds doc_gap_detected to observations CHECK when predating', async () => {
+    const SQL = await initSqlJs();
+    const raw = new SQL.Database();
+    raw.run('PRAGMA foreign_keys = ON');
+    raw.exec(`
+      CREATE TABLE proposals (
+        proposal_id     TEXT PRIMARY KEY,
+        proposal_type   TEXT NOT NULL,
+        payload         TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'pending',
+        review_comment  TEXT,
+        created_at      TEXT NOT NULL,
+        resolved_at     TEXT
+      );
+      CREATE TABLE observations (
+        observation_id      TEXT PRIMARY KEY,
+        event_type          TEXT NOT NULL
+                            CHECK (event_type IN ('compile_miss', 'review_correction',
+                                                  'pr_merged', 'manual_note', 'document_import')),
+        payload             TEXT NOT NULL,
+        related_compile_id  TEXT,
+        related_snapshot_id TEXT,
+        created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        archived_at         TEXT,
+        analyzed_at         TEXT
+      );
+      CREATE TABLE proposal_evidence (
+        proposal_id     TEXT NOT NULL REFERENCES proposals(proposal_id),
+        observation_id  TEXT NOT NULL REFERENCES observations(observation_id),
+        PRIMARY KEY (proposal_id, observation_id)
+      );
+      INSERT INTO observations (observation_id, event_type, payload, created_at)
+        VALUES ('o1', 'compile_miss', '{}', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    `);
+    const db = new AegisDatabase(raw, null, SQL);
+    upAddDocGapEventType(db);
+    const master = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='observations'").get() as {
+      sql: string;
+    };
+    expect(master.sql).toContain('doc_gap_detected');
   });
 });
