@@ -244,10 +244,7 @@ export class AegisService {
     }
   }
 
-  getCompileAudit(
-    compileId: string,
-    _surface: Surface,
-  ): ReturnType<ContextCompiler['getCompileAudit']> {
+  getCompileAudit(compileId: string, _surface: Surface): ReturnType<ContextCompiler['getCompileAudit']> {
     // Agent surface: allowed (read-only audit)
     return this.compiler.getCompileAudit(compileId);
   }

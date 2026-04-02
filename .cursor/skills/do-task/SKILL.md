@@ -95,6 +95,16 @@ bash .cursor/skills/do-task/scripts/codex-critical-review.sh docs/tasks/014-01-e
 
 レビュー受領 → 修正 → **同じ手順で再レビュー** → 問題なければ Step5 へ．
 
+## Step5 フォーマット
+
+biome を使ってフォーマットチェックする．
+
+```bash
+npm run lint:fix
+```
+
+自動で修正できないエラーは，手動で修正する．
+
 ## Step5 PR を作る準備
 
 コミットには署名が必要なので，必ず人間のオペレータが行う，
