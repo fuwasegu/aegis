@@ -173,12 +173,53 @@ function toResolvedDoc(d: AllocatedDoc): ResolvedDoc {
   return resolved;
 }
 
+/** Trim, drop empty strings, dedupe, sort — deterministic. Does not mutate `raw`. */
+function normalizeIntentTags(raw: string[]): string[] {
+  const trimmed = raw.map((t) => t.trim()).filter((t) => t.length > 0);
+  const unique = [...new Set(trimmed)];
+  unique.sort((a, b) => a.localeCompare(b));
+  return unique;
+}
+
 export class ContextCompiler {
   constructor(
     private repo: Repository,
     private tagger: IntentTagger | null = null,
     private adapterOutdated = false,
   ) {}
+
+  private fillExpandedFromTagNames(
+    tagNames: string[],
+    baseCandidates: DocCandidate[],
+    templateDocIds: string[],
+  ): { candidates: DocCandidate[]; docIds: string[]; confidence: number; reasoning: string } {
+    const candidates = this.repo.getDocumentsByTags(tagNames);
+    const baseDocIdSet = new Set([...baseCandidates.map((d) => d.doc_id), ...templateDocIds]);
+    const filtered = candidates.filter((c) => !baseDocIdSet.has(c.doc_id));
+    const expandedIds = filtered.map((c) => c.doc_id);
+    const fetchedDocs = this.repo.getApprovedDocumentsByIds(expandedIds);
+    const fetchedMap = new Map(fetchedDocs.map((d) => [d.doc_id, d]));
+    const expandedCandidates: DocCandidate[] = [];
+    for (const id of expandedIds) {
+      const doc = fetchedMap.get(id);
+      if (doc) {
+        expandedCandidates.push(toCandidate(doc, 'expanded', 100, undefined));
+      }
+    }
+    const confidence =
+      filtered.length > 0
+        ? Math.round((filtered.reduce((sum, c) => sum + c.max_confidence, 0) / filtered.length) * 100) / 100
+        : 0;
+    const reasoning =
+      filtered.map((c) => `${c.doc_id} matched [${c.matched_tags.join(', ')}]`).join('; ') ||
+      'No additional documents matched';
+    return {
+      candidates: expandedCandidates,
+      docIds: expandedCandidates.map((d) => d.doc_id),
+      confidence,
+      reasoning,
+    };
+  }
 
   /**
    * compile_context — deterministic base routing + best-effort expanded context.
@@ -357,44 +398,50 @@ export class ContextCompiler {
     let expandedReasoning = '';
     let expandedHasResult = false;
 
-    if (request.plan && this.tagger) {
+    if (request.intent_tags !== undefined) {
+      if (request.intent_tags.length === 0) {
+        // Explicit opt-out: no expanded section, no tagger
+      } else {
+        const normalized = normalizeIntentTags(request.intent_tags);
+        const knownTags = this.repo.getAllTags();
+        const knownSet = new Set(knownTags);
+        for (const t of normalized) {
+          if (!knownSet.has(t)) {
+            warnings.push(`Unknown intent_tag (excluded): ${t}`);
+          }
+        }
+        const knownOnly = normalized.filter((t) => knownSet.has(t));
+        if (knownOnly.length === 0) {
+          expandedDocIds = [];
+          expandedConfidence = 0;
+          expandedReasoning =
+            normalized.length === 0
+              ? 'intent_tags normalized to empty (whitespace-only entries removed)'
+              : 'No known intent_tags after filtering unknown values';
+          expandedHasResult = true;
+        } else {
+          const filled = this.fillExpandedFromTagNames(knownOnly, baseCandidates, templateDocIds);
+          expandedCandidates.push(...filled.candidates);
+          expandedDocIds = filled.docIds;
+          expandedConfidence = filled.confidence;
+          expandedReasoning = filled.reasoning;
+          expandedHasResult = true;
+        }
+      }
+    } else if (request.plan && this.tagger) {
       try {
         const knownTags = this.repo.getAllTags();
         const tags = await this.tagger.extractTags(request.plan, knownTags);
         const tagNames = tags.map((t) => t.tag);
 
         if (tagNames.length > 0) {
-          const candidates = this.repo.getDocumentsByTags(tagNames);
-
-          // Exclude docs already in base (both documents and templates)
-          const baseDocIdSet = new Set([...baseCandidates.map((d) => d.doc_id), ...templateDocIds]);
-          const filtered = candidates.filter((c) => !baseDocIdSet.has(c.doc_id));
-
-          // Fetch full documents, preserving getDocumentsByTags order
-          const expandedIds = filtered.map((c) => c.doc_id);
-          const fetchedDocs = this.repo.getApprovedDocumentsByIds(expandedIds);
-          const fetchedMap = new Map(fetchedDocs.map((d) => [d.doc_id, d]));
-
-          // Build expanded candidates
-          for (const id of expandedIds) {
-            const doc = fetchedMap.get(id);
-            if (doc) {
-              expandedCandidates.push(toCandidate(doc, 'expanded', 100, undefined));
-            }
-          }
-
-          expandedConfidence =
-            filtered.length > 0
-              ? Math.round((filtered.reduce((sum, c) => sum + c.max_confidence, 0) / filtered.length) * 100) / 100
-              : 0;
-          expandedReasoning =
-            filtered.map((c) => `${c.doc_id} matched [${c.matched_tags.join(', ')}]`).join('; ') ||
-            'No additional documents matched';
-
-          expandedDocIds = expandedCandidates.map((d) => d.doc_id);
+          const filled = this.fillExpandedFromTagNames(tagNames, baseCandidates, templateDocIds);
+          expandedCandidates.push(...filled.candidates);
+          expandedDocIds = filled.docIds;
+          expandedConfidence = filled.confidence;
+          expandedReasoning = filled.reasoning;
           expandedHasResult = true;
         } else {
-          // Tagger returned no tags
           expandedDocIds = [];
           expandedConfidence = 0;
           expandedReasoning = 'Tagger returned no tags for the given plan';
@@ -402,7 +449,6 @@ export class ContextCompiler {
         }
       } catch (err) {
         warnings.push(`Expanded context skipped: tagger failed (${(err as Error).message})`);
-        // expanded stays undefined, expandedDocIds stays null
       }
     }
 

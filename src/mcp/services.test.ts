@@ -1940,8 +1940,143 @@ describe('AegisService — new_doc_hint.kind validation', () => {
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import type { IntentTagger } from '../core/tagging/tagger.js';
+import type { IntentTag } from '../core/types.js';
 import { BudgetExceededError } from '../core/types.js';
 import { createAegisServer } from './server.js';
+
+function bootstrapIntentTagsMcpFixture(repo: Repository): void {
+  repo.insertProposal({
+    proposal_id: 'boot-intent-mcp',
+    proposal_type: 'bootstrap',
+    payload: JSON.stringify({
+      documents: [
+        {
+          doc_id: 'base-doc',
+          title: 'Base',
+          kind: 'guideline',
+          content: 'base',
+          content_hash: hash('base'),
+        },
+        {
+          doc_id: 'auth-doc',
+          title: 'Auth',
+          kind: 'guideline',
+          content: 'auth',
+          content_hash: hash('auth'),
+        },
+      ],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'base-doc',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 0,
+        },
+      ],
+      layer_rules: [],
+    }),
+    status: 'pending',
+    review_comment: null,
+  });
+  repo.approveProposal('boot-intent-mcp');
+  repo.upsertTagMapping({ tag: 'authentication', doc_id: 'auth-doc', confidence: 0.9, source: 'manual' });
+}
+
+class FailingTaggerForIntentTags implements IntentTagger {
+  async extractTags(_plan: string, _knownTags: string[]): Promise<IntentTag[]> {
+    throw new Error('tagger should not run when intent_tags controls expansion');
+  }
+}
+
+describe('aegis_compile_context — intent_tags MCP wiring', () => {
+  it('forwards intent_tags through transport and resolves expanded documents', async () => {
+    const db = await createInMemoryDatabase();
+    const repo = new Repository(db);
+    bootstrapIntentTagsMcpFixture(repo);
+    const service = new AegisService(repo, TEMPLATES_ROOT);
+
+    const server = createAegisServer(service, 'agent');
+    const client = new Client({ name: 'test-client', version: '0.0.1' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+
+    const response = await client.callTool({
+      name: 'aegis_compile_context',
+      arguments: { target_files: ['src/a.ts'], intent_tags: ['authentication'] },
+    });
+
+    expect(response.isError).not.toBe(true);
+    const content = response.content as Array<{ type: string; text: string }>;
+    const body = JSON.parse(content[0].text) as {
+      expanded?: { documents: Array<{ doc_id: string }> };
+      compile_id: string;
+    };
+    const expandedIds = body.expanded?.documents.map((d) => d.doc_id) ?? [];
+    expect(expandedIds).toContain('auth-doc');
+
+    const audit = service.getCompileAudit(body.compile_id, 'agent');
+    expect(audit?.request).toMatchObject({ intent_tags: ['authentication'] });
+
+    await client.close();
+    await server.close();
+  });
+
+  it('intent_tags [] opts out even when plan is set and tagger would fail', async () => {
+    const db = await createInMemoryDatabase();
+    const repo = new Repository(db);
+    bootstrapIntentTagsMcpFixture(repo);
+    const service = new AegisService(repo, TEMPLATES_ROOT, new FailingTaggerForIntentTags());
+
+    const server = createAegisServer(service, 'agent');
+    const client = new Client({ name: 'test-client', version: '0.0.1' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+
+    const response = await client.callTool({
+      name: 'aegis_compile_context',
+      arguments: { target_files: ['src/a.ts'], plan: 'add auth', intent_tags: [] },
+    });
+
+    expect(response.isError).not.toBe(true);
+    const content = response.content as Array<{ type: string; text: string }>;
+    const body = JSON.parse(content[0].text) as { expanded?: unknown };
+    expect(body.expanded).toBeUndefined();
+
+    await client.close();
+    await server.close();
+  });
+
+  it('persists raw intent_tags in compile_log.request (duplicate spacing preserved)', async () => {
+    const db = await createInMemoryDatabase();
+    const repo = new Repository(db);
+    bootstrapIntentTagsMcpFixture(repo);
+    const service = new AegisService(repo, TEMPLATES_ROOT);
+
+    const server = createAegisServer(service, 'agent');
+    const client = new Client({ name: 'test-client', version: '0.0.1' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+
+    const rawTags = ['  authentication ', 'authentication'];
+    const response = await client.callTool({
+      name: 'aegis_compile_context',
+      arguments: { target_files: ['src/a.ts'], intent_tags: rawTags },
+    });
+
+    expect(response.isError).not.toBe(true);
+    const content = response.content as Array<{ type: string; text: string }>;
+    const body = JSON.parse(content[0].text) as { compile_id: string };
+    const audit = service.getCompileAudit(body.compile_id, 'agent');
+    expect(audit?.request).toMatchObject({ intent_tags: rawTags });
+
+    await client.close();
+    await server.close();
+  });
+});
 
 describe('BudgetExceededError — MCP handler', () => {
   function bootstrapLargeDoc(repo: Repository) {

@@ -202,6 +202,15 @@ export interface CompileRequest {
   target_layers?: string[];
   command?: string;
   plan?: string;
+  /**
+   * Agent-supplied intent tags for expanded context. When this property is present (including `[]`),
+   * the SLM tagger is never invoked.
+   * - `undefined`: if `plan` is set and a tagger is configured, tags are inferred via SLM (backward compatible).
+   * - `[]`: explicit opt-out — no `expanded` section.
+   * - Non-empty: values are trimmed, empty strings dropped, deduped, sorted; tags not present in
+   *   `tag_mappings` are omitted with warnings. `compile_log.request` stores this array as received (raw).
+   */
+  intent_tags?: string[];
   /** Inline content budget in UTF-8 bytes. Default: 131,072 (128KB). */
   max_inline_bytes?: number;
   /** Content delivery mode. Default: 'auto' (source_path docs deferred, small docs inline). */
