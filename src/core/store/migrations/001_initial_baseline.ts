@@ -79,10 +79,6 @@ export function upInitialBaseline(db: AegisDatabase): void {
     db.exec('ALTER TABLE documents ADD COLUMN source_path TEXT');
   }
 
-  if (!hasColumn('compile_log', 'audit_meta')) {
-    db.exec('ALTER TABLE compile_log ADD COLUMN audit_meta TEXT');
-  }
-
   if (!hasColumn('documents', 'ownership')) {
     db.exec("ALTER TABLE documents ADD COLUMN ownership TEXT NOT NULL DEFAULT 'standalone'");
     db.exec("UPDATE documents SET ownership = 'file-anchored' WHERE source_path IS NOT NULL");

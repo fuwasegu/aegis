@@ -2,28 +2,55 @@ import initSqlJs from 'sql.js';
 import { describe, expect, it } from 'vitest';
 import { AegisDatabase, createInMemoryDatabase } from '../database.js';
 import { migrateObservationsCheckConstraint } from './001_initial_baseline.js';
-import { ALL_MIGRATIONS, runMigrations } from './index.js';
+import { ALL_MIGRATIONS, runMigrations, upAddAuditMeta } from './index.js';
 
 describe('schema migrations (ADR-013)', () => {
-  it('records migration 001 on first open', async () => {
+  it('records migrations 001 and 002 on first open', async () => {
     const db = await createInMemoryDatabase();
     const rows = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all() as {
       version: number;
       name: string;
     }[];
-    expect(rows).toEqual([{ version: 1, name: 'initial_baseline' }]);
+    expect(rows).toEqual([
+      { version: 1, name: 'initial_baseline' },
+      { version: 2, name: 'add_audit_meta' },
+    ]);
   });
 
   it('runMigrations is idempotent on the same connection', async () => {
     const db = await createInMemoryDatabase();
     runMigrations(db, ALL_MIGRATIONS);
-    const rows = db.prepare('SELECT version FROM schema_migrations').all() as { version: number }[];
-    expect(rows).toHaveLength(1);
-    expect(rows[0].version).toBe(1);
+    const rows = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as {
+      version: number;
+    }[];
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.version)).toEqual([1, 2]);
   });
 
   it('applies baseline DDL including compile_log.audit_meta', async () => {
     const db = await createInMemoryDatabase();
+    const cols = db.pragma('table_info(compile_log)') as Array<{ name: string }>;
+    expect(cols.some((c) => c.name === 'audit_meta')).toBe(true);
+  });
+
+  it('upAddAuditMeta adds audit_meta when compile_log predates the column', async () => {
+    const SQL = await initSqlJs();
+    const raw = new SQL.Database();
+    raw.run('PRAGMA foreign_keys = ON');
+    raw.exec(`
+      CREATE TABLE snapshots (snapshot_id TEXT PRIMARY KEY, knowledge_version INTEGER NOT NULL, created_at TEXT NOT NULL);
+      INSERT INTO snapshots VALUES ('s1', 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+      CREATE TABLE compile_log (
+        compile_id TEXT PRIMARY KEY,
+        snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id),
+        request TEXT NOT NULL,
+        base_doc_ids TEXT NOT NULL,
+        expanded_doc_ids TEXT,
+        created_at TEXT NOT NULL
+      );
+    `);
+    const db = new AegisDatabase(raw, null, SQL);
+    upAddAuditMeta(db);
     const cols = db.pragma('table_info(compile_log)') as Array<{ name: string }>;
     expect(cols.some((c) => c.name === 'audit_meta')).toBe(true);
   });

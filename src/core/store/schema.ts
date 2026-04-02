@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS compile_log (
     request         TEXT NOT NULL,
     base_doc_ids    TEXT NOT NULL,
     expanded_doc_ids TEXT,
+    audit_meta        TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
