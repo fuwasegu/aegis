@@ -244,20 +244,7 @@ export class AegisService {
     }
   }
 
-  getCompileAudit(
-    compileId: string,
-    _surface: Surface,
-  ):
-    | {
-        compile_id: string;
-        snapshot_id: string;
-        knowledge_version: number;
-        request: object;
-        base_doc_ids: string[];
-        expanded_doc_ids: string[] | null;
-        created_at: string;
-      }
-    | undefined {
+  getCompileAudit(compileId: string, _surface: Surface): ReturnType<ContextCompiler['getCompileAudit']> {
     // Agent surface: allowed (read-only audit)
     return this.compiler.getCompileAudit(compileId);
   }

@@ -1827,6 +1827,40 @@ describe('ContextCompiler — v2 delivery', () => {
     expect(audit!.policy_omitted_doc_ids).toEqual([]);
   });
 
+  it('audit_meta JSON in compile_log matches CompileAuditMeta shape', async () => {
+    bootstrap(repo, {
+      documents: [{ doc_id: 'd1', title: 'D1', kind: 'guideline', content: 'content' }],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'd1',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+    const log = repo.getCompileLog(result.compile_id);
+    expect(log?.audit_meta).toBeTruthy();
+    const raw = JSON.parse(log!.audit_meta!) as unknown;
+    expect(raw).toMatchObject({
+      delivery_stats: {
+        inline_count: expect.any(Number),
+        inline_total_bytes: expect.any(Number),
+        deferred_count: expect.any(Number),
+        deferred_total_bytes: expect.any(Number),
+        omitted_count: expect.any(Number),
+        omitted_total_bytes: expect.any(Number),
+      },
+      budget_utilization: expect.any(Number),
+      budget_exceeded: expect.any(Boolean),
+      policy_omitted_doc_ids: expect.any(Array),
+    });
+  });
+
   it('v1 audit (no audit_meta) returns null for new fields', async () => {
     // Simulate v1 compile_log by inserting directly without audit_meta
     bootstrap(repo, {
