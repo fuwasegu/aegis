@@ -232,7 +232,7 @@ HuggingFace URI を直接指定することも可能: `--model hf:user/repo:file
 | ツール | 説明 |
 |--------|------|
 | `aegis_compile_context` | 対象ファイルの決定的コンテキストをコンパイル。`content_mode`（auto/always/metadata）と `max_inline_bytes` による出力サイズ制御に対応 |
-| `aegis_observe` | オブザベーション記録（compile_miss, review_correction, pr_merged, manual_note, document_import） |
+| `aegis_observe` | オブザベーション記録（compile_miss, review_correction, pr_merged, manual_note, document_import, doc_gap_detected） |
 | `aegis_get_compile_audit` | 過去のコンパイルの監査ログを取得 |
 | `aegis_init_detect` | プロジェクト分析と初期化プレビュー生成 |
 

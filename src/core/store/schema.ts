@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS observations (
     observation_id      TEXT PRIMARY KEY,
     event_type          TEXT NOT NULL
                         CHECK (event_type IN ('compile_miss', 'review_correction',
-                                              'pr_merged', 'manual_note', 'document_import')),
+                                              'pr_merged', 'manual_note', 'document_import',
+                                              'doc_gap_detected')),
     payload             TEXT NOT NULL,
     related_compile_id  TEXT,
     related_snapshot_id TEXT,

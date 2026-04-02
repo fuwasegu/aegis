@@ -51,6 +51,8 @@ const WORKFLOW_GUIDE = `# Aegis Workflow Guide
    - \`review_correction\`: reviewer corrected an agent's output
    - \`pr_merged\`: PR merged with file changes
    - \`manual_note\`: freeform knowledge capture
+   - \`document_import\`: propose importing a document into Canonical (admin pipeline)
+   - \`doc_gap_detected\`: diagnostic gap record (ADR-015 \`DocGapPayload\`; no proposal)
 
 3. **Approve** — Admin reviews proposals generated from observations:
    - \`aegis_list_proposals\` → \`aegis_get_proposal\` → \`aegis_approve_proposal\` / \`aegis_reject_proposal\`
@@ -140,7 +142,7 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
     'Record an observation event. Writes to Observation Layer only (never Canonical).',
     {
       event_type: z
-        .enum(['compile_miss', 'review_correction', 'pr_merged', 'manual_note', 'document_import'])
+        .enum(['compile_miss', 'review_correction', 'pr_merged', 'manual_note', 'document_import', 'doc_gap_detected'])
         .describe('Event type'),
       related_compile_id: z.string().optional().describe('Required for compile_miss'),
       related_snapshot_id: z.string().optional().describe('Required for compile_miss, optional for review_correction'),
@@ -374,10 +376,17 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
 
     server.tool(
       'aegis_list_observations',
-      'List observations with outcome-based filtering. Per ADR-008: helps admin triage skipped observations.',
+      'List observations with outcome-based filtering. Per ADR-008: helps admin triage skipped observations. Each row includes `payload` (parsed JSON) for full diagnostics (e.g. doc_gap_detected: scope_patterns, metrics, evidence ids, algorithm_version).',
       {
         event_type: z
-          .enum(['compile_miss', 'review_correction', 'pr_merged', 'manual_note', 'document_import'])
+          .enum([
+            'compile_miss',
+            'review_correction',
+            'pr_merged',
+            'manual_note',
+            'document_import',
+            'doc_gap_detected',
+          ])
           .optional()
           .describe('Filter by event type'),
         outcome: z
@@ -400,7 +409,14 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       'Process pending observations through the analyzer pipeline, generating proposals. Per ADR-003: admin-only explicit operation.',
       {
         event_type: z
-          .enum(['compile_miss', 'review_correction', 'pr_merged', 'manual_note', 'document_import'])
+          .enum([
+            'compile_miss',
+            'review_correction',
+            'pr_merged',
+            'manual_note',
+            'document_import',
+            'doc_gap_detected',
+          ])
           .optional()
           .describe('Process only this event type (default: all types)'),
       },

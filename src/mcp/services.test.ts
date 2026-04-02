@@ -709,6 +709,89 @@ describe('AegisService — observe validation', () => {
     );
     expect(result.observation_id).toBeTruthy();
   });
+
+  it('doc_gap_detected with valid payload succeeds', () => {
+    const result = service.observe(
+      {
+        event_type: 'doc_gap_detected',
+        related_compile_id: 'cmp-1',
+        related_snapshot_id: 'snap-1',
+        payload: {
+          gap_kind: 'content_gap',
+          target_doc_id: 'some-doc',
+          scope_patterns: ['src/**'],
+          evidence_observation_ids: [],
+          evidence_compile_ids: ['cmp-1'],
+          metrics: {
+            exposure_count: 1,
+            content_gap_count: 1,
+            distinct_clusters: 1,
+            cohort_gap_rate: 0.1,
+          },
+          suggested_next_action: 'review_doc',
+          algorithm_version: '0.1.0',
+        },
+      },
+      'agent',
+    );
+    expect(result.observation_id).toBeTruthy();
+  });
+
+  it('doc_gap_detected without gap_kind throws ObserveValidationError', () => {
+    expect(() =>
+      service.observe(
+        {
+          event_type: 'doc_gap_detected',
+          payload: { scope_patterns: ['src/**'] },
+        } as any,
+        'agent',
+      ),
+    ).toThrow(ObserveValidationError);
+  });
+
+  it('process_observations for doc_gap_detected creates no proposals', async () => {
+    const result = service.observe(
+      {
+        event_type: 'doc_gap_detected',
+        payload: {
+          gap_kind: 'routing_gap',
+          scope_patterns: ['**'],
+          evidence_observation_ids: [],
+          evidence_compile_ids: [],
+          metrics: {
+            exposure_count: 0,
+            content_gap_count: 0,
+            distinct_clusters: 0,
+            cohort_gap_rate: 0,
+          },
+          suggested_next_action: 'create_doc',
+          algorithm_version: '0.1.0-phase0',
+        },
+      },
+      'agent',
+    );
+    expect(result.observation_id).toBeTruthy();
+    const proc = await service.processObservations('doc_gap_detected', 'admin');
+    expect(proc.proposals_created).toBe(0);
+    const listed = service.listObservations({ event_type: 'doc_gap_detected' }, 'admin');
+    expect(listed.total).toBe(1);
+    expect(listed.observations[0].outcome).toBe('skipped');
+    expect(listed.observations[0].review_comment).toBe('routing_gap → create_doc');
+    const pl = listed.observations[0].payload;
+    expect(pl).not.toBeNull();
+    expect(pl?.gap_kind).toBe('routing_gap');
+    expect(pl?.scope_patterns).toEqual(['**']);
+    expect(pl?.evidence_observation_ids).toEqual([]);
+    expect(pl?.evidence_compile_ids).toEqual([]);
+    expect(pl?.metrics).toEqual({
+      exposure_count: 0,
+      content_gap_count: 0,
+      distinct_clusters: 0,
+      cohort_gap_rate: 0,
+    });
+    expect(pl?.suggested_next_action).toBe('create_doc');
+    expect(pl?.algorithm_version).toBe('0.1.0-phase0');
+  });
 });
 
 // ============================================================
@@ -1153,6 +1236,30 @@ describe('AegisService — list_observations (ADR-008)', () => {
     expect(result.observations).toHaveLength(1);
     expect(result.observations[0].outcome).toBe('pending');
     expect(result.observations[0].review_comment).toBe('pending miss');
+    expect(result.observations[0].payload).toEqual({
+      review_comment: 'pending miss',
+      target_files: ['a.ts'],
+    });
+  });
+
+  it('returns null payload and derived triage fields when stored payload is not valid JSON', () => {
+    repo.insertObservation({
+      observation_id: 'obs-bad-json',
+      event_type: 'compile_miss',
+      payload: '{not valid json',
+      related_compile_id: 'cmp-1',
+      related_snapshot_id: 'snap-1',
+    });
+
+    const result = service.listObservations({}, 'admin');
+    expect(result.total).toBe(1);
+    const row = result.observations[0];
+    expect(row.payload).toBeNull();
+    expect(row.review_comment).toBeNull();
+    expect(row.target_doc_id).toBeNull();
+    expect(row.target_files).toBeNull();
+    expect(row.observation_id).toBe('obs-bad-json');
+    expect(row.event_type).toBe('compile_miss');
   });
 
   it('returns skipped observations (analyzed but no proposal)', () => {
@@ -1692,7 +1799,14 @@ describe('buildObserveContent', () => {
   });
 
   it('first block is always valid JSON regardless of event type', () => {
-    for (const eventType of ['compile_miss', 'review_correction', 'pr_merged', 'manual_note']) {
+    for (const eventType of [
+      'compile_miss',
+      'review_correction',
+      'pr_merged',
+      'manual_note',
+      'document_import',
+      'doc_gap_detected',
+    ]) {
       const content = buildObserveContent({ observation_id: 'x' }, eventType);
       expect(() => JSON.parse(content[0].text)).not.toThrow();
     }
