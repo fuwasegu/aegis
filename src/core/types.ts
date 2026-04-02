@@ -283,14 +283,42 @@ export interface DeliveryStats {
   omitted_total_bytes: number;
 }
 
+export interface BudgetDroppedDoc {
+  doc_id: string;
+  bytes: number;
+  reason: string;
+}
+
+export type NearMissReason = 'glob_no_match' | 'layer_mismatch' | 'command_mismatch';
+
+export interface NearMissEdgeAudit {
+  edge_id: string;
+  pattern: string;
+  target_doc_id: string;
+  reason: NearMissReason;
+}
+
+export interface CompilePerformanceMeta {
+  near_miss_edge_scan_ms: number;
+  near_miss_edges_evaluated: number;
+}
+
 export interface CompileAuditMeta {
   delivery_stats: DeliveryStats;
   /** inline_total_bytes / max_inline_bytes (0.0–1.0) */
   budget_utilization: number;
   /** true if mandatory inline docs exceeded budget */
   budget_exceeded: boolean;
+  /** docs that lost inline delivery because the inline budget filled up */
+  budget_dropped: BudgetDroppedDoc[];
+  /** edges that were evaluated during routing but did not match */
+  near_miss_edges: NearMissEdgeAudit[];
+  /** per-target-file inferred layer (or null when unmatched) */
+  layer_classification: Record<string, string | null>;
   /** doc_ids omitted by policy (e.g. non-scaffold templates) */
   policy_omitted_doc_ids: string[];
+  /** observed overhead of the near-miss collection pass */
+  performance: CompilePerformanceMeta;
 }
 
 /**
