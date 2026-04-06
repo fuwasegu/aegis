@@ -1139,6 +1139,13 @@ describe('ContextCompiler — expanded context', () => {
     // Audit records expanded doc ids
     const audit = compiler.getCompileAudit(result.compile_id);
     expect(audit!.expanded_doc_ids).toEqual(expect.arrayContaining(['auth-doc', 'security-doc']));
+    expect(audit!.expanded_tagging).toEqual({
+      tags_source: 'slm',
+      requested_tags: ['authentication'],
+      accepted_tags: ['authentication'],
+      ignored_unknown_count: 0,
+      matched_doc_count: 2,
+    });
   });
 
   // ── base overlap excluded from expanded ──
@@ -1202,6 +1209,13 @@ describe('ContextCompiler — expanded context', () => {
     // Audit records null for expanded_doc_ids
     const audit = compiler.getCompileAudit(result.compile_id);
     expect(audit!.expanded_doc_ids).toBeNull();
+    expect(audit!.expanded_tagging).toEqual({
+      tags_source: 'slm',
+      requested_tags: [],
+      accepted_tags: [],
+      ignored_unknown_count: 0,
+      matched_doc_count: 0,
+    });
   });
 
   // ── unapproved docs excluded (getDocumentsByTags already filters) ──
@@ -1371,6 +1385,14 @@ describe('ContextCompiler — expanded context', () => {
     const audit = compiler.getCompileAudit(result.compile_id);
     const req = audit!.request as { intent_tags: string[] };
     expect(req.intent_tags).toEqual(['  security ', '', 'authentication', ' security ', 'authentication']);
+    expect(audit!.expanded_tagging!.requested_tags).toEqual([
+      '  security ',
+      '',
+      'authentication',
+      ' security ',
+      'authentication',
+    ]);
+    expect(audit!.expanded_tagging!.accepted_tags).toEqual(['authentication', 'security']);
   });
 
   // ── intent_tags: unknown tags excluded with warnings ──
@@ -1388,6 +1410,15 @@ describe('ContextCompiler — expanded context', () => {
     const expandedIds = result.expanded!.documents.map((d) => d.doc_id);
     expect(expandedIds).toContain('auth-doc');
     expect(expandedIds).toContain('security-doc');
+
+    const audit = compiler.getCompileAudit(result.compile_id);
+    expect(audit!.expanded_tagging).toEqual({
+      tags_source: 'agent',
+      requested_tags: ['not-a-real-tag', 'authentication'],
+      accepted_tags: ['authentication'],
+      ignored_unknown_count: 1,
+      matched_doc_count: 2,
+    });
   });
 
   // ── intent_tags: whitespace-only normalizes to empty expanded run ──
@@ -1405,6 +1436,65 @@ describe('ContextCompiler — expanded context', () => {
     expect(result.expanded!.reasoning).toMatch(/normalized to empty/);
     const audit = compiler.getCompileAudit(result.compile_id);
     expect(audit!.expanded_doc_ids).toEqual([]);
+    expect(audit!.expanded_tagging).toEqual({
+      tags_source: 'agent',
+      requested_tags: ['  ', ''],
+      accepted_tags: [],
+      ignored_unknown_count: 0,
+      matched_doc_count: 0,
+    });
+  });
+
+  it('BudgetExceededError: audit retains ExpandedTaggingAudit from intent_tags', async () => {
+    const largeContent = 'z'.repeat(6000);
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'base-doc', title: 'Base', kind: 'guideline', content: 'base' },
+        { doc_id: 'auth-doc', title: 'Auth', kind: 'guideline', content: 'auth' },
+        { doc_id: 'huge', title: 'Huge', kind: 'guideline', content: largeContent },
+      ],
+      edges: [
+        {
+          edge_id: 'e1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'base-doc',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+        {
+          edge_id: 'e2',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'huge',
+          edge_type: 'path_requires',
+          priority: 90,
+        },
+      ],
+    });
+    repo.upsertTagMapping({ tag: 'authentication', doc_id: 'auth-doc', confidence: 0.9, source: 'manual' });
+
+    const compiler = new ContextCompiler(repo, null);
+    try {
+      await compiler.compile({
+        target_files: ['src/a.ts'],
+        intent_tags: ['authentication'],
+        max_inline_bytes: 500,
+      });
+      expect.unreachable('should throw BudgetExceededError');
+    } catch (e: unknown) {
+      const err = e as import('../types.js').BudgetExceededError;
+      expect(err.name).toBe('BudgetExceededError');
+      const audit = compiler.getCompileAudit(err.compile_id);
+      expect(audit!.budget_exceeded).toBe(true);
+      expect(audit!.expanded_tagging).toEqual({
+        tags_source: 'agent',
+        requested_tags: ['authentication'],
+        accepted_tags: ['authentication'],
+        ignored_unknown_count: 0,
+        matched_doc_count: 1,
+      });
+    }
   });
 });
 
@@ -1996,6 +2086,13 @@ describe('ContextCompiler — v2 delivery', () => {
         near_miss_edge_scan_ms: expect.any(Number),
         near_miss_edges_evaluated: expect.any(Number),
       },
+      expanded_tagging: {
+        tags_source: null,
+        requested_tags: [],
+        accepted_tags: [],
+        ignored_unknown_count: 0,
+        matched_doc_count: 0,
+      },
     });
   });
 
@@ -2157,6 +2254,7 @@ describe('ContextCompiler — v2 delivery', () => {
     expect(audit!.layer_classification).toBeNull();
     expect(audit!.policy_omitted_doc_ids).toBeNull();
     expect(audit!.performance).toBeNull();
+    expect(audit!.expanded_tagging).toBeNull();
   });
 
   it('throws BudgetExceededError when mandatory docs exceed budget', async () => {
@@ -2207,6 +2305,13 @@ describe('ContextCompiler — v2 delivery', () => {
       const audit = compiler.getCompileAudit(err.compile_id);
       expect(audit).toBeDefined();
       expect(audit!.budget_exceeded).toBe(true);
+      expect(audit!.expanded_tagging).toEqual({
+        tags_source: null,
+        requested_tags: [],
+        accepted_tags: [],
+        ignored_unknown_count: 0,
+        matched_doc_count: 0,
+      });
     }
   });
 
