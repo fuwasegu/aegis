@@ -296,6 +296,19 @@ export class AegisService {
     return this.compiler.getCompileAudit(compileId);
   }
 
+  /**
+   * Returns the distinct tag catalog from `tag_mappings` (approved-linked only via {@link Repository.getAllTags})
+   * plus a SHA-256 hash of the canonical tag list for cache invalidation. `knowledge_version` is returned
+   * separately for snapshot alignment; the hash intentionally reflects tags only.
+   * Read-only on both surfaces (INV-6).
+   */
+  getKnownTags(_surface: Surface): { tags: string[]; knowledge_version: number; tag_catalog_hash: string } {
+    const tags = this.repo.getAllTags();
+    const knowledge_version = this.repo.getKnowledgeMeta().current_version;
+    const tag_catalog_hash = createHash('sha256').update(JSON.stringify(tags), 'utf8').digest('hex');
+    return { tags, knowledge_version, tag_catalog_hash };
+  }
+
   initDetect(projectRoot: string, _surface: Surface, options?: { skip_template?: boolean }): InitPreview {
     const preview = coreInitDetect(projectRoot, this.templatesRoot, this.extraTemplateDirs, options);
     if (preview.preview_hash) {

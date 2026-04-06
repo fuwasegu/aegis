@@ -1020,10 +1020,20 @@ export class Repository {
     this.db.prepare('DELETE FROM tag_mappings WHERE tag = ?').run(tag);
   }
 
+  /**
+   * Distinct tags that have at least one mapping to an **approved** document.
+   * Matches {@link getDocumentsByTags} eligibility so intent expansion and `aegis_get_known_tags`
+   * do not advertise tags that cannot resolve to any document.
+   */
   getAllTags(): string[] {
-    const rows = this.db.prepare('SELECT DISTINCT tag FROM tag_mappings ORDER BY tag ASC').all() as Array<{
-      tag: string;
-    }>;
+    const rows = this.db
+      .prepare(`
+      SELECT DISTINCT tm.tag
+      FROM tag_mappings tm
+      JOIN documents d ON d.doc_id = tm.doc_id AND d.status = 'approved'
+      ORDER BY tm.tag ASC
+    `)
+      .all() as Array<{ tag: string }>;
     return rows.map((r) => r.tag);
   }
 

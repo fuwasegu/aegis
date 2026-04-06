@@ -159,6 +159,120 @@ describe('AegisService — Surface Authorization', () => {
     const result = service.getCompileAudit('nonexistent', 'agent');
     expect(result).toBeUndefined();
   });
+
+  it('agent surface can call get_known_tags (read-only)', () => {
+    const result = service.getKnownTags('agent');
+    expect(result.tags).toEqual([]);
+    expect(result.knowledge_version).toBe(0);
+    expect(result.tag_catalog_hash).toHaveLength(64);
+  });
+});
+
+describe('AegisService — getKnownTags', () => {
+  let db: AegisDatabase;
+  let repo: Repository;
+  let service: AegisService;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+    service = new AegisService(repo, TEMPLATES_ROOT);
+  });
+
+  it('returns empty catalog with version 0 and deterministic SHA-256 hash', () => {
+    const r = service.getKnownTags('agent');
+    expect(r.tags).toEqual([]);
+    expect(r.knowledge_version).toBe(0);
+    expect(r.tag_catalog_hash).toBe(createHash('sha256').update(JSON.stringify([]), 'utf8').digest('hex'));
+  });
+
+  it('returns sorted distinct tags and changes hash when catalog changes', () => {
+    repo.insertDocument({
+      doc_id: 'd1',
+      title: 'T',
+      kind: 'guideline',
+      content: 'c',
+      content_hash: hash('c'),
+      status: 'approved',
+    });
+    repo.upsertTagMapping({ tag: 'zebra', doc_id: 'd1', confidence: 1, source: 'manual' });
+    repo.upsertTagMapping({ tag: 'alpha', doc_id: 'd1', confidence: 1, source: 'manual' });
+
+    const r = service.getKnownTags('admin');
+    expect(r.tags).toEqual(['alpha', 'zebra']);
+    const expectedHash = createHash('sha256')
+      .update(JSON.stringify(['alpha', 'zebra']), 'utf8')
+      .digest('hex');
+    expect(r.tag_catalog_hash).toBe(expectedHash);
+
+    repo.upsertTagMapping({ tag: 'beta', doc_id: 'd1', confidence: 1, source: 'manual' });
+    const r2 = service.getKnownTags('admin');
+    expect(r2.tags).toEqual(['alpha', 'beta', 'zebra']);
+    expect(r2.tag_catalog_hash).not.toBe(r.tag_catalog_hash);
+  });
+
+  it('returns knowledge_version alongside tag_catalog_hash from tags array only', () => {
+    repo.insertProposal({
+      proposal_id: 'boot',
+      proposal_type: 'bootstrap',
+      payload: JSON.stringify({
+        documents: [{ doc_id: 'd1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+        edges: [],
+        layer_rules: [],
+      }),
+      status: 'pending',
+      review_comment: null,
+    });
+    repo.approveProposal('boot');
+    repo.upsertTagMapping({ tag: 't1', doc_id: 'd1', confidence: 1, source: 'manual' });
+
+    const r1 = service.getKnownTags('agent');
+    expect(r1.knowledge_version).toBe(1);
+    expect(r1.tag_catalog_hash).toBe(
+      createHash('sha256')
+        .update(JSON.stringify(['t1']), 'utf8')
+        .digest('hex'),
+    );
+  });
+
+  it('does not list tags that only map to draft documents', () => {
+    repo.insertDocument({
+      doc_id: 'draft-doc',
+      title: 'Draft',
+      kind: 'guideline',
+      content: 'wip',
+      content_hash: hash('wip'),
+      status: 'draft',
+    });
+    repo.upsertTagMapping({ tag: 'orphan-tag', doc_id: 'draft-doc', confidence: 1, source: 'manual' });
+
+    const r = service.getKnownTags('admin');
+    expect(r.tags).toEqual([]);
+    expect(r.tag_catalog_hash).toBe(createHash('sha256').update(JSON.stringify([]), 'utf8').digest('hex'));
+  });
+
+  it('tag_catalog_hash distinguishes tag strings that differ only by embedded newlines', () => {
+    repo.insertDocument({
+      doc_id: 'd1',
+      title: 'T',
+      kind: 'guideline',
+      content: 'c',
+      content_hash: hash('c'),
+      status: 'approved',
+    });
+    repo.upsertTagMapping({ tag: 'a', doc_id: 'd1', confidence: 1, source: 'manual' });
+    repo.upsertTagMapping({ tag: 'b', doc_id: 'd1', confidence: 1, source: 'manual' });
+    repo.upsertTagMapping({ tag: 'c', doc_id: 'd1', confidence: 1, source: 'manual' });
+
+    const h1 = service.getKnownTags('agent').tag_catalog_hash;
+
+    repo.deleteTagMappings('c');
+    repo.upsertTagMapping({ tag: 'b\nc', doc_id: 'd1', confidence: 1, source: 'manual' });
+
+    const h2 = service.getKnownTags('agent').tag_catalog_hash;
+
+    expect(h1).not.toBe(h2);
+  });
 });
 
 describe('AegisService — compile_context v2 contract', () => {
@@ -2075,6 +2189,40 @@ describe('aegis_compile_context — intent_tags MCP wiring', () => {
 
     await client.close();
     await server.close();
+  });
+});
+
+describe('aegis_get_known_tags — MCP wiring', () => {
+  it('is registered on agent and admin surfaces and returns catalog JSON', async () => {
+    const db = await createInMemoryDatabase();
+    const repo = new Repository(db);
+    bootstrapIntentTagsMcpFixture(repo);
+    const service = new AegisService(repo, TEMPLATES_ROOT);
+
+    for (const surface of ['agent', 'admin'] as const) {
+      const server = createAegisServer(service, surface);
+      const client = new Client({ name: 'test-client', version: '0.0.1' });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+
+      const tools = await client.listTools();
+      expect(tools.tools.some((t) => t.name === 'aegis_get_known_tags')).toBe(true);
+
+      const response = await client.callTool({ name: 'aegis_get_known_tags', arguments: {} });
+      expect(response.isError).not.toBe(true);
+      const content = response.content as Array<{ type: string; text: string }>;
+      const body = JSON.parse(content[0].text) as {
+        tags: string[];
+        knowledge_version: number;
+        tag_catalog_hash: string;
+      };
+      expect(body.tags).toContain('authentication');
+      expect(body.knowledge_version).toBeGreaterThanOrEqual(1);
+      expect(body.tag_catalog_hash).toHaveLength(64);
+
+      await client.close();
+      await server.close();
+    }
   });
 });
 
