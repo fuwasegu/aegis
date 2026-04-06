@@ -386,6 +386,6 @@ The six invariants Aegis maintains:
 - Evidence chain from Observation → Proposal (`proposal_evidence`)
 
 ### INV-6: Privilege Separation
-- Agent Surface: read and Observation writes only (4 tools)
-- Admin Surface: all operations including Canonical mutations (15 tools: 4 shared + 11 admin-only)
+- Agent Surface: read and Observation writes only (5 tools: includes read-only `aegis_get_known_tags`)
+- Admin Surface: all operations including Canonical mutations (17 tools: 5 shared + 12 admin-only)
 - Structurally prevents AI agents from directly modifying architecture rules

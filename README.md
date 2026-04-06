@@ -25,8 +25,8 @@ Aegis uses two MCP surfaces — both are required:
 
 | Surface | Role | Tools |
 |---------|------|-------|
-| **agent** | Read-only tools for AI coding agents | 4 tools (compile, observe, audit, detect) |
-| **admin** | Initialization, approval, triage | 16 tools (4 shared + 12 admin-only) |
+| **agent** | Context compilation, observation recording, and related reads — no Canonical mutations | 5 tools (compile, observe, audit, known_tags, detect) |
+| **admin** | Initialization, approval, triage | 17 tools (5 shared + 12 admin-only) |
 
 > The agent surface alone cannot initialize a project or approve proposals. This separation ensures AI agents cannot modify architecture rules without human approval. ([INV-6](docs/technical-guide.md))
 
@@ -227,16 +227,17 @@ You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 
 ## Reference
 
-### MCP Tools — Agent Surface (4 tools)
+### MCP Tools — Agent Surface (5 tools)
 
 | Tool | Description |
 |------|-------------|
 | `aegis_compile_context` | Compile deterministic context for target files. Supports `content_mode` (auto/always/metadata) and `max_inline_bytes` for output size control |
 | `aegis_observe` | Record observations (compile_miss, review_correction, pr_merged, manual_note, document_import, doc_gap_detected) |
 | `aegis_get_compile_audit` | Retrieve audit log of a past compile |
+| `aegis_get_known_tags` | Distinct intent tags from tag_mappings (approved-linked) with `knowledge_version` and SHA-256 `tag_catalog_hash` for caching |
 | `aegis_init_detect` | Analyze a project to generate initialization preview |
 
-### MCP Tools — Admin Surface (additional 12 tools, 16 total)
+### MCP Tools — Admin Surface (additional 12 tools, 17 total)
 
 | Tool | Description |
 |------|-------------|

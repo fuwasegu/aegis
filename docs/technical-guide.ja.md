@@ -386,6 +386,6 @@ Aegis が維持する6つの不変条件:
 - Observation → Proposal の証拠チェーン（`proposal_evidence`）
 
 ### INV-6: 権限分離
-- Agent Surface: 読み取りと Observation 書き込みのみ（4ツール）
-- Admin Surface: Canonical 変更を含む全操作（15ツール: 共通4 + Admin専用11）
+- Agent Surface: 読み取りと Observation 層への書き込みのみ（5 ツール: 読み取り専用の `aegis_get_known_tags` を含む）
+- Admin Surface: Canonical 変更を含む全操作（17 ツール: 共通 5 + Admin 専用 12）
 - AI エージェントが直接アーキテクチャを変更することを構造的に防止
