@@ -2,6 +2,7 @@
 name: aegis-setup
 description: Guide for installing and initializing Aegis MCP server in a project. Use when setting up Aegis, adding architecture enforcement, initializing aegis, or when the user mentions aegis setup, onboarding, or project initialization with Aegis.
 ---
+<!-- aegis:managed-skill -->
 
 # Aegis Setup Guide
 
@@ -33,27 +34,11 @@ Add to the project's `.cursor/mcp.json` (create if missing):
 Using the **admin** surface tools:
 
 ```
-1. aegis_init_detect({ project_root: "<absolute path to project>" })
-   → Review the output: template match, confidence, seed documents
-```
+1. aegis_init_detect({ project_root: "<absolute path to project>", skip_template: true })
+   → Creates an empty knowledge base (no bundled templates)
 
-**Important: Before confirming, present the seed documents to the user.**
-
-The preview includes `seed_documents` — architecture guidelines that will be added to the knowledge base. These are generic best practices for the detected stack (e.g. Next.js App Router, Laravel DDD). They may not match the project's actual conventions.
-
-**You MUST ask the user:**
-> "Aegis detected **{template_name}** and will add these seed documents:
-> - {doc_id}: {title}
-> - {doc_id}: {title}
-> - ...
->
-> Do you want all of them, or should I exclude any?"
-
-If the user wants to exclude documents, note the `doc_id`s to exclude. If the user wants no template documents at all, skip to Step 3 and use `import_doc` instead.
-
-```
 2. aegis_init_confirm({ preview_hash: "<hash from step 1>" })
-   → Creates seed documents, edges, layer rules
+   → Initializes the project with an empty knowledge base
 
 3. Deploy adapter rules (run in terminal, not an MCP tool):
    npx @fuwasegu/aegis deploy-adapters
@@ -63,34 +48,59 @@ If the user wants to exclude documents, note the `doc_id`s to exclude. If the us
 
 After init, `.aegis/` directory is created with the database. It self-manages its `.gitignore`.
 
-## Step 3: Import Existing Docs (Optional)
+## Step 3: Analyze Codebase and Create Documents
 
-If the project has existing architecture documentation, read the file content and pass it directly:
+The knowledge base is empty after init. You need to analyze the codebase and create architecture documents.
+
+**You MUST use the admin surface for this step.**
+
+1. **Read the project structure** — List directories, identify key architectural patterns (e.g. layered architecture, domain modules, API routes).
+2. **For each pattern, create a document** using `aegis_import_doc`:
 
 ```
 aegis_import_doc({
-  content: "<full markdown content of the document>",
-  doc_id: "my-doc-id",
-  title: "My Document",
+  doc_id: "repo-pattern",
+  title: "Repository Pattern",
   kind: "guideline",
-  tags: ["architecture", "patterns"],
+  content: "## Repository Pattern\n\nAll data access goes through repository interfaces...",
   edge_hints: [
-    { source_type: "doc_depends_on", target_doc_id: "other-doc-id" }
+    { source_type: "path", source_value: "src/core/store/**", edge_type: "path_requires" }
   ]
 })
 ```
 
-Required fields: `content`, `doc_id`, `title`, `kind`.
-Optional fields: `tags`, `edge_hints`, `source_path` (for provenance tracking only).
+**CRITICAL: Always include `edge_hints`.**
+Without `edge_hints`, the document will be isolated in the DAG and `compile_context` will never return it. Each `edge_hint` connects the document to file path patterns so that `compile_context` can route queries to it.
 
-Each import creates a **proposal** (with full evidence chain via observation) that must be approved:
+If the project has existing architecture documentation files, use `file_path` to import directly from disk:
+
+```
+aegis_import_doc({
+  file_path: "/absolute/path/to/doc.md",
+  doc_id: "my-doc-id",
+  title: "My Document",
+  kind: "guideline",
+  edge_hints: [
+    { source_type: "path", source_value: "src/domain/**", edge_type: "path_requires" }
+  ]
+})
+```
+
+Required fields: `doc_id`, `title`, `kind`, and either `content` or `file_path`.
+Optional fields: `tags`, `edge_hints`, `source_path` (auto-set from `file_path` if not provided).
+
+For bulk-importing many documents at once, see the [aegis-bulk-import skill](../aegis-bulk-import/SKILL.md).
+
+## Step 4: Approve Proposals
+
+Each import creates a **proposal** that must be approved:
 
 ```
 aegis_list_proposals({ status: "pending" })
 aegis_approve_proposal({ proposal_id: "<id>" })
 ```
 
-## Step 4: Verify
+## Step 5: Verify
 
 Test the setup by compiling context:
 
@@ -101,9 +111,9 @@ aegis_compile_context({
 })
 ```
 
-Should return architecture documents relevant to the target files.
+Should return architecture documents relevant to the target files. If empty, check that your `edge_hints` patterns match the target file paths.
 
-## Step 5: Claude Code / Codex (Optional)
+## Step 6: Claude Code / Codex (Optional)
 
 For Claude Code projects, also add to `.mcp.json`:
 
@@ -133,7 +143,7 @@ SLM is **disabled by default**. The deterministic DAG context works without it. 
 | `--model qwen3.5-9b` | Higher quality model (~5.5 GB, requires `--slm`) |
 | `--list-models` | Show all available models |
 | `--ollama` | Use Ollama backend (implies `--slm`) |
-| `--template-dir <path>` | Additional template search path (local overrides bundled) |
+| `--template-dir <path>` | Additional template search path (for custom templates) |
 
 Models are stored in `~/.aegis/models/` and shared across all projects.
 
@@ -154,7 +164,6 @@ Example MCP config with SLM enabled:
 
 | Issue | Solution |
 |-------|----------|
-| `No matching architecture profile` | Project structure doesn't match any template. Check detection evidence in init_detect output. |
-| `Ambiguous profile selection` | Multiple templates matched equally. May need to add template or adjust project structure. |
-| `Compile returns empty` | Run init first. Or check that edges exist for your file paths. |
+| `Compile returns empty` | Check that edges exist for your file paths. Use `aegis_import_doc` with `edge_hints`. |
+| `Ambiguous profile selection` | Use `skip_template: true` to bypass template detection. |
 | SLM download fails | Remove `--slm` flag. Base context works without SLM. |
