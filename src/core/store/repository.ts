@@ -4,7 +4,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { normalizeSourcePath } from '../paths.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { normalizeSourcePath, resolveSourcePath } from '../paths.js';
 import {
   type CanonicalVersion,
   type CompileLog,
@@ -107,8 +108,8 @@ export class Repository {
     assertOwnershipSourcePathInvariant(ownership, sourcePath);
     this.db
       .prepare(`
-      INSERT INTO documents (doc_id, title, kind, content, content_hash, status, ownership, template_origin, source_path)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO documents (doc_id, title, kind, content, content_hash, status, ownership, template_origin, source_path, source_synced_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
       .run(
         doc.doc_id,
@@ -120,7 +121,19 @@ export class Repository {
         ownership,
         doc.template_origin ?? null,
         sourcePath,
+        doc.source_synced_at ?? null,
       );
+  }
+
+  /** ADR-014: mark file-anchored docs as verified in sync with on-disk source (hash match). */
+  touchDocumentsSourceSyncedAt(docIds: string[]): void {
+    if (docIds.length === 0) return;
+    const placeholders = docIds.map(() => '?').join(', ');
+    this.db
+      .prepare(
+        `UPDATE documents SET source_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE doc_id IN (${placeholders})`,
+      )
+      .run(...docIds);
   }
 
   getDocumentById(docId: string): Document | undefined {
@@ -759,7 +772,7 @@ export class Repository {
       } else if (proposal.proposal_type === 'remove_edge') {
         this._applyRemoveEdge(payload);
       } else if (proposal.proposal_type === 'new_doc') {
-        this._applyNewDoc(payload);
+        this._applyNewDoc(payload, projectRoot);
         if (Array.isArray(payload.tags) && payload.tags.length > 0 && payload.doc_id) {
           for (const tag of payload.tags as string[]) {
             this.upsertTagMapping({ tag, doc_id: payload.doc_id as string, confidence: 1.0, source: 'manual' });
@@ -1030,7 +1043,33 @@ export class Repository {
     this.db.prepare('DELETE FROM edges WHERE edge_id = ?').run(edgeId);
   }
 
-  private _applyNewDoc(payload: Omit<Document, 'created_at' | 'updated_at' | 'status'>): void {
+  /**
+   * ADR-014: `source_synced_at` means on-disk source was verified (hash == approved content_hash).
+   * Approve-time check avoids marking "verified" when the file changed during proposal pending.
+   */
+  private _sourceSyncedAtIfApproveMatchesDisk(
+    ownership: DocOwnership,
+    sourcePath: string | null,
+    contentHash: string,
+    projectRoot: string | undefined,
+  ): string | null {
+    if (ownership !== 'file-anchored' || !sourcePath?.trim() || !projectRoot) {
+      return null;
+    }
+    try {
+      const abs = resolveSourcePath(sourcePath, projectRoot);
+      if (!existsSync(abs)) {
+        return null;
+      }
+      const fileContent = readFileSync(abs, 'utf-8');
+      const fileHash = createHash('sha256').update(fileContent).digest('hex');
+      return fileHash === contentHash ? new Date().toISOString() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private _applyNewDoc(payload: Omit<Document, 'created_at' | 'updated_at' | 'status'>, projectRoot?: string): void {
     const sourcePath = payload.source_path ?? null;
     let ownership: DocOwnership;
     if (payload.ownership !== undefined && payload.ownership !== null) {
@@ -1039,12 +1078,19 @@ export class Repository {
       ownership = sourcePath ? 'file-anchored' : 'standalone';
     }
     assertOwnershipSourcePathInvariant(ownership, sourcePath);
+    const sourceSyncedAt = this._sourceSyncedAtIfApproveMatchesDisk(
+      ownership,
+      sourcePath,
+      payload.content_hash,
+      projectRoot,
+    );
     this.insertDocument({
       ...payload,
       ownership,
       template_origin: payload.template_origin ?? null,
       source_path: sourcePath,
       status: 'approved',
+      source_synced_at: sourceSyncedAt,
     });
   }
 
@@ -1086,6 +1132,11 @@ export class Repository {
     if (payload.ownership !== undefined) {
       sets.push('ownership = ?');
       params.push(mergedOwnership);
+    }
+    // source_synced_at: only refresh via sync_docs hash match (ADR-014). Approving arbitrary
+    // update_doc (review_correction, etc.) must not mask staleness.
+    if (mergedOwnership !== 'file-anchored' || !mergedSourcePath || String(mergedSourcePath).trim() === '') {
+      sets.push('source_synced_at = NULL');
     }
     params.push(payload.doc_id);
     this.db.prepare(`UPDATE documents SET ${sets.join(', ')} WHERE doc_id = ?`).run(...params);

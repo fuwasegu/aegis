@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -1077,6 +1077,127 @@ describe('Repository', () => {
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
+    });
+
+    it('new_doc approve sets source_synced_at only when disk file matches payload at approve (ADR-014)', () => {
+      const root = mkdtempSync(join(tmpdir(), 'aegis-newdoc-'));
+      try {
+        const rel = 'docs/n.md';
+        const body = 'hello';
+        mkdirSync(join(root, 'docs'), { recursive: true });
+        writeFileSync(join(root, rel), body, 'utf-8');
+        repo.insertProposal({
+          proposal_id: 'p-new-sync',
+          proposal_type: 'new_doc',
+          payload: JSON.stringify({
+            doc_id: 'new-sync-doc',
+            title: 'S',
+            kind: 'guideline',
+            content: body,
+            content_hash: hash(body),
+            ownership: 'file-anchored',
+            source_path: rel,
+          }),
+          status: 'pending',
+          review_comment: null,
+        });
+        repo.approveProposal('p-new-sync', undefined, root);
+        expect(repo.getDocumentById('new-sync-doc')?.source_synced_at).toBeTruthy();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('new_doc approve does not set source_synced_at when disk file differs from payload (ADR-014)', () => {
+      const root = mkdtempSync(join(tmpdir(), 'aegis-newdoc2-'));
+      try {
+        const rel = 'docs/changed.md';
+        mkdirSync(join(root, 'docs'), { recursive: true });
+        writeFileSync(join(root, rel), 'on disk', 'utf-8');
+        repo.insertProposal({
+          proposal_id: 'p-new-mismatch',
+          proposal_type: 'new_doc',
+          payload: JSON.stringify({
+            doc_id: 'mis-doc',
+            title: 'M',
+            kind: 'guideline',
+            content: 'in proposal',
+            content_hash: hash('in proposal'),
+            ownership: 'file-anchored',
+            source_path: rel,
+          }),
+          status: 'pending',
+          review_comment: null,
+        });
+        repo.approveProposal('p-new-mismatch', undefined, root);
+        expect(repo.getDocumentById('mis-doc')?.source_synced_at).toBeNull();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('new_doc approve without projectRoot leaves source_synced_at null for file-anchored (ADR-014)', () => {
+      repo.insertProposal({
+        proposal_id: 'p-new-noroot',
+        proposal_type: 'new_doc',
+        payload: JSON.stringify({
+          doc_id: 'noroot-doc',
+          title: 'N',
+          kind: 'guideline',
+          content: 'c',
+          content_hash: hash('c'),
+          ownership: 'file-anchored',
+          source_path: 'whatever.md',
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-new-noroot');
+      expect(repo.getDocumentById('noroot-doc')?.source_synced_at).toBeNull();
+    });
+
+    it('update_doc approve does not overwrite source_synced_at for file-anchored docs (ADR-014)', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot-fa',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [
+            {
+              doc_id: 'fa-upd',
+              title: 'FA',
+              kind: 'guideline',
+              content: 'body',
+              content_hash: hash('body'),
+              ownership: 'file-anchored',
+              source_path: 'z.md',
+              template_origin: null,
+            },
+          ],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot-fa');
+      db.prepare(`UPDATE documents SET source_synced_at = ? WHERE doc_id = ?`).run(
+        '2000-01-01T00:00:00.000Z',
+        'fa-upd',
+      );
+
+      repo.insertProposal({
+        proposal_id: 'p-upd-fa',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({
+          doc_id: 'fa-upd',
+          content: 'new body',
+          content_hash: hash('new body'),
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-upd-fa');
+      expect(repo.getDocumentById('fa-upd')?.source_synced_at).toBe('2000-01-01T00:00:00.000Z');
     });
 
     it('_applyModifications allows source_path for new_doc and update_doc', () => {

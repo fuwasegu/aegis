@@ -294,6 +294,14 @@ function printMaintenanceSummary(result: MaintenanceRunResult): void {
     console.log(`   skipped_invalid_anchor: ${sd.skipped_invalid_anchor.join(', ')}`);
   }
 
+  const st = result.staleness_report;
+  console.log(
+    `\n   staleness (file-anchored, >= ${st.threshold_days}d since source sync): ${st.stale_file_anchored_doc_ids.length} doc(s)`,
+  );
+  if (st.stale_file_anchored_doc_ids.length) {
+    console.log(`     ${st.stale_file_anchored_doc_ids.join(', ')}`);
+  }
+
   console.log('\n3. archive_observations');
   const ar = result.archive_observations;
   console.log(`   eligible (older than threshold, no pending block): ${ar.eligible_count}`);

@@ -130,6 +130,40 @@ describe('ContextCompiler', () => {
     expect(result.knowledge_version).toBe(1);
   });
 
+  it('surfaces stale source_synced_at via notices (ADR-014; P-1 excludes notices)', async () => {
+    bootstrap(repo, {
+      documents: [
+        {
+          doc_id: 'stale-src',
+          title: 'Stale',
+          kind: 'guideline',
+          content: 'c',
+          source_path: 'docs/x.md',
+          ownership: 'file-anchored',
+        },
+      ],
+      edges: [
+        {
+          edge_id: 'e-stale',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'stale-src',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+    db.prepare(`UPDATE documents SET source_synced_at = ? WHERE doc_id = ?`).run(
+      '2000-01-01T00:00:00.000Z',
+      'stale-src',
+    );
+
+    const result = await compiler.compile({ target_files: ['src/foo.ts'] });
+
+    expect(result.notices.some((w) => w.includes('Stale file-anchored'))).toBe(true);
+    expect(result.notices.some((w) => w.includes('stale-src'))).toBe(true);
+  });
+
   // ── 2. 複数 path edge は union される ──
   it('unions multiple path_requires matches (union semantics)', async () => {
     bootstrap(repo, {

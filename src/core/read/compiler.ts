@@ -11,6 +11,7 @@
 import { performance } from 'node:perf_hooks';
 import picomatch from 'picomatch';
 import { v4 as uuidv4 } from 'uuid';
+import { SOURCE_SYNC_STALE_WARNING_DAYS, sourceSyncStalenessWarningsForDocuments } from '../source-sync-staleness.js';
 import type { Repository } from '../store/repository.js';
 import type { IntentTagger } from '../tagging/tagger.js';
 import type {
@@ -530,6 +531,25 @@ export class ContextCompiler {
         expandedTaggingAudit = { ...emptyExpandedTaggingAudit(), tags_source: 'slm' };
       }
     }
+
+    const stalenessDocMap = new Map<string, Document>();
+    for (const d of sortedDocs) {
+      stalenessDocMap.set(d.doc_id, d);
+    }
+    if (expandedCandidates.length > 0) {
+      const expandedIds = expandedCandidates.map((c) => c.doc_id);
+      for (const d of this.repo.getApprovedDocumentsByIds(expandedIds)) {
+        stalenessDocMap.set(d.doc_id, d);
+      }
+    }
+    // ADR-014: operational staleness — P-1 covers `warnings`; time-dependent hints go in `notices` (technical-guide §P-1).
+    notices.push(
+      ...sourceSyncStalenessWarningsForDocuments(
+        [...stalenessDocMap.values()],
+        SOURCE_SYNC_STALE_WARNING_DAYS,
+        Date.now(),
+      ),
+    );
 
     // ── Allocate delivery (ADR-009) ──
     const contentMode = request.content_mode ?? 'auto';
