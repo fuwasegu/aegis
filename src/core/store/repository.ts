@@ -309,6 +309,43 @@ export class Repository {
       .all(eventType, limit) as Observation[];
   }
 
+  /**
+   * Atomically claim up to `limit` pending observations for processing.
+   * SELECT candidates and conditional UPDATE run inside a single DB transaction
+   * so concurrent processes (separate file-backed connections) cannot claim the same rows.
+   * Returns rows as claimed (with `analyzed_at` set).
+   */
+  claimUnanalyzedObservations(eventType: string, limit = 50): Observation[] {
+    return this.db.transaction(() => {
+      const candidates = this.db
+        .prepare(`
+        SELECT o.* FROM observations o
+        WHERE o.event_type = ?
+          AND o.archived_at IS NULL
+          AND o.analyzed_at IS NULL
+        ORDER BY o.created_at ASC
+        LIMIT ?
+      `)
+        .all(eventType, limit) as Observation[];
+
+      if (candidates.length === 0) return [];
+
+      const now = new Date().toISOString();
+      const stmt = this.db.prepare(
+        'UPDATE observations SET analyzed_at = ? WHERE observation_id = ? AND analyzed_at IS NULL',
+      );
+
+      const claimed: Observation[] = [];
+      for (const o of candidates) {
+        const { changes } = stmt.run(now, o.observation_id);
+        if (changes > 0) {
+          claimed.push({ ...o, analyzed_at: now });
+        }
+      }
+      return claimed;
+    })();
+  }
+
   /** Full pending count (no LIMIT); use for maintenance previews and backlog metrics. */
   countUnanalyzedObservations(eventType: string): number {
     const row = this.db

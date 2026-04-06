@@ -381,22 +381,27 @@ export class AegisService {
    * Internal automation pipeline — NOT exposed via MCP.
    * Fetches unanalyzed observations, runs analyzer, persists proposals.
    *
-   * Concurrency safety: observations are claimed (marked analyzed) BEFORE
-   * the async analyzer runs, preventing a concurrent call from picking up
-   * the same observations. On failure, the claim is rolled back.
+   * Concurrency safety: {@link Repository.claimUnanalyzedObservations} runs inside a DB
+   * transaction so two processes cannot claim the same rows; claim completes BEFORE
+   * the async analyzer runs. On failure, the claim is rolled back.
    */
   async analyzeAndPropose(
     analyzer: ObservationAnalyzer,
     eventType: ObservationEventType,
     surface: Surface,
-  ): Promise<{ analysis: AnalysisResult; proposals: ProposeResult }> {
+  ): Promise<{ analysis: AnalysisResult; proposals: ProposeResult; claimed_count: number }> {
     this.assertAdmin('analyzeAndPropose', surface);
 
-    const observations = this.repo.getUnanalyzedObservations(eventType);
+    const observations = this.repo.claimUnanalyzedObservations(eventType);
     const claimedIds = observations.map((o) => o.observation_id);
 
-    // Pessimistic claim: mark as analyzed before yielding to async analyzer
-    this.repo.markObservationsAnalyzed(claimedIds);
+    if (claimedIds.length === 0) {
+      return {
+        analysis: { drafts: [], skipped_observation_ids: [], errors: [] },
+        proposals: { created_proposal_ids: [], skipped_duplicate_count: 0 },
+        claimed_count: 0,
+      };
+    }
 
     const contexts: AnalysisContext[] = observations.map((obs) => {
       const audit = obs.related_compile_id ? this.compiler.getCompileAudit(obs.related_compile_id) : null;
@@ -419,7 +424,7 @@ export class AegisService {
       const analysis = await analyzer.analyze(contexts);
       const proposeService = new ProposeService(this.repo);
       const proposals = proposeService.propose(analysis.drafts);
-      return { analysis, proposals };
+      return { analysis, proposals, claimed_count: claimedIds.length };
     } catch (err) {
       // Rollback claim so observations are available for retry
       this.repo.resetObservationsAnalyzed(claimedIds);
@@ -877,14 +882,12 @@ export class AegisService {
       const analyzer = this.analyzerRegistry.get(et);
       if (!analyzer) continue;
 
-      // Process in batches of 50 (getUnanalyzedObservations default limit) until queue is empty.
+      // Process in batches of 50 (claimUnanalyzedObservations default limit) until queue is empty.
       while (true) {
-        const unanalyzed = this.repo.getUnanalyzedObservations(et);
-        if (unanalyzed.length === 0) break;
-
         try {
-          const { analysis, proposals } = await this.analyzeAndPropose(analyzer, et, surface);
-          totalProcessed += unanalyzed.length - analysis.skipped_observation_ids.length - analysis.errors.length;
+          const { analysis, proposals, claimed_count } = await this.analyzeAndPropose(analyzer, et, surface);
+          if (claimed_count === 0) break;
+          totalProcessed += claimed_count - analysis.skipped_observation_ids.length - analysis.errors.length;
           totalCreated += proposals.created_proposal_ids.length;
           for (const err of analysis.errors) {
             allErrors.push(`[${et}] ${err.observation_id}: ${err.reason}`);

@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PENDING_CONTENT_PLACEHOLDER } from '../types.js';
 import {
   type AegisDatabase,
   AlreadyInitializedError,
   CycleDetectedError,
+  createDatabase,
   createInMemoryDatabase,
   Repository,
 } from './index.js';
@@ -1001,6 +1002,47 @@ describe('Repository', () => {
 
       const counts = repo.countActionableObservations();
       expect(counts).toEqual({ pending: 0, skipped: 0 });
+    });
+  });
+
+  describe('claimUnanalyzedObservations (file-backed)', () => {
+    let tmpDir: string;
+    let dbPath: string;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'aegis-claim-'));
+      dbPath = join(tmpDir, 'x.db');
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('second DB connection cannot claim rows already claimed by the first', async () => {
+      const db0 = await createDatabase(dbPath);
+      const r0 = new Repository(db0);
+      r0.insertObservation({
+        observation_id: 'o-dual-claim',
+        event_type: 'compile_miss',
+        payload: JSON.stringify({ target_files: ['a.ts'], review_comment: 'x' }),
+        related_compile_id: null,
+        related_snapshot_id: null,
+      });
+      db0.close();
+
+      const dbA = await createDatabase(dbPath);
+      const dbB = await createDatabase(dbPath);
+      const rA = new Repository(dbA);
+      const rB = new Repository(dbB);
+
+      const claimedA = rA.claimUnanalyzedObservations('compile_miss', 50);
+      const claimedB = rB.claimUnanalyzedObservations('compile_miss', 50);
+
+      expect(claimedA.map((o) => o.observation_id)).toEqual(['o-dual-claim']);
+      expect(claimedB).toHaveLength(0);
+
+      dbA.close();
+      dbB.close();
     });
   });
 
