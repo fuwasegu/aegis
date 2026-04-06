@@ -3,9 +3,9 @@
  * Tool registration only. All business logic delegated to AegisService.
  *
  * Surface separation (INV-6):
- * - Agent Surface: compile_context, observe, get_compile_audit, init_detect (4 tools)
+ * - Agent Surface: compile_context, observe, get_compile_audit, get_known_tags, init_detect (5 tools)
  * - Admin Surface: agent tools + init_confirm,
- *                  list/get/approve/reject_proposals, list_observations, sync_docs (16 tools total)
+ *                  list/get/approve/reject_proposals, list_observations, sync_docs (17 tools total)
  * - propose is NOT exposed (internal only)
  *
  * init_detect is on both surfaces (read-only preview).
@@ -189,6 +189,16 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
           isError: true,
         };
       }
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'aegis_get_known_tags',
+    'List distinct intent tags from tag_mappings (approved-resolvable only) with knowledge_version and a SHA-256 tag_catalog_hash of the tag list for client-side caching.',
+    {},
+    async () => {
+      const result = service.getKnownTags(surface);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
   );

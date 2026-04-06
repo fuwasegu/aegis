@@ -258,6 +258,21 @@ describe('Repository - Tag Mappings', () => {
     it('returns empty array when no tags exist', () => {
       expect(repo.getAllTags()).toEqual([]);
     });
+
+    it('omits tags that only map to non-approved documents', () => {
+      repo.insertDocument({
+        doc_id: 'draft-doc',
+        title: 'Draft',
+        kind: 'guideline',
+        content: 'wip',
+        content_hash: 'hash-d',
+        status: 'draft',
+      });
+      repo.upsertTagMapping({ tag: 'draft-only', doc_id: 'draft-doc', confidence: 1, source: 'slm' });
+      repo.upsertTagMapping({ tag: 'auth', doc_id: 'auth-guide', confidence: 0.9, source: 'slm' });
+
+      expect(repo.getAllTags()).toEqual(['auth']);
+    });
   });
 });
 
