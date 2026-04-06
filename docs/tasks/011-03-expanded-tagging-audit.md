@@ -1,13 +1,13 @@
 ---
 id: "011-03"
 title: "Audit に ExpandedTaggingAudit メタデータを追加"
-status: "open"
+status: "done"
 adr: "ADR-011"
 phase: 2
 priority: "P1"
 depends_on: ["011-01", "012-01"]
 created: "2026-03-31"
-closed: ""
+closed: "2026-04-06"
 closed_reason: ""
 ---
 
@@ -17,8 +17,8 @@ closed_reason: ""
 
 ## 受け入れ条件
 
-- [ ] `ExpandedTaggingAudit` 型が定義されていること
-- [ ] `CompileAuditMeta.expanded_tagging` に記録されること
-- [ ] 正常経路・失敗経路（BudgetExceededError）両方で記録されること
-- [ ] `aegis_get_compile_audit` で返却されること
-- [ ] テスト追加
+- [x] `ExpandedTaggingAudit` 型が定義されていること
+- [x] `CompileAuditMeta.expanded_tagging` に記録されること
+- [x] 正常経路・失敗経路（BudgetExceededError）両方で記録されること
+- [x] `aegis_get_compile_audit` で返却されること
+- [x] テスト追加

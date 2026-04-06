@@ -20,6 +20,7 @@ import type {
   CompileRequest,
   Document,
   Edge,
+  ExpandedTaggingAudit,
   NearMissEdgeAudit,
   ResolvedDoc,
   ResolvedEdge,
@@ -182,6 +183,16 @@ function normalizeIntentTags(raw: string[]): string[] {
   const unique = [...new Set(trimmed)];
   unique.sort((a, b) => a.localeCompare(b));
   return unique;
+}
+
+function emptyExpandedTaggingAudit(): ExpandedTaggingAudit {
+  return {
+    tags_source: null,
+    requested_tags: [],
+    accepted_tags: [],
+    ignored_unknown_count: 0,
+    matched_doc_count: 0,
+  };
 }
 
 export class ContextCompiler {
@@ -432,11 +443,14 @@ export class ContextCompiler {
     let expandedConfidence = 0;
     let expandedReasoning = '';
     let expandedHasResult = false;
+    let expandedTaggingAudit = emptyExpandedTaggingAudit();
 
     if (request.intent_tags !== undefined) {
+      expandedTaggingAudit = { ...emptyExpandedTaggingAudit(), tags_source: 'agent' };
       if (request.intent_tags.length === 0) {
         // Explicit opt-out: no expanded section, no tagger
       } else {
+        const rawRequested = [...request.intent_tags];
         const normalized = normalizeIntentTags(request.intent_tags);
         const knownTags = this.repo.getAllTags();
         const knownSet = new Set(knownTags);
@@ -446,6 +460,13 @@ export class ContextCompiler {
           }
         }
         const knownOnly = normalized.filter((t) => knownSet.has(t));
+        expandedTaggingAudit = {
+          tags_source: 'agent',
+          requested_tags: rawRequested,
+          accepted_tags: knownOnly,
+          ignored_unknown_count: normalized.filter((t) => !knownSet.has(t)).length,
+          matched_doc_count: 0,
+        };
         if (knownOnly.length === 0) {
           expandedDocIds = [];
           expandedConfidence = 0;
@@ -461,29 +482,52 @@ export class ContextCompiler {
           expandedConfidence = filled.confidence;
           expandedReasoning = filled.reasoning;
           expandedHasResult = true;
+          expandedTaggingAudit = { ...expandedTaggingAudit, matched_doc_count: filled.docIds.length };
         }
       }
     } else if (request.plan && this.tagger) {
+      expandedTaggingAudit = { ...emptyExpandedTaggingAudit(), tags_source: 'slm' };
       try {
         const knownTags = this.repo.getAllTags();
+        const knownSet = new Set(knownTags);
         const tags = await this.tagger.extractTags(request.plan, knownTags);
         const tagNames = tags.map((t) => t.tag);
+        const rawRequested = [...tagNames];
+        const normalized = normalizeIntentTags(tagNames);
+        for (const t of normalized) {
+          if (!knownSet.has(t)) {
+            warnings.push(`Unknown intent_tag (excluded): ${t}`);
+          }
+        }
+        const knownOnly = normalized.filter((t) => knownSet.has(t));
+        expandedTaggingAudit = {
+          tags_source: 'slm',
+          requested_tags: rawRequested,
+          accepted_tags: knownOnly,
+          ignored_unknown_count: normalized.filter((t) => !knownSet.has(t)).length,
+          matched_doc_count: 0,
+        };
 
-        if (tagNames.length > 0) {
-          const filled = this.fillExpandedFromTagNames(tagNames, baseCandidates, templateDocIds);
+        if (knownOnly.length > 0) {
+          const filled = this.fillExpandedFromTagNames(knownOnly, baseCandidates, templateDocIds);
           expandedCandidates.push(...filled.candidates);
           expandedDocIds = filled.docIds;
           expandedConfidence = filled.confidence;
           expandedReasoning = filled.reasoning;
           expandedHasResult = true;
+          expandedTaggingAudit = { ...expandedTaggingAudit, matched_doc_count: filled.docIds.length };
         } else {
           expandedDocIds = [];
           expandedConfidence = 0;
-          expandedReasoning = 'Tagger returned no tags for the given plan';
+          expandedReasoning =
+            normalized.length === 0
+              ? 'Tagger returned no tags for the given plan'
+              : 'No known intent_tags after filtering unknown values';
           expandedHasResult = true;
         }
       } catch (err) {
         warnings.push(`Expanded context skipped: tagger failed (${(err as Error).message})`);
+        expandedTaggingAudit = { ...emptyExpandedTaggingAudit(), tags_source: 'slm' };
       }
     }
 
@@ -508,6 +552,7 @@ export class ContextCompiler {
         near_miss_edges: nearMissEdges,
         layer_classification: layerClassification,
         performance: compilePerformance,
+        expanded_tagging: expandedTaggingAudit,
       };
     } catch (err) {
       if (err instanceof BudgetExceededError) {
@@ -530,6 +575,7 @@ export class ContextCompiler {
           layer_classification: layerClassification,
           policy_omitted_doc_ids: [],
           performance: compilePerformance,
+          expanded_tagging: expandedTaggingAudit,
         };
 
         this.repo.insertCompileLog({
@@ -625,6 +671,7 @@ export class ContextCompiler {
         layer_classification: CompileAuditMeta['layer_classification'] | null;
         policy_omitted_doc_ids: string[] | null;
         performance: CompileAuditMeta['performance'] | null;
+        expanded_tagging: ExpandedTaggingAudit | null;
         created_at: string;
       }
     | undefined {
@@ -649,6 +696,7 @@ export class ContextCompiler {
       layer_classification: meta?.layer_classification ?? null,
       policy_omitted_doc_ids: meta?.policy_omitted_doc_ids ?? null,
       performance: meta?.performance ?? null,
+      expanded_tagging: meta?.expanded_tagging ?? null,
       created_at: log.created_at,
     };
   }

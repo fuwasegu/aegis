@@ -303,6 +303,17 @@ export interface CompilePerformanceMeta {
   near_miss_edges_evaluated: number;
 }
 
+/** ADR-011: structured audit for intent-tag expanded context (agent explicit tags vs SLM). */
+export interface ExpandedTaggingAudit {
+  tags_source: 'agent' | 'slm' | null;
+  /** As provided: `intent_tags` from the client or tag strings from SLM output order (before trim/dedupe/sort). */
+  requested_tags: string[];
+  accepted_tags: string[];
+  ignored_unknown_count: number;
+  /** Distinct expanded documents matched via tag_mappings after base/template overlap exclusion. */
+  matched_doc_count: number;
+}
+
 export interface CompileAuditMeta {
   delivery_stats: DeliveryStats;
   /** inline_total_bytes / max_inline_bytes (0.0–1.0) */
@@ -319,6 +330,8 @@ export interface CompileAuditMeta {
   policy_omitted_doc_ids: string[];
   /** observed overhead of the near-miss collection pass */
   performance: CompilePerformanceMeta;
+  /** ADR-011 intent tagging summary; set by ContextCompiler before persisting compile_log. */
+  expanded_tagging?: ExpandedTaggingAudit;
 }
 
 /**

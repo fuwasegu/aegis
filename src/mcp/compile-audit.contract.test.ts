@@ -108,6 +108,7 @@ describe('compile_audit contract — AegisService (012-04)', () => {
     expect(audit!.layer_classification).toBeNull();
     expect(audit!.policy_omitted_doc_ids).toBeNull();
     expect(audit!.performance).toBeNull();
+    expect(audit!.expanded_tagging).toBeNull();
   });
 
   it('getCompileAudit: v2 audit_meta after compileContext matches on agent and admin', async () => {
@@ -133,6 +134,13 @@ describe('compile_audit contract — AegisService (012-04)', () => {
     expect(fromAgent!.performance).toMatchObject({
       near_miss_edge_scan_ms: expect.any(Number),
       near_miss_edges_evaluated: expect.any(Number),
+    });
+    expect(fromAgent!.expanded_tagging).toEqual({
+      tags_source: null,
+      requested_tags: [],
+      accepted_tags: [],
+      ignored_unknown_count: 0,
+      matched_doc_count: 0,
     });
   });
 
@@ -178,6 +186,13 @@ describe('compile_audit contract — AegisService (012-04)', () => {
       const audit = service.getCompileAudit(err.compile_id, 'agent');
       expect(audit).toBeDefined();
       expect(audit!.budget_exceeded).toBe(true);
+      expect(audit!.expanded_tagging).toEqual({
+        tags_source: null,
+        requested_tags: [],
+        accepted_tags: [],
+        ignored_unknown_count: 0,
+        matched_doc_count: 0,
+      });
     }
   });
 });
