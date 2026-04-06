@@ -256,27 +256,6 @@ export interface ResolvedEdge {
   edge_type: EdgeType;
 }
 
-export interface CompiledContext {
-  schema_version: 2;
-  compile_id: string;
-  snapshot_id: string;
-  knowledge_version: number;
-  base: {
-    documents: ResolvedDoc[];
-    resolution_path: ResolvedEdge[];
-    templates: ResolvedDoc[];
-  };
-  expanded?: {
-    documents: ResolvedDoc[];
-    confidence: number;
-    reasoning: string;
-    resolution_path: ResolvedEdge[];
-  };
-  warnings: string[];
-  /** Operational notices (P-1 excluded): may vary by server runtime state, not recorded in compile_log */
-  notices: string[];
-}
-
 // ============================================================
 // Compile Audit Meta (ADR-009 D-13)
 // ============================================================
@@ -340,6 +319,38 @@ export interface CompileAuditMeta {
   /** ADR-011 intent tagging summary; set by ContextCompiler before persisting compile_log. */
   expanded_tagging?: ExpandedTaggingAudit;
 }
+
+/**
+ * Subset of {@link CompileAuditMeta} on the live compile_context response (ADR-012 Phase 2).
+ * `Pick` keeps shapes aligned with persisted `audit_meta`. Informational only (P-1).
+ */
+export type CompileDebugInfo = Pick<CompileAuditMeta, 'near_miss_edges' | 'layer_classification' | 'budget_dropped'>;
+
+export interface CompiledContext {
+  schema_version: 2;
+  compile_id: string;
+  snapshot_id: string;
+  knowledge_version: number;
+  base: {
+    documents: ResolvedDoc[];
+    resolution_path: ResolvedEdge[];
+    templates: ResolvedDoc[];
+  };
+  expanded?: {
+    documents: ResolvedDoc[];
+    confidence: number;
+    reasoning: string;
+    resolution_path: ResolvedEdge[];
+  };
+  warnings: string[];
+  /** Operational notices (P-1 excluded): may vary by server runtime state, not recorded in compile_log */
+  notices: string[];
+  /** Mirrors audit_meta diagnostics; omitted when compile aborts before audit (e.g. empty snapshot). */
+  debug_info?: CompileDebugInfo;
+}
+
+/** Alias for {@link CompiledContext} (`aegis_compile_context` のレスポンス根). */
+export type CompileResult = CompiledContext;
 
 /**
  * Thrown when mandatory inline documents (no source_path) exceed max_inline_bytes.
