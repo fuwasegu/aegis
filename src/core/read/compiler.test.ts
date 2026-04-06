@@ -16,7 +16,14 @@ function hash(content: string): string {
 function bootstrap(
   repo: Repository,
   data: {
-    documents: { doc_id: string; title: string; kind: string; content: string }[];
+    documents: {
+      doc_id: string;
+      title: string;
+      kind: string;
+      content: string;
+      source_path?: string;
+      ownership?: string;
+    }[];
     edges: {
       edge_id: string;
       source_type: string;
@@ -240,6 +247,10 @@ describe('ContextCompiler', () => {
     expect(docIds).toContain('domain-guide');
     // UseCase should NOT be resolved because target_layers overrides inference
     expect(docIds).not.toContain('usecase-guide');
+    const audit = compiler.getCompileAudit(result.compile_id);
+    expect(audit?.layer_classification).toEqual({
+      'app/UseCases/Foo.php': null,
+    });
   });
 
   // ── 4. doc_depends_on の閉包が取れる ──
@@ -1937,7 +1948,14 @@ describe('ContextCompiler — v2 delivery', () => {
     expect(audit!.delivery_stats!.inline_count).toBeGreaterThan(0);
     expect(audit!.budget_utilization).toBeGreaterThanOrEqual(0);
     expect(audit!.budget_exceeded).toBe(false);
+    expect(audit!.budget_dropped).toEqual([]);
+    expect(audit!.near_miss_edges).toEqual([]);
+    expect(audit!.layer_classification).toEqual({ 'src/a.ts': null });
     expect(audit!.policy_omitted_doc_ids).toEqual([]);
+    expect(audit!.performance).toMatchObject({
+      near_miss_edge_scan_ms: expect.any(Number),
+      near_miss_edges_evaluated: 1,
+    });
   });
 
   it('audit_meta JSON in compile_log matches CompileAuditMeta shape', async () => {
@@ -1970,8 +1988,137 @@ describe('ContextCompiler — v2 delivery', () => {
       },
       budget_utilization: expect.any(Number),
       budget_exceeded: expect.any(Boolean),
+      budget_dropped: expect.any(Array),
+      near_miss_edges: expect.any(Array),
+      layer_classification: expect.any(Object),
       policy_omitted_doc_ids: expect.any(Array),
+      performance: {
+        near_miss_edge_scan_ms: expect.any(Number),
+        near_miss_edges_evaluated: expect.any(Number),
+      },
     });
+  });
+
+  it('records near_miss_edges and layer_classification in compile audit', async () => {
+    bootstrap(repo, {
+      documents: [
+        { doc_id: 'core-guide', title: 'Core Guide', kind: 'guideline', content: 'core' },
+        { doc_id: 'cli-guide', title: 'CLI Guide', kind: 'guideline', content: 'cli' },
+        { doc_id: 'infra-guide', title: 'Infra Guide', kind: 'guideline', content: 'infra' },
+      ],
+      edges: [
+        {
+          edge_id: 'e-core',
+          source_type: 'path',
+          source_value: 'src/core/**',
+          target_doc_id: 'core-guide',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 2,
+        },
+        {
+          edge_id: 'e-cli',
+          source_type: 'path',
+          source_value: 'src/cli/**',
+          target_doc_id: 'cli-guide',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 2,
+        },
+        {
+          edge_id: 'e-infra',
+          source_type: 'layer',
+          source_value: 'Infra',
+          target_doc_id: 'infra-guide',
+          edge_type: 'layer_requires',
+          priority: 100,
+        },
+      ],
+      layer_rules: [
+        { rule_id: 'lr-core', path_pattern: 'src/core/**', layer_name: 'Core', priority: 100, specificity: 2 },
+      ],
+    });
+
+    const result = await compiler.compile({ target_files: ['src/core/compiler.ts'] });
+    const audit = compiler.getCompileAudit(result.compile_id);
+
+    expect(audit?.layer_classification).toEqual({
+      'src/core/compiler.ts': 'Core',
+    });
+    expect(audit?.near_miss_edges).toEqual([
+      {
+        edge_id: 'e-cli',
+        pattern: 'src/cli/**',
+        target_doc_id: 'cli-guide',
+        reason: 'glob_no_match',
+      },
+      {
+        edge_id: 'e-infra',
+        pattern: 'Infra',
+        target_doc_id: 'infra-guide',
+        reason: 'layer_mismatch',
+      },
+    ]);
+    expect(audit?.performance?.near_miss_edges_evaluated).toBe(3);
+    expect(audit?.performance?.near_miss_edge_scan_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it('records budget_dropped when inline candidates overflow the budget', async () => {
+    bootstrap(repo, {
+      documents: [
+        {
+          doc_id: 'doc-a',
+          title: 'Doc A',
+          kind: 'guideline',
+          content: 'a'.repeat(60),
+          source_path: 'docs/doc-a.md',
+          ownership: 'file-anchored',
+        },
+        {
+          doc_id: 'doc-b',
+          title: 'Doc B',
+          kind: 'guideline',
+          content: 'b'.repeat(60),
+          source_path: 'docs/doc-b.md',
+          ownership: 'file-anchored',
+        },
+      ],
+      edges: [
+        {
+          edge_id: 'e-a',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'doc-a',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 1,
+        },
+        {
+          edge_id: 'e-b',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'doc-b',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 1,
+        },
+      ],
+    });
+
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      content_mode: 'always',
+      max_inline_bytes: 110,
+    });
+    const audit = compiler.getCompileAudit(result.compile_id);
+
+    expect(audit?.budget_dropped).toEqual([
+      {
+        doc_id: 'doc-b',
+        bytes: 60,
+        reason: 'inline_budget_exceeded',
+      },
+    ]);
   });
 
   it('v1 audit (no audit_meta) returns null for new fields', async () => {
@@ -2005,7 +2152,11 @@ describe('ContextCompiler — v2 delivery', () => {
     expect(audit!.delivery_stats).toBeNull();
     expect(audit!.budget_utilization).toBeNull();
     expect(audit!.budget_exceeded).toBeNull();
+    expect(audit!.budget_dropped).toBeNull();
+    expect(audit!.near_miss_edges).toBeNull();
+    expect(audit!.layer_classification).toBeNull();
     expect(audit!.policy_omitted_doc_ids).toBeNull();
+    expect(audit!.performance).toBeNull();
   });
 
   it('throws BudgetExceededError when mandatory docs exceed budget', async () => {

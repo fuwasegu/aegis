@@ -6,7 +6,7 @@
  * based on content_mode, budget, and source_path availability.
  */
 
-import type { CompileAuditMeta, ContentMode, DeliveryStats, DeliveryType } from '../types.js';
+import type { BudgetDroppedDoc, CompileAuditMeta, ContentMode, DeliveryStats, DeliveryType } from '../types.js';
 import { AUTO_INLINE_THRESHOLD_BYTES, BudgetExceededError } from '../types.js';
 
 /** Which section the doc belongs to — determines stable order priority. */
@@ -97,6 +97,7 @@ export function allocateDelivery(candidates: DocCandidate[], options: Allocation
 
   // Track policy-omitted doc_ids
   const policyOmittedDocIds: string[] = [];
+  const budgetDropped: BudgetDroppedDoc[] = [];
 
   // ── Step 1: Policy omission (templates when command !== 'scaffold') ──
   // content_mode='always' disables policy omission
@@ -172,6 +173,11 @@ export function allocateDelivery(candidates: DocCandidate[], options: Allocation
       // stays inline
     } else {
       // Budget exceeded — fallback to deferred (has source_path)
+      budgetDropped.push({
+        doc_id: d.doc_id,
+        bytes: d.content_bytes,
+        reason: 'inline_budget_exceeded',
+      });
       allocated[idx] = { ...d, delivery: 'deferred' };
     }
   }
@@ -208,7 +214,14 @@ export function allocateDelivery(candidates: DocCandidate[], options: Allocation
     budget_utilization:
       max_inline_bytes > 0 ? Math.round((stats.inline_total_bytes / max_inline_bytes) * 100) / 100 : 0,
     budget_exceeded: false,
+    budget_dropped: budgetDropped,
+    near_miss_edges: [],
+    layer_classification: {},
     policy_omitted_doc_ids: policyOmittedDocIds,
+    performance: {
+      near_miss_edge_scan_ms: 0,
+      near_miss_edges_evaluated: 0,
+    },
   };
 
   return { docs: allocated, audit_meta };

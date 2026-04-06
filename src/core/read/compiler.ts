@@ -8,6 +8,7 @@
  * v2 (ADR-009): delivery-aware output with budget allocation
  */
 
+import { performance } from 'node:perf_hooks';
 import picomatch from 'picomatch';
 import { v4 as uuidv4 } from 'uuid';
 import type { Repository } from '../store/repository.js';
@@ -15,9 +16,11 @@ import type { IntentTagger } from '../tagging/tagger.js';
 import type {
   CompileAuditMeta,
   CompiledContext,
+  CompilePerformanceMeta,
   CompileRequest,
   Document,
   Edge,
+  NearMissEdgeAudit,
   ResolvedDoc,
   ResolvedEdge,
 } from '../types.js';
@@ -235,17 +238,31 @@ export class ContextCompiler {
 
     const collectedEdges: Edge[] = [];
     const collectedDocIds = new Set<string>();
+    const nearMissEdges: NearMissEdgeAudit[] = [];
+    const nearMissScanStartedAt = performance.now();
+    let nearMissEdgesEvaluated = 0;
 
     // ── Step 1: path_requires ──
     const pathMatched: Edge[] = [];
     const pathEdges = this.repo.getApprovedEdgesByType('path_requires');
     for (const edge of pathEdges) {
+      nearMissEdgesEvaluated++;
       const matcher = picomatch(edge.source_value);
+      let matched = false;
       for (const file of request.target_files) {
         if (matcher(file)) {
+          matched = true;
           pathMatched.push(edge);
           break; // one match per edge is enough
         }
+      }
+      if (!matched) {
+        nearMissEdges.push({
+          edge_id: edge.edge_id,
+          pattern: edge.source_value,
+          target_doc_id: edge.target_doc_id,
+          reason: 'glob_no_match',
+        });
       }
     }
     for (const edge of sortEdges(pathMatched)) {
@@ -254,19 +271,25 @@ export class ContextCompiler {
     }
 
     // ── Step 2: layer_requires ──
-    const resolvedLayers = this.resolveLayers(request);
-    if (resolvedLayers.length > 0) {
-      const layerMatched: Edge[] = [];
-      const layerEdges = this.repo.getApprovedEdgesByType('layer_requires');
-      for (const edge of layerEdges) {
-        if (resolvedLayers.includes(edge.source_value)) {
-          layerMatched.push(edge);
-        }
+    const { resolvedLayers, layerClassification } = this.resolveLayers(request);
+    const layerMatched: Edge[] = [];
+    const layerEdges = this.repo.getApprovedEdgesByType('layer_requires');
+    for (const edge of layerEdges) {
+      nearMissEdgesEvaluated++;
+      if (resolvedLayers.includes(edge.source_value)) {
+        layerMatched.push(edge);
+      } else {
+        nearMissEdges.push({
+          edge_id: edge.edge_id,
+          pattern: edge.source_value,
+          target_doc_id: edge.target_doc_id,
+          reason: 'layer_mismatch',
+        });
       }
-      for (const edge of sortEdges(layerMatched)) {
-        collectedEdges.push(edge);
-        collectedDocIds.add(edge.target_doc_id);
-      }
+    }
+    for (const edge of sortEdges(layerMatched)) {
+      collectedEdges.push(edge);
+      collectedDocIds.add(edge.target_doc_id);
     }
 
     // ── Step 3: command_requires ──
@@ -274,8 +297,16 @@ export class ContextCompiler {
       const cmdMatched: Edge[] = [];
       const commandEdges = this.repo.getApprovedEdgesByType('command_requires');
       for (const edge of commandEdges) {
+        nearMissEdgesEvaluated++;
         if (edge.source_value === request.command) {
           cmdMatched.push(edge);
+        } else {
+          nearMissEdges.push({
+            edge_id: edge.edge_id,
+            pattern: edge.source_value,
+            target_doc_id: edge.target_doc_id,
+            reason: 'command_mismatch',
+          });
         }
       }
       for (const edge of sortEdges(cmdMatched)) {
@@ -283,6 +314,10 @@ export class ContextCompiler {
         collectedDocIds.add(edge.target_doc_id);
       }
     }
+    const compilePerformance: CompilePerformanceMeta = {
+      near_miss_edge_scan_ms: Math.round((performance.now() - nearMissScanStartedAt) * 1000) / 1000,
+      near_miss_edges_evaluated: nearMissEdgesEvaluated,
+    };
 
     // ── Step 4: doc_depends_on transitive closure ──
     const startDocIds = [...collectedDocIds];
@@ -468,7 +503,12 @@ export class ContextCompiler {
         compile_id: compileId,
       });
       allocatedDocs = result.docs;
-      auditMeta = result.audit_meta;
+      auditMeta = {
+        ...result.audit_meta,
+        near_miss_edges: nearMissEdges,
+        layer_classification: layerClassification,
+        performance: compilePerformance,
+      };
     } catch (err) {
       if (err instanceof BudgetExceededError) {
         // Record audit BEFORE rethrowing (D-9)
@@ -485,7 +525,11 @@ export class ContextCompiler {
           },
           budget_utilization: maxInlineBytes > 0 ? Math.round((err.mandatory_bytes / maxInlineBytes) * 100) / 100 : 0,
           budget_exceeded: true,
+          budget_dropped: [],
+          near_miss_edges: nearMissEdges,
+          layer_classification: layerClassification,
           policy_omitted_doc_ids: [],
+          performance: compilePerformance,
         };
 
         this.repo.insertCompileLog({
@@ -576,7 +620,11 @@ export class ContextCompiler {
         delivery_stats: CompileAuditMeta['delivery_stats'] | null;
         budget_utilization: number | null;
         budget_exceeded: boolean | null;
+        budget_dropped: CompileAuditMeta['budget_dropped'] | null;
+        near_miss_edges: CompileAuditMeta['near_miss_edges'] | null;
+        layer_classification: CompileAuditMeta['layer_classification'] | null;
         policy_omitted_doc_ids: string[] | null;
+        performance: CompileAuditMeta['performance'] | null;
         created_at: string;
       }
     | undefined {
@@ -596,7 +644,11 @@ export class ContextCompiler {
       delivery_stats: meta?.delivery_stats ?? null,
       budget_utilization: meta?.budget_utilization ?? null,
       budget_exceeded: meta?.budget_exceeded ?? null,
+      budget_dropped: meta?.budget_dropped ?? null,
+      near_miss_edges: meta?.near_miss_edges ?? null,
+      layer_classification: meta?.layer_classification ?? null,
       policy_omitted_doc_ids: meta?.policy_omitted_doc_ids ?? null,
+      performance: meta?.performance ?? null,
       created_at: log.created_at,
     };
   }
@@ -608,13 +660,31 @@ export class ContextCompiler {
    * If target_layers is explicitly provided, use that.
    * Otherwise, infer from target_files using layer_rules.
    */
-  private resolveLayers(request: CompileRequest): string[] {
+  private resolveLayers(request: CompileRequest): {
+    resolvedLayers: string[];
+    layerClassification: Record<string, string | null>;
+  } {
+    const layerClassification: Record<string, string | null> = {};
     if (request.target_layers && request.target_layers.length > 0) {
-      return request.target_layers;
+      for (const file of request.target_files) {
+        layerClassification[file] = null;
+      }
+      return {
+        resolvedLayers: request.target_layers,
+        layerClassification,
+      };
     }
 
     const rules = this.repo.getApprovedLayerRules();
-    if (rules.length === 0) return [];
+    if (rules.length === 0) {
+      for (const file of request.target_files) {
+        layerClassification[file] = null;
+      }
+      return {
+        resolvedLayers: [],
+        layerClassification,
+      };
+    }
 
     // Sort by specificity DESC → priority ASC → rule_id ASC (deterministic)
     const sortedRules = [...rules].sort((a, b) => {
@@ -625,16 +695,24 @@ export class ContextCompiler {
 
     const layers = new Set<string>();
     for (const file of request.target_files) {
+      let matchedLayer: string | null = null;
       for (const rule of sortedRules) {
         const matcher = picomatch(rule.path_pattern);
         if (matcher(file)) {
-          layers.add(rule.layer_name);
+          matchedLayer = rule.layer_name;
           break;
         }
       }
+      layerClassification[file] = matchedLayer;
+      if (matchedLayer !== null) {
+        layers.add(matchedLayer);
+      }
     }
 
-    return [...layers];
+    return {
+      resolvedLayers: [...layers],
+      layerClassification,
+    };
   }
 
   /**
