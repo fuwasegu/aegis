@@ -21,6 +21,12 @@ export interface Document {
   ownership: DocOwnership;
   template_origin: string | null;
   source_path: string | null;
+  /**
+   * ADR-014: last time the on-disk `source_path` file was verified to match Canonical `content_hash`
+   * (sync_docs hash match, or new_doc approve with `projectRoot` + same-hash re-read).
+   * Not updated by arbitrary `update_doc` approve — use sync_docs to refresh.
+   */
+  source_synced_at: string | null;
   created_at: string;
   updated_at: string;
 }

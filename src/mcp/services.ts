@@ -27,6 +27,7 @@ import { initConfirm as coreInitConfirm, initDetect as coreInitDetect } from '..
 import { detectUpgrade, generateUpgradeProposals, type UpgradePreview } from '../core/init/upgrade.js';
 import { normalizeSourcePath, resolveSourcePath } from '../core/paths.js';
 import { ContextCompiler } from '../core/read/compiler.js';
+import { listStaleFileAnchoredDocIds, SOURCE_SYNC_STALE_WARNING_DAYS } from '../core/source-sync-staleness.js';
 import type { Repository } from '../core/store/repository.js';
 import type { IntentTagger } from '../core/tagging/tagger.js';
 import type {
@@ -70,6 +71,11 @@ export interface MaintenanceRunResult {
     archived_count?: number;
   };
   check_upgrade: UpgradePreview | { not_found: true; template_id: string } | null;
+  /** ADR-014: file-anchored docs whose source_synced_at is absent or older than threshold. */
+  staleness_report: {
+    threshold_days: number;
+    stale_file_anchored_doc_ids: string[];
+  };
 }
 
 export class SurfaceViolationError extends Error {
@@ -527,12 +533,23 @@ export class AegisService {
 
     const check_upgrade = this.checkUpgrade(surface);
 
+    const nowMs = Date.now();
+    const staleness_report = {
+      threshold_days: SOURCE_SYNC_STALE_WARNING_DAYS,
+      stale_file_anchored_doc_ids: listStaleFileAnchoredDocIds(
+        this.repo.getFileAnchoredDocuments(),
+        SOURCE_SYNC_STALE_WARNING_DAYS,
+        nowMs,
+      ),
+    };
+
     return {
       dry_run: dryRun,
       process_observations,
       sync_docs,
       archive_observations,
       check_upgrade,
+      staleness_report,
     };
   }
 
@@ -807,6 +824,10 @@ export class AegisService {
         dry_run: true,
         would_create_proposals,
       };
+    }
+
+    if (up_to_date_ids.length > 0) {
+      this.repo.touchDocumentsSourceSyncedAt(up_to_date_ids);
     }
 
     if (drafts.length === 0) {

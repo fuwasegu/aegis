@@ -1706,6 +1706,22 @@ describe('AegisService — syncDocs', () => {
     expect(result.proposals_created).toHaveLength(0);
   });
 
+  it('refreshes source_synced_at when sync_docs finds hash match (ADR-014)', () => {
+    writeFileSync(join(tmpDir, 'fresh.md'), 'same content');
+    insertApprovedDoc('fresh-doc', 'same content', 'fresh.md');
+    db.prepare(`UPDATE documents SET source_synced_at = ? WHERE doc_id = ?`).run(
+      '2000-01-01T00:00:00.000Z',
+      'fresh-doc',
+    );
+
+    service.syncDocs({}, 'admin');
+
+    const row = db.prepare('SELECT source_synced_at FROM documents WHERE doc_id = ?').get('fresh-doc') as {
+      source_synced_at: string;
+    };
+    expect(new Date(row.source_synced_at).getUTCFullYear()).toBeGreaterThan(2000);
+  });
+
   it('reports not_found when source file is missing', () => {
     insertApprovedDoc('missing-doc', 'content', 'nonexistent/file.md');
 
@@ -1933,6 +1949,25 @@ describe('AegisService — maintenance', () => {
     const r = await service.runMaintenance('admin', { dryRun: true });
     expect(r.process_observations.pending_by_type.compile_miss).toBe(55);
     expect(r.process_observations.pending_total).toBe(55);
+  });
+
+  it('staleness_report lists file-anchored docs past source-sync threshold (ADR-014)', async () => {
+    repo.insertDocument({
+      doc_id: 'old-sync',
+      title: 'Old',
+      kind: 'guideline',
+      content: 'c',
+      content_hash: hash('c'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: 'legacy.md',
+      source_synced_at: '2000-01-01T00:00:00.000Z',
+    });
+
+    const r = await service.runMaintenance('admin', { dryRun: true });
+    expect(r.staleness_report.threshold_days).toBe(90);
+    expect(r.staleness_report.stale_file_anchored_doc_ids).toContain('old-sync');
   });
 
   it('processObservations drains backlog beyond default fetch limit', async () => {
