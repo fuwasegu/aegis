@@ -103,7 +103,14 @@ export interface Observation {
 // Proposal Layer
 // ============================================================
 
-export type ProposalType = 'add_edge' | 'update_doc' | 'new_doc' | 'deprecate' | 'bootstrap';
+export type ProposalType =
+  | 'add_edge'
+  | 'retarget_edge'
+  | 'remove_edge'
+  | 'update_doc'
+  | 'new_doc'
+  | 'deprecate'
+  | 'bootstrap';
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn';
 
 export interface Proposal {

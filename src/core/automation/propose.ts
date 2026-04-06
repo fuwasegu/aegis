@@ -26,6 +26,8 @@ export interface ProposeResult {
  */
 const SEMANTIC_KEY_EXTRACTORS: Record<ProposalType, (p: Record<string, unknown>) => string> = {
   add_edge: (p) => `${p.source_type}:${p.source_value}:${p.target_doc_id}:${p.edge_type}`,
+  retarget_edge: (p) => `retarget:${p.edge_id}`,
+  remove_edge: (p) => `remove:${p.edge_id}`,
   new_doc: (p) => `${p.doc_id}`,
   update_doc: (p) => `${p.doc_id}`,
   deprecate: (p) => `${p.entity_type}:${p.entity_id}`,
