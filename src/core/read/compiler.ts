@@ -626,6 +626,11 @@ export class ContextCompiler {
       },
       warnings,
       notices,
+      debug_info: {
+        near_miss_edges: auditMeta.near_miss_edges,
+        layer_classification: auditMeta.layer_classification,
+        budget_dropped: auditMeta.budget_dropped,
+      },
     };
 
     if (expandedHasResult) {

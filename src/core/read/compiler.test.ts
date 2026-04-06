@@ -481,6 +481,7 @@ describe('ContextCompiler', () => {
     expect(result.compile_id).toBe('');
     // No compile_log should have been written
     expect(compiler.getCompileAudit('')).toBeUndefined();
+    expect(result.debug_info).toBeUndefined();
   });
 
   // ── Edge case: command_requires works ──
@@ -2046,6 +2047,11 @@ describe('ContextCompiler — v2 delivery', () => {
       near_miss_edge_scan_ms: expect.any(Number),
       near_miss_edges_evaluated: 1,
     });
+    expect(result.debug_info).toEqual({
+      near_miss_edges: audit!.near_miss_edges,
+      layer_classification: audit!.layer_classification,
+      budget_dropped: audit!.budget_dropped,
+    });
   });
 
   it('audit_meta JSON in compile_log matches CompileAuditMeta shape', async () => {
@@ -2158,6 +2164,11 @@ describe('ContextCompiler — v2 delivery', () => {
     ]);
     expect(audit?.performance?.near_miss_edges_evaluated).toBe(3);
     expect(audit?.performance?.near_miss_edge_scan_ms).toBeGreaterThanOrEqual(0);
+    expect(result.debug_info).toEqual({
+      near_miss_edges: audit!.near_miss_edges,
+      layer_classification: audit!.layer_classification,
+      budget_dropped: audit!.budget_dropped,
+    });
   });
 
   it('records budget_dropped when inline candidates overflow the budget', async () => {
@@ -2216,6 +2227,11 @@ describe('ContextCompiler — v2 delivery', () => {
         reason: 'inline_budget_exceeded',
       },
     ]);
+    expect(result.debug_info).toEqual({
+      near_miss_edges: audit!.near_miss_edges,
+      layer_classification: audit!.layer_classification,
+      budget_dropped: audit!.budget_dropped,
+    });
   });
 
   it('v1 audit (no audit_meta) returns null for new fields', async () => {

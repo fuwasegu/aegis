@@ -142,6 +142,11 @@ describe('compile_audit contract — AegisService (012-04)', () => {
       ignored_unknown_count: 0,
       matched_doc_count: 0,
     });
+    expect(compiled.debug_info).toEqual({
+      near_miss_edges: fromAgent!.near_miss_edges,
+      layer_classification: fromAgent!.layer_classification,
+      budget_dropped: fromAgent!.budget_dropped,
+    });
   });
 
   it('BudgetExceededError: failed compile still records audit readable via getCompileAudit', async () => {
