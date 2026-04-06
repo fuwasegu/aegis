@@ -187,6 +187,10 @@ export class Repository {
       );
   }
 
+  getEdgeById(edgeId: string): Edge | undefined {
+    return this.db.prepare('SELECT * FROM edges WHERE edge_id = ?').get(edgeId) as Edge | undefined;
+  }
+
   // ============================================================
   // Layer Rules
   // ============================================================
@@ -230,6 +234,35 @@ export class Repository {
       ) as has_cycle
     `)
       .get(targetDocId, sourceDocId) as { has_cycle: number };
+    return result.has_cycle === 1;
+  }
+
+  /**
+   * Like `wouldCreateCycle` but ignores one `doc_depends_on` edge (for retarget_edge).
+   */
+  private wouldCreateCycleForDocEdgeExcluding(
+    excludeEdgeId: string,
+    sourceDocId: string,
+    targetDocId: string,
+  ): boolean {
+    const result = this.db
+      .prepare(`
+      WITH RECURSIVE reachable(doc_id) AS (
+        SELECT ?
+        UNION
+        SELECT e.target_doc_id
+        FROM reachable r
+        JOIN edges e ON e.source_type = 'doc'
+                    AND e.source_value = r.doc_id
+                    AND e.edge_type = 'doc_depends_on'
+                    AND e.status = 'approved'
+                    AND e.edge_id != ?
+      )
+      SELECT EXISTS (
+        SELECT 1 FROM reachable WHERE doc_id = ?
+      ) as has_cycle
+    `)
+      .get(targetDocId, excludeEdgeId, sourceDocId) as { has_cycle: number };
     return result.has_cycle === 1;
   }
 
@@ -721,6 +754,10 @@ export class Repository {
         this._applyBootstrap(payload);
       } else if (proposal.proposal_type === 'add_edge') {
         this._applyAddEdge(payload);
+      } else if (proposal.proposal_type === 'retarget_edge') {
+        this._applyRetargetEdge(payload);
+      } else if (proposal.proposal_type === 'remove_edge') {
+        this._applyRemoveEdge(payload);
       } else if (proposal.proposal_type === 'new_doc') {
         this._applyNewDoc(payload);
         if (Array.isArray(payload.tags) && payload.tags.length > 0 && payload.doc_id) {
@@ -793,6 +830,8 @@ export class Repository {
       new_doc: ['title', 'content', 'kind', 'source_path', 'ownership'],
       update_doc: ['title', 'content', 'source_path', 'ownership'],
       add_edge: ['priority', 'source_value', 'target_doc_id'],
+      retarget_edge: ['source_value', 'target_doc_id'],
+      remove_edge: [],
       deprecate: [],
       bootstrap: [],
     };
@@ -885,7 +924,110 @@ export class Repository {
         throw new CycleDetectedError(payload.source_value, payload.target_doc_id);
       }
     }
+    const dup = this._findConflictingApprovedEdge(payload.edge_id, {
+      source_type: payload.source_type,
+      source_value: payload.source_value,
+      target_doc_id: payload.target_doc_id,
+      edge_type: payload.edge_type,
+    });
+    if (dup) {
+      throw new Error(
+        `Cannot add edge: an approved edge already exists for ` +
+          `${payload.source_type}:${payload.source_value} → ${payload.target_doc_id} (${payload.edge_type}): '${dup.edge_id}'`,
+      );
+    }
     this.insertEdge({ ...payload, status: 'approved' });
+  }
+
+  /**
+   * Another approved edge (excluding `excludeEdgeId`) with the same routing key is a duplicate.
+   */
+  private _findConflictingApprovedEdge(
+    excludeEdgeId: string,
+    key: {
+      source_type: EdgeSourceType;
+      source_value: string;
+      target_doc_id: string;
+      edge_type: EdgeType;
+    },
+  ): Edge | undefined {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM edges WHERE status = 'approved'
+           AND edge_id != ?
+           AND source_type = ? AND source_value = ? AND target_doc_id = ? AND edge_type = ?`,
+      )
+      .all(excludeEdgeId, key.source_type, key.source_value, key.target_doc_id, key.edge_type) as Edge[];
+    return rows[0];
+  }
+
+  private _applyRetargetEdge(payload: Record<string, unknown>): void {
+    const edgeId = payload.edge_id;
+    if (typeof edgeId !== 'string' || edgeId.length === 0) {
+      throw new Error("retarget_edge: 'edge_id' is required");
+    }
+    const existing = this.getEdgeById(edgeId);
+    if (!existing) {
+      throw new Error(`retarget_edge: edge '${edgeId}' does not exist`);
+    }
+    if (existing.status !== 'approved') {
+      throw new Error(`retarget_edge: edge '${edgeId}' is not approved (status: ${existing.status})`);
+    }
+    let newSource = existing.source_value;
+    let newTarget = existing.target_doc_id;
+    if (typeof payload.source_value === 'string') {
+      newSource = payload.source_value;
+    }
+    if (typeof payload.target_doc_id === 'string') {
+      newTarget = payload.target_doc_id;
+    }
+    if (newSource === existing.source_value && newTarget === existing.target_doc_id) {
+      throw new Error(`retarget_edge: no change for edge '${edgeId}'`);
+    }
+    if (newTarget !== existing.target_doc_id) {
+      const targetDoc = this.getDocumentById(newTarget);
+      if (!targetDoc) {
+        throw new Error(`retarget_edge: target document '${newTarget}' does not exist`);
+      }
+      if (targetDoc.status !== 'approved') {
+        throw new Error(`retarget_edge: target document '${newTarget}' is not approved (status: ${targetDoc.status})`);
+      }
+    }
+    if (existing.edge_type === 'doc_depends_on') {
+      if (this.wouldCreateCycleForDocEdgeExcluding(edgeId, newSource, newTarget)) {
+        throw new CycleDetectedError(newSource, newTarget);
+      }
+    }
+    const dup = this._findConflictingApprovedEdge(edgeId, {
+      source_type: existing.source_type,
+      source_value: newSource,
+      target_doc_id: newTarget,
+      edge_type: existing.edge_type,
+    });
+    if (dup) {
+      throw new Error(
+        `retarget_edge: an approved edge already exists for ` +
+          `${existing.source_type}:${newSource} → ${newTarget} (${existing.edge_type}): '${dup.edge_id}'`,
+      );
+    }
+    this.db
+      .prepare('UPDATE edges SET source_value = ?, target_doc_id = ? WHERE edge_id = ?')
+      .run(newSource, newTarget, edgeId);
+  }
+
+  private _applyRemoveEdge(payload: Record<string, unknown>): void {
+    const edgeId = payload.edge_id;
+    if (typeof edgeId !== 'string' || edgeId.length === 0) {
+      throw new Error("remove_edge: 'edge_id' is required");
+    }
+    const existing = this.getEdgeById(edgeId);
+    if (!existing) {
+      throw new Error(`remove_edge: edge '${edgeId}' does not exist`);
+    }
+    if (existing.status !== 'approved') {
+      throw new Error(`remove_edge: edge '${edgeId}' is not approved (status: ${existing.status})`);
+    }
+    this.db.prepare('DELETE FROM edges WHERE edge_id = ?').run(edgeId);
   }
 
   private _applyNewDoc(payload: Omit<Document, 'created_at' | 'updated_at' | 'status'>): void {

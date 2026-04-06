@@ -970,6 +970,10 @@ export class AegisService {
           return `Update doc: ${payload.doc_id}`;
         case 'add_edge':
           return `Add edge: ${payload.source_value} → ${payload.target_doc_id}`;
+        case 'retarget_edge':
+          return `Retarget edge: ${payload.edge_id}`;
+        case 'remove_edge':
+          return `Remove edge: ${payload.edge_id}`;
         case 'deprecate':
           return `Deprecate: ${payload.entity_type} ${payload.entity_id}`;
         default:

@@ -414,6 +414,271 @@ describe('Repository', () => {
       );
     });
 
+    it('rejects add_edge when an approved edge already has the same routing', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot-path',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc-t', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [
+            {
+              edge_id: 'e-existing',
+              source_type: 'path',
+              source_value: 'src/**',
+              target_doc_id: 'doc-t',
+              edge_type: 'path_requires',
+              priority: 100,
+              specificity: 0,
+            },
+          ],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot-path');
+
+      repo.insertProposal({
+        proposal_id: 'p-dup-edge',
+        proposal_type: 'add_edge',
+        payload: JSON.stringify({
+          edge_id: 'e-dup',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'doc-t',
+          edge_type: 'path_requires',
+          priority: 50,
+          specificity: 0,
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      expect(() => repo.approveProposal('p-dup-edge')).toThrow(/an approved edge already exists/);
+    });
+
+    it('approve retarget_edge updates source_value', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot-rt',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc-rt', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [
+            {
+              edge_id: 'e-rt',
+              source_type: 'path',
+              source_value: 'old/**',
+              target_doc_id: 'doc-rt',
+              edge_type: 'path_requires',
+              priority: 100,
+              specificity: 0,
+            },
+          ],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot-rt');
+
+      repo.insertProposal({
+        proposal_id: 'p-retarget',
+        proposal_type: 'retarget_edge',
+        payload: JSON.stringify({ edge_id: 'e-rt', source_value: 'new/**' }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-retarget');
+
+      const e = repo.getEdgeById('e-rt');
+      expect(e?.source_value).toBe('new/**');
+      expect(e?.target_doc_id).toBe('doc-rt');
+    });
+
+    it('rejects retarget_edge when no fields change', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot-rt2',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc-rt2', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [
+            {
+              edge_id: 'e-rt2',
+              source_type: 'path',
+              source_value: 'x/**',
+              target_doc_id: 'doc-rt2',
+              edge_type: 'path_requires',
+              priority: 100,
+              specificity: 0,
+            },
+          ],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot-rt2');
+
+      repo.insertProposal({
+        proposal_id: 'p-retarget-nc',
+        proposal_type: 'retarget_edge',
+        payload: JSON.stringify({ edge_id: 'e-rt2' }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      expect(() => repo.approveProposal('p-retarget-nc')).toThrow(/no change/);
+    });
+
+    it('rejects retarget_edge when routing would duplicate another approved edge', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot-2e',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'd-a', title: 'A', kind: 'guideline', content: 'a', content_hash: hash('a') }],
+          edges: [
+            {
+              edge_id: 'e-a',
+              source_type: 'path',
+              source_value: 'src/a/**',
+              target_doc_id: 'd-a',
+              edge_type: 'path_requires',
+              priority: 100,
+              specificity: 0,
+            },
+            {
+              edge_id: 'e-b',
+              source_type: 'path',
+              source_value: 'src/b/**',
+              target_doc_id: 'd-a',
+              edge_type: 'path_requires',
+              priority: 100,
+              specificity: 0,
+            },
+          ],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot-2e');
+
+      repo.insertProposal({
+        proposal_id: 'p-rt-conflict',
+        proposal_type: 'retarget_edge',
+        payload: JSON.stringify({ edge_id: 'e-b', source_value: 'src/a/**' }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      expect(() => repo.approveProposal('p-rt-conflict')).toThrow(/an approved edge already exists/);
+    });
+
+    it('rejects retarget_edge doc_depends_on when it would create a cycle', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot-cycle',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [
+            { doc_id: 'dc-a', title: 'A', kind: 'guideline', content: 'a', content_hash: hash('a') },
+            { doc_id: 'dc-b', title: 'B', kind: 'guideline', content: 'b', content_hash: hash('b') },
+            { doc_id: 'dc-c', title: 'C', kind: 'guideline', content: 'c', content_hash: hash('c') },
+            { doc_id: 'dc-d', title: 'D', kind: 'guideline', content: 'd', content_hash: hash('d') },
+          ],
+          edges: [
+            {
+              edge_id: 'e-dc-1',
+              source_type: 'doc',
+              source_value: 'dc-a',
+              target_doc_id: 'dc-b',
+              edge_type: 'doc_depends_on',
+              priority: 100,
+              specificity: 0,
+            },
+            {
+              edge_id: 'e-dc-2',
+              source_type: 'doc',
+              source_value: 'dc-b',
+              target_doc_id: 'dc-c',
+              edge_type: 'doc_depends_on',
+              priority: 100,
+              specificity: 0,
+            },
+            {
+              edge_id: 'e-dc-ret',
+              source_type: 'doc',
+              source_value: 'dc-c',
+              target_doc_id: 'dc-d',
+              edge_type: 'doc_depends_on',
+              priority: 100,
+              specificity: 0,
+            },
+          ],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot-cycle');
+
+      repo.insertProposal({
+        proposal_id: 'p-rt-cycle',
+        proposal_type: 'retarget_edge',
+        payload: JSON.stringify({ edge_id: 'e-dc-ret', target_doc_id: 'dc-a' }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      expect(() => repo.approveProposal('p-rt-cycle')).toThrow(CycleDetectedError);
+    });
+
+    it('approve remove_edge deletes the edge', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot-rm',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc-rm', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [
+            {
+              edge_id: 'e-rm',
+              source_type: 'path',
+              source_value: 'rm/**',
+              target_doc_id: 'doc-rm',
+              edge_type: 'path_requires',
+              priority: 100,
+              specificity: 0,
+            },
+          ],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot-rm');
+
+      repo.insertProposal({
+        proposal_id: 'p-remove',
+        proposal_type: 'remove_edge',
+        payload: JSON.stringify({ edge_id: 'e-rm' }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-remove');
+
+      expect(repo.getEdgeById('e-rm')).toBeUndefined();
+    });
+
+    it('rejects remove_edge when edge does not exist', () => {
+      repo.insertProposal({
+        proposal_id: 'p-rm-missing',
+        proposal_type: 'remove_edge',
+        payload: JSON.stringify({ edge_id: 'no-such-edge' }),
+        status: 'pending',
+        review_comment: null,
+      });
+      expect(() => repo.approveProposal('p-rm-missing')).toThrow(/does not exist/);
+    });
+
     it('reject proposal records reason', () => {
       repo.insertProposal({
         proposal_id: 'p1',
