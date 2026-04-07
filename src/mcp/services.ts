@@ -31,9 +31,11 @@ import { listStaleFileAnchoredDocIds, SOURCE_SYNC_STALE_WARNING_DAYS } from '../
 import type { Repository } from '../core/store/repository.js';
 import type { IntentTagger } from '../core/tagging/tagger.js';
 import type {
+  AegisStats,
   AnalysisContext,
   AnalysisResult,
   CanonicalVersion,
+  CompileAuditMeta,
   CompiledContext,
   CompileRequest,
   EdgeSpec,
@@ -554,6 +556,109 @@ export class AegisService {
   }
 
   /**
+   * ADR-012 / ADR-014: aggregate knowledge, compile_log usage, and health signals (admin read-only).
+   * Usage aggregates scan all compile_log rows and parse JSON in-process (O(n) time/memory vs log size).
+   */
+  getStats(surface: Surface): AegisStats {
+    this.assertAdmin('aegis_get_stats', surface);
+    const meta = this.repo.getKnowledgeMeta();
+    const rows = this.repo.listCompileLogStatsRows();
+    const docFreq = new Map<string, number>();
+    const patternFreq = new Map<string, number>();
+    const targetFilesSet = new Set<string>();
+    let budgetSum = 0;
+    let budgetCount = 0;
+
+    for (const row of rows) {
+      try {
+        const req = JSON.parse(row.request) as { target_files?: unknown };
+        if (Array.isArray(req.target_files)) {
+          for (const f of req.target_files) {
+            if (typeof f === 'string' && f.length > 0) targetFilesSet.add(f);
+          }
+        }
+      } catch {
+        // ignore malformed request JSON
+      }
+
+      const bumpDocIds = (json: string | null): void => {
+        if (json == null || json === '') return;
+        try {
+          const ids = JSON.parse(json) as unknown;
+          if (!Array.isArray(ids)) return;
+          for (const id of ids) {
+            if (typeof id === 'string' && id.length > 0) {
+              docFreq.set(id, (docFreq.get(id) ?? 0) + 1);
+            }
+          }
+        } catch {
+          // ignore malformed doc id JSON
+        }
+      };
+      bumpDocIds(row.base_doc_ids);
+      bumpDocIds(row.expanded_doc_ids);
+
+      if (row.audit_meta) {
+        try {
+          const audit = JSON.parse(row.audit_meta) as CompileAuditMeta;
+          if (typeof audit.budget_utilization === 'number' && !Number.isNaN(audit.budget_utilization)) {
+            budgetSum += audit.budget_utilization;
+            budgetCount += 1;
+          }
+          if (Array.isArray(audit.near_miss_edges)) {
+            for (const nm of audit.near_miss_edges) {
+              if (nm && typeof nm.pattern === 'string' && nm.pattern.length > 0) {
+                patternFreq.set(nm.pattern, (patternFreq.get(nm.pattern) ?? 0) + 1);
+              }
+            }
+          }
+        } catch {
+          // ignore malformed audit_meta
+        }
+      }
+    }
+
+    const unanalyzed_by_event_type: Record<string, number> = {};
+    let unanalyzed_observations = 0;
+    for (const et of this.analyzerRegistry.keys()) {
+      const n = this.repo.countUnanalyzedObservations(et);
+      unanalyzed_by_event_type[et] = n;
+      unanalyzed_observations += n;
+    }
+
+    const nowMs = Date.now();
+    const stale_file_anchored_doc_ids = listStaleFileAnchoredDocIds(
+      this.repo.getFileAnchoredDocuments(),
+      SOURCE_SYNC_STALE_WARNING_DAYS,
+      nowMs,
+    );
+
+    return {
+      knowledge: {
+        approved_docs: this.repo.countApprovedDocuments(),
+        approved_edges: this.repo.countApprovedEdges(),
+        pending_proposals: this.repo.countPendingProposals(),
+        knowledge_version: meta.current_version,
+      },
+      usage: {
+        total_compiles: rows.length,
+        unique_target_files: targetFilesSet.size,
+        avg_budget_utilization: budgetCount > 0 ? budgetSum / budgetCount : null,
+        most_referenced_docs: topKeyCounts(docFreq, 10).map(({ key, count }) => ({ doc_id: key, count })),
+        most_missed_patterns: topKeyCounts(patternFreq, 10).map(({ key, count }) => ({ pattern: key, count })),
+      },
+      health: {
+        stale_docs_count: stale_file_anchored_doc_ids.length,
+        stale_file_anchored_doc_ids,
+        unanalyzed_observations,
+        unanalyzed_by_event_type,
+        orphaned_tag_mappings: this.repo.countOrphanedTagMappings(),
+        orphaned_tag_mapping_samples: this.repo.listOrphanedTagMappingSamples(20),
+      },
+    };
+  }
+
+  /**
    * List observations with outcome-based filtering.
    * Per ADR-008: outcome is derived from proposal_evidence JOIN, not analyzed_at alone.
    */
@@ -1004,4 +1109,11 @@ export class AegisService {
       return proposalType;
     }
   }
+}
+
+function topKeyCounts(freq: Map<string, number>, limit: number): Array<{ key: string; count: number }> {
+  return [...freq.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([key, count]) => ({ key, count }));
 }

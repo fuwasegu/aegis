@@ -688,6 +688,70 @@ export class Repository {
     return this.db.prepare('SELECT * FROM compile_log WHERE compile_id = ?').get(compileId) as CompileLog | undefined;
   }
 
+  countApprovedDocuments(): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS cnt FROM documents WHERE status = 'approved'").get() as {
+      cnt: number;
+    };
+    return row.cnt;
+  }
+
+  countApprovedEdges(): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS cnt FROM edges WHERE status = 'approved'").get() as { cnt: number };
+    return row.cnt;
+  }
+
+  /**
+   * All compile_log rows for usage aggregates (request / base + expanded doc ids / audit_meta).
+   * Admin observability only. Full-table read: cost grows with compile_log row count (future: SQL aggregates or sampling).
+   */
+  listCompileLogStatsRows(): Array<{
+    request: string;
+    base_doc_ids: string;
+    expanded_doc_ids: string | null;
+    audit_meta: string | null;
+  }> {
+    return this.db
+      .prepare('SELECT request, base_doc_ids, expanded_doc_ids, audit_meta FROM compile_log')
+      .all() as Array<{
+      request: string;
+      base_doc_ids: string;
+      expanded_doc_ids: string | null;
+      audit_meta: string | null;
+    }>;
+  }
+
+  /**
+   * Tag mappings that do not resolve to an approved document (missing doc or non-approved status).
+   */
+  countOrphanedTagMappings(): number {
+    const row = this.db
+      .prepare(
+        `
+      SELECT COUNT(*) AS cnt FROM tag_mappings tm
+      WHERE NOT EXISTS (
+        SELECT 1 FROM documents d WHERE d.doc_id = tm.doc_id AND d.status = 'approved'
+      )
+    `,
+      )
+      .get() as { cnt: number };
+    return row.cnt;
+  }
+
+  listOrphanedTagMappingSamples(limit: number): Array<{ tag: string; doc_id: string }> {
+    return this.db
+      .prepare(
+        `
+      SELECT tm.tag, tm.doc_id FROM tag_mappings tm
+      WHERE NOT EXISTS (
+        SELECT 1 FROM documents d WHERE d.doc_id = tm.doc_id AND d.status = 'approved'
+      )
+      ORDER BY tm.tag ASC, tm.doc_id ASC
+      LIMIT ?
+    `,
+      )
+      .all(limit) as Array<{ tag: string; doc_id: string }>;
+  }
+
   /** Returns ALL documents with source_path (any status). Used for source_path migration. */
   getAllDocumentsWithSourcePath(): Document[] {
     return this.db.prepare('SELECT * FROM documents WHERE source_path IS NOT NULL').all() as Document[];

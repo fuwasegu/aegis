@@ -18,6 +18,8 @@
  *   npx aegis deploy-adapters --db path/to/aegis.db  # Use custom DB path
  *   npx aegis maintenance                        # process_observations → sync_docs → archive → check_upgrade
  *   npx aegis maintenance --dry-run                # Report only (no writes)
+ *   npx aegis stats                              # JSON: knowledge / usage / health (read-only; no DB writes)
+ *   npx aegis doctor                             # Health summary; read-only; exits 1 if issues
  *   npx aegis --list-models                      # List available SLM models
  *
  * SLM is disabled by default (ADR-004). Enable with --slm for expanded context.
@@ -40,6 +42,52 @@ import { OllamaClient } from './expansion/ollama-client.js';
 import { createAegisServer } from './mcp/server.js';
 import type { Surface } from './mcp/services.js';
 import { AegisService, type MaintenanceRunResult } from './mcp/services.js';
+
+interface StatsDoctorCli {
+  projectRoot: string;
+  customDbPath: string | undefined;
+  templatesRoot: string;
+  extraTemplateDirs: string[];
+}
+
+function parseStatsDoctorCli(argv: string[]): StatsDoctorCli {
+  let projectRoot = process.cwd();
+  let customDbPath: string | undefined;
+  let templatesRoot = join(import.meta.dirname, '../templates');
+  const extraTemplateDirs: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case '--project-root':
+        projectRoot = resolve(argv[++i]);
+        break;
+      case '--db':
+        customDbPath = argv[++i];
+        break;
+      case '--templates':
+        templatesRoot = argv[++i];
+        break;
+      case '--template-dir':
+        extraTemplateDirs.push(argv[++i]);
+        break;
+    }
+  }
+  return { projectRoot, customDbPath, templatesRoot, extraTemplateDirs };
+}
+
+async function openServiceForStatsDoctor(options: StatsDoctorCli): Promise<AegisService> {
+  const dbPath = options.customDbPath ?? join(options.projectRoot, DEFAULT_DB_PATH);
+  if (!existsSync(dbPath)) {
+    console.error(`[aegis] Database not found at ${dbPath}`);
+    console.error('[aegis] Run aegis init first, or specify --project-root / --db.');
+    process.exit(1);
+  }
+  const db = await createDatabase(dbPath);
+  const repo = new Repository(db);
+  // Intentionally no runInitialBaselineSourcePathMigration: stats/doctor are read-only monitoring
+  // commands (writable DB dirs, read-only mounts). ADR-013 baseline runs on `aegis --surface admin`
+  // and maintenance; until then stale-file signals may reflect legacy absolute source_path rows.
+  return new AegisService(repo, options.templatesRoot, null, options.extraTemplateDirs, false, options.projectRoot);
+}
 
 const PACKAGE_VERSION: string = JSON.parse(readFileSync(join(import.meta.dirname, '../package.json'), 'utf-8')).version;
 
@@ -382,6 +430,46 @@ async function handleMaintenance(): Promise<void> {
   }
 }
 
+async function handleStats(): Promise<void> {
+  const opts = parseStatsDoctorCli(process.argv.slice(3));
+  const service = await openServiceForStatsDoctor(opts);
+  const stats = service.getStats('admin');
+  console.log(JSON.stringify(stats, null, 2));
+}
+
+async function handleDoctor(): Promise<void> {
+  const opts = parseStatsDoctorCli(process.argv.slice(3));
+  const service = await openServiceForStatsDoctor(opts);
+  const stats = service.getStats('admin');
+  const h = stats.health;
+  const issues: string[] = [];
+  if (h.stale_docs_count > 0) issues.push(`${h.stale_docs_count} stale file-anchored doc(s)`);
+  if (h.unanalyzed_observations > 0) issues.push(`${h.unanalyzed_observations} unanalyzed observation(s)`);
+  if (h.orphaned_tag_mappings > 0) issues.push(`${h.orphaned_tag_mappings} orphaned tag mapping(s)`);
+
+  console.log('\nAegis doctor\n');
+  console.log(`  knowledge_version: ${stats.knowledge.knowledge_version}`);
+  console.log(`  stale_docs: ${h.stale_docs_count}`);
+  if (h.stale_file_anchored_doc_ids.length) {
+    console.log(`    ${h.stale_file_anchored_doc_ids.join(', ')}`);
+  }
+  console.log(`  unanalyzed_observations: ${h.unanalyzed_observations}`);
+  for (const [et, n] of Object.entries(h.unanalyzed_by_event_type)) {
+    if (n > 0) console.log(`    - ${et}: ${n}`);
+  }
+  console.log(`  orphaned_tag_mappings: ${h.orphaned_tag_mappings}`);
+  if (h.orphaned_tag_mapping_samples.length) {
+    for (const s of h.orphaned_tag_mapping_samples) {
+      console.log(`    - ${s.tag} -> ${s.doc_id}`);
+    }
+  }
+  if (issues.length) {
+    console.log(`\nStatus: attention — ${issues.join('; ')}`);
+    process.exit(1);
+  }
+  console.log('\nStatus: OK');
+}
+
 async function main() {
   const subcommand = process.argv[2];
 
@@ -392,6 +480,16 @@ async function main() {
 
   if (subcommand === 'maintenance') {
     await handleMaintenance();
+    return;
+  }
+
+  if (subcommand === 'stats') {
+    await handleStats();
+    return;
+  }
+
+  if (subcommand === 'doctor') {
+    await handleDoctor();
     return;
   }
 

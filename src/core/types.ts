@@ -326,6 +326,32 @@ export interface CompileAuditMeta {
   expanded_tagging?: ExpandedTaggingAudit;
 }
 
+/** ADR-012 Phase 2 — read-only observability snapshot for `aegis_get_stats` and stats/doctor CLI. */
+export interface AegisStats {
+  knowledge: {
+    approved_docs: number;
+    approved_edges: number;
+    pending_proposals: number;
+    knowledge_version: number;
+  };
+  usage: {
+    total_compiles: number;
+    unique_target_files: number;
+    /** Mean of persisted `audit_meta.budget_utilization`; null when no rows contribute a numeric value. */
+    avg_budget_utilization: number | null;
+    most_referenced_docs: Array<{ doc_id: string; count: number }>;
+    most_missed_patterns: Array<{ pattern: string; count: number }>;
+  };
+  health: {
+    stale_docs_count: number;
+    stale_file_anchored_doc_ids: string[];
+    unanalyzed_observations: number;
+    unanalyzed_by_event_type: Record<string, number>;
+    orphaned_tag_mappings: number;
+    orphaned_tag_mapping_samples: Array<{ tag: string; doc_id: string }>;
+  };
+}
+
 /**
  * Subset of {@link CompileAuditMeta} on the live compile_context response (ADR-012 Phase 2).
  * `Pick` keeps shapes aligned with persisted `audit_meta`. Informational only (P-1).
