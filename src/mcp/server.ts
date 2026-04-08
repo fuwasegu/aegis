@@ -5,7 +5,7 @@
  * Surface separation (INV-6):
  * - Agent Surface: compile_context, observe, get_compile_audit, get_known_tags, init_detect (5 tools)
  * - Admin Surface: agent tools + init_confirm,
- *                  list/get/approve/reject_proposals, list_observations, sync_docs (17 tools total)
+ *                  list/get/approve/reject_proposals, list_observations, sync_docs, get_stats (18 tools total)
  * - propose is NOT exposed (internal only)
  *
  * init_detect is on both surfaces (read-only preview).
@@ -347,6 +347,16 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       async (params) => {
         const result = service.archiveObservations(params.days ?? 90, surface);
         return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      },
+    );
+
+    server.tool(
+      'aegis_get_stats',
+      'Aggregate knowledge counts, compile_log usage metrics, and health signals (stale file-anchored docs, unanalyzed observations, orphaned tag_mappings). Admin read-only.',
+      {},
+      async () => {
+        const result = service.getStats(surface);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       },
     );
 

@@ -2261,6 +2261,152 @@ describe('aegis_get_known_tags — MCP wiring', () => {
   });
 });
 
+// ============================================================
+// getStats / aegis_get_stats (ADR-012 / ADR-014)
+// ============================================================
+
+describe('AegisService — getStats', () => {
+  let db: AegisDatabase;
+  let repo: Repository;
+  let service: AegisService;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+    service = new AegisService(repo, TEMPLATES_ROOT);
+  });
+
+  it('rejects agent surface', () => {
+    expect(() => service.getStats('agent')).toThrow(SurfaceViolationError);
+  });
+
+  it('returns zeros for empty uninitialized DB', () => {
+    const s = service.getStats('admin');
+    expect(s.knowledge.approved_docs).toBe(0);
+    expect(s.knowledge.approved_edges).toBe(0);
+    expect(s.knowledge.pending_proposals).toBe(0);
+    expect(s.knowledge.knowledge_version).toBe(0);
+    expect(s.usage.total_compiles).toBe(0);
+    expect(s.usage.unique_target_files).toBe(0);
+    expect(s.usage.avg_budget_utilization).toBeNull();
+    expect(s.health.unanalyzed_observations).toBe(0);
+    expect(s.health.orphaned_tag_mappings).toBe(0);
+  });
+
+  it('aggregates compile_log usage and orphaned tag mappings', () => {
+    repo.insertProposal({
+      proposal_id: 'boot-stats',
+      proposal_type: 'bootstrap',
+      payload: JSON.stringify({
+        documents: [{ doc_id: 'd0', title: 'D0', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+        edges: [],
+        layer_rules: [],
+      }),
+      status: 'pending',
+      review_comment: null,
+    });
+    repo.approveProposal('boot-stats');
+    repo.insertProposal({
+      proposal_id: 'p1',
+      proposal_type: 'new_doc',
+      payload: '{}',
+      status: 'pending',
+      review_comment: null,
+    });
+    const snapshot = repo.getCurrentSnapshot()!;
+    const audit = {
+      delivery_stats: {
+        inline_count: 0,
+        inline_total_bytes: 0,
+        deferred_count: 0,
+        deferred_total_bytes: 0,
+        omitted_count: 0,
+        omitted_total_bytes: 0,
+      },
+      budget_utilization: 0.5,
+      budget_exceeded: false,
+      budget_dropped: [],
+      near_miss_edges: [
+        {
+          edge_id: 'e1',
+          pattern: 'src/**/*.ts',
+          target_doc_id: 'd1',
+          reason: 'glob_no_match' as const,
+        },
+      ],
+      layer_classification: {},
+      policy_omitted_doc_ids: [],
+      performance: { near_miss_edge_scan_ms: 0, near_miss_edges_evaluated: 0 },
+    };
+    repo.insertCompileLog({
+      compile_id: 'c1',
+      snapshot_id: snapshot.snapshot_id,
+      request: JSON.stringify({ target_files: ['a.ts', 'b.ts'] }),
+      base_doc_ids: JSON.stringify(['doc-a', 'doc-b', 'doc-a']),
+      expanded_doc_ids: JSON.stringify(['exp-z', 'doc-a']),
+      audit_meta: JSON.stringify(audit),
+    });
+    repo.insertDocument({
+      doc_id: 'ghost-doc',
+      title: 'Ghost',
+      kind: 'guideline',
+      content: 'x',
+      content_hash: hash('x'),
+      status: 'draft',
+      ownership: 'standalone',
+      template_origin: null,
+      source_path: null,
+      source_synced_at: null,
+    });
+    repo.upsertTagMapping({ tag: 'orphan', doc_id: 'ghost-doc', confidence: 1, source: 'manual' });
+
+    const s = service.getStats('admin');
+    expect(s.knowledge.pending_proposals).toBe(1);
+    expect(s.usage.total_compiles).toBe(1);
+    expect(s.usage.unique_target_files).toBe(2);
+    expect(s.usage.avg_budget_utilization).toBe(0.5);
+    expect(s.usage.most_referenced_docs[0]).toEqual({ doc_id: 'doc-a', count: 3 });
+    expect(s.usage.most_referenced_docs.map((x) => x.doc_id)).toContain('exp-z');
+    expect(s.usage.most_missed_patterns[0]).toEqual({ pattern: 'src/**/*.ts', count: 1 });
+    expect(s.health.orphaned_tag_mappings).toBe(1);
+    expect(s.health.orphaned_tag_mapping_samples).toEqual([{ tag: 'orphan', doc_id: 'ghost-doc' }]);
+  });
+});
+
+describe('aegis_get_stats — MCP wiring', () => {
+  it('is admin-only and returns JSON', async () => {
+    const db = await createInMemoryDatabase();
+    const repo = new Repository(db);
+    const service = new AegisService(repo, TEMPLATES_ROOT);
+
+    const adminServer = createAegisServer(service, 'admin');
+    const adminClient = new Client({ name: 'test-client', version: '0.0.1' });
+    const [c1, c2] = InMemoryTransport.createLinkedPair();
+    await Promise.all([adminClient.connect(c1), adminServer.connect(c2)]);
+
+    const tools = await adminClient.listTools();
+    expect(tools.tools.some((t) => t.name === 'aegis_get_stats')).toBe(true);
+    const res = await adminClient.callTool({ name: 'aegis_get_stats', arguments: {} });
+    expect(res.isError).not.toBe(true);
+    const body = JSON.parse((res.content as Array<{ type: string; text: string }>)[0].text) as Record<string, unknown>;
+    expect(body.knowledge).toBeDefined();
+    expect(body.usage).toBeDefined();
+    expect(body.health).toBeDefined();
+
+    await adminClient.close();
+    await adminServer.close();
+
+    const agentServer = createAegisServer(service, 'agent');
+    const agentClient = new Client({ name: 'test-client2', version: '0.0.1' });
+    const [a1, a2] = InMemoryTransport.createLinkedPair();
+    await Promise.all([agentClient.connect(a1), agentServer.connect(a2)]);
+    const agentTools = await agentClient.listTools();
+    expect(agentTools.tools.some((t) => t.name === 'aegis_get_stats')).toBe(false);
+    await agentClient.close();
+    await agentServer.close();
+  });
+});
+
 describe('BudgetExceededError — MCP handler', () => {
   function bootstrapLargeDoc(repo: Repository) {
     const largeContent = 'x'.repeat(10_000);

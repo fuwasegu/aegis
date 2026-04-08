@@ -20,7 +20,7 @@
     "start": "node dist/main.js",
     "start:agent": "node dist/main.js --surface agent",
     "start:admin": "node dist/main.js --surface admin",
-    "test": "vitest run",
+    "test": "npm run build && vitest run",
     "test:watch": "vitest",
     "lint": "biome check src/",
     "lint:fix": "biome check --write src/",
