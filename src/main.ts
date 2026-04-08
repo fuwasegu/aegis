@@ -28,7 +28,12 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/** Directory of this module (`import.meta.dirname` is Node 20.11+; CI tests Node 18). */
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createDatabase } from './core/store/database.js';
 import { runInitialBaselineSourcePathMigration } from './core/store/migrations/index.js';
@@ -53,7 +58,7 @@ interface StatsDoctorCli {
 function parseStatsDoctorCli(argv: string[]): StatsDoctorCli {
   let projectRoot = process.cwd();
   let customDbPath: string | undefined;
-  let templatesRoot = join(import.meta.dirname, '../templates');
+  let templatesRoot = join(SCRIPT_DIR, '../templates');
   const extraTemplateDirs: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -89,7 +94,7 @@ async function openServiceForStatsDoctor(options: StatsDoctorCli): Promise<Aegis
   return new AegisService(repo, options.templatesRoot, null, options.extraTemplateDirs, false, options.projectRoot);
 }
 
-const PACKAGE_VERSION: string = JSON.parse(readFileSync(join(import.meta.dirname, '../package.json'), 'utf-8')).version;
+const PACKAGE_VERSION: string = JSON.parse(readFileSync(join(SCRIPT_DIR, '../package.json'), 'utf-8')).version;
 
 const DEFAULT_DB_DIR = '.aegis';
 const DEFAULT_DB_PATH = join(DEFAULT_DB_DIR, 'aegis.db');
@@ -111,7 +116,7 @@ function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
   let surface: Surface = 'agent';
   let dbPath: string | undefined;
-  let templatesRoot = join(import.meta.dirname, '../templates');
+  let templatesRoot = join(SCRIPT_DIR, '../templates');
   const extraTemplateDirs: string[] = [];
   let projectRoot = process.cwd();
   let model = DEFAULT_MODEL;
@@ -271,7 +276,7 @@ async function handleDeployAdapters(): Promise<void> {
 
   const db = await createDatabase(dbPath);
   const repo = new Repository(db);
-  const templatesRoot = join(import.meta.dirname, '../templates');
+  const templatesRoot = join(SCRIPT_DIR, '../templates');
   const service = new AegisService(repo, templatesRoot, null);
   const results = service.deployAdapters(projectRoot, targets);
 
@@ -378,7 +383,7 @@ async function handleMaintenance(): Promise<void> {
   let dryRun = false;
   let archiveDays = 90;
   let customDbPath: string | undefined;
-  let templatesRoot = join(import.meta.dirname, '../templates');
+  let templatesRoot = join(SCRIPT_DIR, '../templates');
   const extraTemplateDirs: string[] = [];
 
   for (let i = 0; i < args.length; i++) {

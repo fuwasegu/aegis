@@ -5,13 +5,14 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { execPath } from 'node:process';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDatabase } from './core/store/database.js';
 import { Repository } from './core/store/repository.js';
 
-const MAIN_JS = join(import.meta.dirname, '../dist/main.js');
+const MAIN_JS = join(dirname(fileURLToPath(import.meta.url)), '../dist/main.js');
 
 describe('CLI — stats / doctor (dist/main.js)', () => {
   let dir: string;
