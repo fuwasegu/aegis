@@ -1047,6 +1047,7 @@ export class AegisService {
         compileContext: 'aegis_compile_context',
         observe: 'aegis_observe',
         getCompileAudit: 'aegis_get_compile_audit',
+        getKnownTags: 'aegis_get_known_tags',
       },
     };
 

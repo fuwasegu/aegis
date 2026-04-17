@@ -21,22 +21,24 @@ You MUST consult Aegis for every coding-related interaction — implementation t
 ## When Writing Code
 
 1. **Create a Plan** — Before touching any file, articulate what you intend to do in natural language.
-2. **Consult Aegis** — Call \`${config.toolNames.compileContext}\` with:
+2. **Tag catalog (recommended once per session)** — Call \`${config.toolNames.getKnownTags}\` to list approved-resolvable tags and obtain \`knowledge_version\` and \`tag_catalog_hash\` for caching. Call again when the catalog hash changes.
+3. **Consult Aegis** — Call \`${config.toolNames.compileContext}\` with:
    - \`target_files\`: the files you plan to edit
    - \`plan\`: your natural-language plan (optional but recommended)
    - \`command\`: the type of operation (scaffold, refactor, review, etc.)
-3. **Read the returned documents** — Aegis returns architecture guidelines, patterns, and constraints relevant to your task. You MUST follow them.
+   - \`intent_tags\` (recommended): tags chosen from the step-2 catalog — drives \`expanded\` context deterministically. Use \`[]\` to skip expanded context without using the server-side SLM tagger. Omit \`intent_tags\` only if you want the server SLM tagger (when enabled) to infer tags from \`plan\` instead (see ADR-004).
+4. **Read the returned documents** — Aegis returns architecture guidelines, patterns, and constraints relevant to your task. You MUST follow them.
    - \`delivery: "inline"\` — content is included; read it directly.
    - \`delivery: "deferred"\` — content is NOT included. You MUST Read the file via \`source_path\` before proceeding. Prioritize by \`relevance\` score (high first); skip only documents with very low relevance (< 0.25) unless specifically needed.
    - \`delivery: "omitted"\` — excluded by budget or policy. Increase \`max_inline_bytes\` or use \`content_mode: "always"\` if needed.
-4. **Implement** — Write code that adheres to the returned guidelines.
-5. **Self-Review** — Check your implementation against the guidelines Aegis returned.
-6. **Report Compile Misses** — If Aegis did not provide a relevant guideline:
+5. **Implement** — Write code that adheres to the returned guidelines.
+6. **Self-Review** — Check your implementation against the guidelines Aegis returned.
+7. **Report Compile Misses** — If Aegis did not provide a relevant guideline:
    \`\`\`
    ${config.toolNames.observe}({
      event_type: "compile_miss",
-     related_compile_id: "<from step 2>",
-     related_snapshot_id: "<from step 2>",
+     related_compile_id: "<from compile_context>",
+     related_snapshot_id: "<from compile_context>",
      payload: {
        target_files: ["<files you edited>"],
        review_comment: "<what guideline was missing or insufficient>",
@@ -58,6 +60,7 @@ If the user asks about architecture, patterns, conventions, or how to write code
    - \`target_files\`: the real file paths from step 1
    - \`plan\`: the user's question in natural language
    - \`command\`: \`"review"\`
+   - \`intent_tags\` (optional): when \`expanded\` context is useful, call \`${config.toolNames.getKnownTags}\` first, then pass a subset of tags (or \`[]\` to skip expanded).
 3. **Answer using Aegis context** — Base your answer on the guidelines returned by Aegis, supplemented by your own knowledge. Cite specific guidelines when relevant. When documents include a \`relevance\` score, prioritize high-scoring documents and skim or skip low-scoring ones.
 
 ## When Knowledge Base Is Empty

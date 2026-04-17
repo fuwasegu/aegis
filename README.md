@@ -133,12 +133,26 @@ npx @fuwasegu/aegis deploy-adapters --targets cursor,codex  # specific adapters 
 
 ### 2. Use during development
 
-The agent surface provides tools for your AI coding agent:
+The agent surface provides tools for your AI coding agent. Recommended flow for **expanded** context (tag-driven documents): call `aegis_get_known_tags` once per session (cache `tag_catalog_hash`), then pass `intent_tags` into compile:
+
+```
+aegis_get_known_tags({})
+aegis_compile_context({
+  target_files: ["src/core/store/repository.ts"],
+  plan: "Add a new query method for archived observations",
+  intent_tags: ["<tags from known_tags>"]
+})
+```
+
+Omit `intent_tags` only if you want the optional server-side SLM tagger (when `--slm` is enabled) to infer tags from `plan` instead ([ADR-004](docs/adr/004-slm-role-and-strategy.md)). Pass `intent_tags: []` to skip expanded context without SLM.
+
+Base DAG only (skip expanded context; works the same with or without `--slm` because `intent_tags: []` disables expanded and skips SLM tagging):
 
 ```
 aegis_compile_context({
   target_files: ["src/core/store/repository.ts"],
-  plan: "Add a new query method for archived observations"
+  plan: "Add a new query method for archived observations",
+  intent_tags: []
 })
 ```
 

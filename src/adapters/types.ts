@@ -5,6 +5,7 @@ export interface AdapterConfig {
     compileContext: string;
     observe: string;
     getCompileAudit: string;
+    getKnownTags: string;
   };
 }
 
