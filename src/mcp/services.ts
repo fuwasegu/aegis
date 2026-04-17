@@ -15,13 +15,13 @@ import { deployCursorAdapter } from '../adapters/cursor/generate.js';
 import { deploySkills } from '../adapters/skills.js';
 import type { AdapterConfig, AdapterResult } from '../adapters/types.js';
 import type { ObservationAnalyzer } from '../core/automation/analyzer.js';
+import { CoverageAnalyzer } from '../core/automation/coverage-analyzer.js';
 import { DocGapAnalyzer } from '../core/automation/doc-gap-analyzer.js';
 import { DocumentImportAnalyzer } from '../core/automation/document-import-analyzer.js';
 import { ManualNoteAnalyzer } from '../core/automation/manual-note-analyzer.js';
 import { PrMergedAnalyzer } from '../core/automation/pr-merged-analyzer.js';
 import { type ProposeResult, ProposeService } from '../core/automation/propose.js';
 import { ReviewCorrectionAnalyzer } from '../core/automation/review-correction-analyzer.js';
-import { RuleBasedAnalyzer } from '../core/automation/rule-analyzer.js';
 import type { InitPreview } from '../core/init/engine.js';
 import { initConfirm as coreInitConfirm, initDetect as coreInitDetect } from '../core/init/engine.js';
 import { detectUpgrade, generateUpgradeProposals, type UpgradePreview } from '../core/init/upgrade.js';
@@ -112,7 +112,7 @@ export class AegisService {
   ) {
     this.compiler = new ContextCompiler(repo, tagger, adapterOutdated);
     this.analyzerRegistry = new Map<ObservationEventType, ObservationAnalyzer>([
-      ['compile_miss', new RuleBasedAnalyzer()],
+      ['compile_miss', new CoverageAnalyzer(repo)],
       ['review_correction', new ReviewCorrectionAnalyzer(repo)],
       ['pr_merged', new PrMergedAnalyzer(repo)],
       ['manual_note', new ManualNoteAnalyzer(repo)],

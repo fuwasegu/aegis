@@ -1,4 +1,5 @@
 export type { ObservationAnalyzer } from './analyzer.js';
+export { CoverageAnalyzer } from './coverage-analyzer.js';
 export { DocGapAnalyzer } from './doc-gap-analyzer.js';
 export { DocumentImportAnalyzer } from './document-import-analyzer.js';
 export { ManualNoteAnalyzer } from './manual-note-analyzer.js';
