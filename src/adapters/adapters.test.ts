@@ -23,6 +23,7 @@ function makeConfig(projectRoot: string): AdapterConfig {
       compileContext: 'aegis_compile_context',
       observe: 'aegis_observe',
       getCompileAudit: 'aegis_get_compile_audit',
+      getKnownTags: 'aegis_get_known_tags',
     },
   };
 }
@@ -51,6 +52,8 @@ describe('Cursor adapter', () => {
     const content = readFileSync(result.filePath, 'utf-8');
     expect(content).toContain('aegis_compile_context');
     expect(content).toContain('aegis_observe');
+    expect(content).toContain('aegis_get_known_tags');
+    expect(content).toContain('intent_tags');
     expect(content).toContain('Aegis Process Enforcement');
     expect(content).toContain('Do NOT read the files');
     expect(content).toContain('relevance');
@@ -110,6 +113,8 @@ describe('Claude adapter', () => {
     expect(content).toContain('<!-- aegis:start -->');
     expect(content).toContain('<!-- aegis:end -->');
     expect(content).toContain('aegis_compile_context');
+    expect(content).toContain('aegis_get_known_tags');
+    expect(content).toContain('intent_tags');
     expect(content).toContain('Do NOT read the files');
     expect(content).toContain('relevance');
     expect(content).toContain('delivery: "deferred"');
@@ -175,6 +180,8 @@ describe('Codex adapter', () => {
     expect(content).toContain('<!-- aegis:start -->');
     expect(content).toContain('<!-- aegis:end -->');
     expect(content).toContain('aegis_compile_context');
+    expect(content).toContain('aegis_get_known_tags');
+    expect(content).toContain('intent_tags');
     expect(content).toContain('AGENTS.md');
     expect(content).toContain('Do NOT read the files');
     expect(content).toContain('relevance');
@@ -398,6 +405,24 @@ describe('deploy-adapters version recording', () => {
     const meta = repo.getAdapterMeta();
     expect(meta).toBeDefined();
     expect(meta!.deployed_version).toBe(TEST_VERSION);
+  });
+
+  it('deployAdapters writes getKnownTags and intent_tags workflow to managed adapters', () => {
+    service.deployAdapters(tmpDir);
+    const cursorRule = join(tmpDir, '.cursor', 'rules', 'aegis-process.mdc');
+    const cursorText = readFileSync(cursorRule, 'utf-8');
+    expect(cursorText).toContain('aegis_get_known_tags');
+    expect(cursorText).toContain('intent_tags');
+
+    const claudePath = join(tmpDir, 'CLAUDE.md');
+    const claudeText = readFileSync(claudePath, 'utf-8');
+    expect(claudeText).toContain('aegis_get_known_tags');
+    expect(claudeText).toContain('intent_tags');
+
+    const agentsPath = join(tmpDir, 'AGENTS.md');
+    const agentsText = readFileSync(agentsPath, 'utf-8');
+    expect(agentsText).toContain('aegis_get_known_tags');
+    expect(agentsText).toContain('intent_tags');
   });
 
   it('full deploy + conflict → does not record version', () => {

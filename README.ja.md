@@ -133,12 +133,26 @@ npx @fuwasegu/aegis deploy-adapters --targets cursor,codex  # 対象を絞る場
 
 ### 2. 開発中に使う
 
-Agent surface が AI コーディングエージェントにツールを提供:
+Agent surface が AI コーディングエージェントにツールを提供します。**expanded** コンテキスト（タグ由来のドキュメント）を使う推奨フローは、セッションごとに一度 `aegis_get_known_tags`（`tag_catalog_hash` をキャッシュ）し、続けて `intent_tags` を付けてコンパイルします:
+
+```
+aegis_get_known_tags({})
+aegis_compile_context({
+  target_files: ["src/core/store/repository.ts"],
+  plan: "アーカイブ済みオブザベーション用の新しいクエリメソッドを追加",
+  intent_tags: ["<known_tags で取得したタグ>"]
+})
+```
+
+`intent_tags` を省略するのは、オプションのサーバー側 SLM タガー（`--slm` 有効時）に `plan` からタグ推論させたい場合に限ります（[ADR-004](docs/adr/004-slm-role-and-strategy.md)）。expanded を使わず SLM も使わない場合は `intent_tags: []` を渡します。
+
+ベース DAG のみ（expanded をスキップ）。`intent_tags: []` により SLM 有無に関わらず expanded / SLM タギングを行いません:
 
 ```
 aegis_compile_context({
   target_files: ["src/core/store/repository.ts"],
-  plan: "アーカイブ済みオブザベーション用の新しいクエリメソッドを追加"
+  plan: "アーカイブ済みオブザベーション用の新しいクエリメソッドを追加",
+  intent_tags: []
 })
 ```
 

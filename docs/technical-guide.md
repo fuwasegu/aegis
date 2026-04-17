@@ -305,17 +305,32 @@ The preview_hash encompasses document contents, edge structure, and placeholder 
 
 ---
 
-## 9. SLM Intent Tagging and Grammar-Constrained Generation
+## 9. Expanded Context: Agent `intent_tags` and SLM Fallback
 
 ### Purpose
 
-Extract user intent from the `plan` parameter of `compile_context` and return documents unreachable via DAG routing as "expanded context."
+Return documents unreachable via DAG routing as **expanded context**, keyed by **intent tags** resolved through `tag_mappings`.
+
+### Priority (ADR-004 D-8)
+
+```
+1. If compile_context includes intent_tags (including []):
+   - Use only those tags (normalized, filtered to known tags from tag_mappings).
+   - SLM is NOT used for tag selection.
+   - [] means "no expanded context" explicitly.
+2. If intent_tags is OMITTED and SLM is enabled (--slm):
+   - Infer tags from plan via SLM, constrained to tags from tag_mappings.
+3. If intent_tags is OMITTED and SLM is disabled (default):
+   - No expanded context (base DAG only).
+```
+
+Recommended for LLM agents: call `aegis_get_known_tags`, cache `tag_catalog_hash`, then pass a subset as `intent_tags` with `plan` for relevance ordering.
 
 ### Prerequisite: SLM is Opt-in
 
-SLM is explicitly enabled via the `--slm` flag. It is disabled by default — Base Context (deterministic DAG) operates without it. This design decision (ADR-004) ensures core functionality works with zero external dependencies.
+SLM is explicitly enabled via the `--slm` flag. It is disabled by default — Base Context (deterministic DAG) operates without it. This design decision (ADR-004) ensures core functionality works with zero external dependencies. SLM applies only when `intent_tags` is omitted.
 
-### Algorithm
+### SLM algorithm (when intent_tags omitted and --slm enabled)
 
 ```
 1. Feed the plan text to the SLM
