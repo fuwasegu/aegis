@@ -812,6 +812,164 @@ describe('Repository', () => {
       });
       expect(() => repo.approveProposal('p-dep2')).toThrow('not found or not approved');
     });
+
+    it('deprecate document deletes tag_mappings for that doc', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot');
+      repo.upsertTagMapping({ tag: 'routing', doc_id: 'doc1', confidence: 1, source: 'manual' });
+      expect(repo.getTagsForDocument('doc1')).toHaveLength(1);
+
+      repo.insertProposal({
+        proposal_id: 'p-dep',
+        proposal_type: 'deprecate',
+        payload: JSON.stringify({ entity_type: 'document', entity_id: 'doc1' }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-dep');
+      expect(repo.getTagsForDocument('doc1')).toHaveLength(0);
+    });
+
+    it('deprecate with replaced_by_doc_id records replacement on deprecated document', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [
+            { doc_id: 'old-d', title: 'Old', kind: 'guideline', content: 'a', content_hash: hash('a') },
+            { doc_id: 'new-d', title: 'New', kind: 'guideline', content: 'b', content_hash: hash('b') },
+          ],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot');
+      repo.upsertTagMapping({ tag: 't', doc_id: 'old-d', confidence: 1, source: 'manual' });
+
+      repo.insertProposal({
+        proposal_id: 'p-dep',
+        proposal_type: 'deprecate',
+        payload: JSON.stringify({
+          entity_type: 'document',
+          entity_id: 'old-d',
+          replaced_by_doc_id: 'new-d',
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-dep');
+
+      const oldDoc = repo.getDocumentById('old-d');
+      expect(oldDoc?.status).toBe('deprecated');
+      expect(oldDoc?.replaced_by_doc_id).toBe('new-d');
+      expect(repo.getTagsForDocument('old-d')).toHaveLength(0);
+    });
+
+    it('deprecate rejects replaced_by_doc_id that is not an approved document', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot');
+
+      repo.insertProposal({
+        proposal_id: 'p-dep-bad',
+        proposal_type: 'deprecate',
+        payload: JSON.stringify({
+          entity_type: 'document',
+          entity_id: 'doc1',
+          replaced_by_doc_id: 'missing-doc',
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      expect(() => repo.approveProposal('p-dep-bad')).toThrow("replaced_by_doc_id 'missing-doc' must reference");
+    });
+
+    it('deprecate rejects replaced_by_doc_id for non-document entity', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [
+            {
+              edge_id: 'e1',
+              source_type: 'path',
+              source_value: 'src/**',
+              target_doc_id: 'doc1',
+              edge_type: 'path_requires',
+              priority: 100,
+              specificity: 0,
+            },
+          ],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot');
+
+      repo.insertProposal({
+        proposal_id: 'p-dep-edge',
+        proposal_type: 'deprecate',
+        payload: JSON.stringify({
+          entity_type: 'edge',
+          entity_id: 'e1',
+          replaced_by_doc_id: 'doc1',
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      expect(() => repo.approveProposal('p-dep-edge')).toThrow('replaced_by_doc_id is only valid');
+    });
+
+    it('deprecate rejects replaced_by_doc_id equal to deprecated id', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'doc1', title: 'T', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot');
+
+      repo.insertProposal({
+        proposal_id: 'p-dep-self',
+        proposal_type: 'deprecate',
+        payload: JSON.stringify({
+          entity_type: 'document',
+          entity_id: 'doc1',
+          replaced_by_doc_id: 'doc1',
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      expect(() => repo.approveProposal('p-dep-self')).toThrow('cannot equal the deprecated document id');
+    });
   });
 
   describe('source_path support', () => {
@@ -922,6 +1080,51 @@ describe('Repository', () => {
       const doc = repo.getDocumentById('dep-doc');
       expect(doc?.status).toBe('approved');
       expect(doc?.content).toBe('new');
+      expect(doc?.replaced_by_doc_id ?? null).toBeNull();
+    });
+
+    it('update_doc clears replaced_by_doc_id after deprecate with replacement', () => {
+      repo.insertProposal({
+        proposal_id: 'p-boot',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [
+            { doc_id: 'old-d', title: 'Old', kind: 'guideline', content: 'a', content_hash: hash('a') },
+            { doc_id: 'new-d', title: 'New', kind: 'guideline', content: 'b', content_hash: hash('b') },
+          ],
+          edges: [],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-boot');
+
+      repo.insertProposal({
+        proposal_id: 'p-dep',
+        proposal_type: 'deprecate',
+        payload: JSON.stringify({
+          entity_type: 'document',
+          entity_id: 'old-d',
+          replaced_by_doc_id: 'new-d',
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-dep');
+      expect(repo.getDocumentById('old-d')?.replaced_by_doc_id).toBe('new-d');
+
+      repo.insertProposal({
+        proposal_id: 'p-revive',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({ doc_id: 'old-d', content: 'revived', content_hash: hash('revived') }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('p-revive');
+      const revived = repo.getDocumentById('old-d');
+      expect(revived?.status).toBe('approved');
+      expect(revived?.replaced_by_doc_id ?? null).toBeNull();
     });
 
     it('_applyUpdateDoc supports source_path in payload', () => {

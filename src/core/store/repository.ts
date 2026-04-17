@@ -108,8 +108,8 @@ export class Repository {
     assertOwnershipSourcePathInvariant(ownership, sourcePath);
     this.db
       .prepare(`
-      INSERT INTO documents (doc_id, title, kind, content, content_hash, status, ownership, template_origin, source_path, source_synced_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO documents (doc_id, title, kind, content, content_hash, status, ownership, template_origin, source_path, source_synced_at, replaced_by_doc_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
       .run(
         doc.doc_id,
@@ -122,6 +122,7 @@ export class Repository {
         doc.template_origin ?? null,
         sourcePath,
         doc.source_synced_at ?? null,
+        doc.replaced_by_doc_id ?? null,
       );
   }
 
@@ -909,7 +910,7 @@ export class Repository {
       add_edge: ['priority', 'source_value', 'target_doc_id'],
       retarget_edge: ['source_value', 'target_doc_id'],
       remove_edge: [],
-      deprecate: [],
+      deprecate: ['replaced_by_doc_id'],
       bootstrap: [],
     };
     const allowed = allowedFields[proposalType] ?? [];
@@ -1182,6 +1183,7 @@ export class Repository {
       'content = ?',
       'content_hash = ?',
       "status = 'approved'",
+      'replaced_by_doc_id = NULL',
       "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
     ];
     const params: unknown[] = [payload.content, payload.content_hash];
@@ -1206,7 +1208,27 @@ export class Repository {
     this.db.prepare(`UPDATE documents SET ${sets.join(', ')} WHERE doc_id = ?`).run(...params);
   }
 
-  private _applyDeprecate(payload: { entity_type: 'document' | 'edge' | 'layer_rule'; entity_id: string }): void {
+  private _applyDeprecate(payload: {
+    entity_type: 'document' | 'edge' | 'layer_rule';
+    entity_id: string;
+    replaced_by_doc_id?: string;
+  }): void {
+    const rawReplace = payload.replaced_by_doc_id;
+    const replacedBy = typeof rawReplace === 'string' && rawReplace.trim() !== '' ? rawReplace.trim() : undefined;
+
+    if (replacedBy !== undefined && payload.entity_type !== 'document') {
+      throw new Error('replaced_by_doc_id is only valid when deprecating a document');
+    }
+    if (replacedBy !== undefined && replacedBy === payload.entity_id) {
+      throw new Error('replaced_by_doc_id cannot equal the deprecated document id');
+    }
+    if (replacedBy !== undefined) {
+      const repl = this.getDocumentById(replacedBy);
+      if (!repl || repl.status !== 'approved') {
+        throw new Error(`replaced_by_doc_id '${replacedBy}' must reference an approved document`);
+      }
+    }
+
     const table =
       payload.entity_type === 'document' ? 'documents' : payload.entity_type === 'edge' ? 'edges' : 'layer_rules';
     const idCol =
@@ -1220,7 +1242,26 @@ export class Repository {
       throw new Error(`Cannot deprecate ${payload.entity_type} '${payload.entity_id}': not found or not approved`);
     }
 
-    this.db.prepare(`UPDATE ${table} SET status = 'deprecated' WHERE ${idCol} = ?`).run(payload.entity_id);
+    if (payload.entity_type === 'document') {
+      this.db.prepare('DELETE FROM tag_mappings WHERE doc_id = ?').run(payload.entity_id);
+      if (replacedBy !== undefined) {
+        this.db
+          .prepare(
+            `UPDATE documents SET status = 'deprecated', replaced_by_doc_id = ?, ` +
+              `updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE doc_id = ?`,
+          )
+          .run(replacedBy, payload.entity_id);
+      } else {
+        this.db
+          .prepare(
+            `UPDATE documents SET status = 'deprecated', replaced_by_doc_id = NULL, ` +
+              `updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE doc_id = ?`,
+          )
+          .run(payload.entity_id);
+      }
+    } else {
+      this.db.prepare(`UPDATE ${table} SET status = 'deprecated' WHERE ${idCol} = ?`).run(payload.entity_id);
+    }
   }
 
   // ============================================================

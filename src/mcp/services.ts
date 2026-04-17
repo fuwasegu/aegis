@@ -1101,8 +1101,13 @@ export class AegisService {
           return `Retarget edge: ${payload.edge_id}`;
         case 'remove_edge':
           return `Remove edge: ${payload.edge_id}`;
-        case 'deprecate':
-          return `Deprecate: ${payload.entity_type} ${payload.entity_id}`;
+        case 'deprecate': {
+          const suffix =
+            typeof payload.replaced_by_doc_id === 'string' && payload.replaced_by_doc_id.trim() !== ''
+              ? ` → replaced by ${payload.replaced_by_doc_id.trim()}`
+              : '';
+          return `Deprecate: ${payload.entity_type} ${payload.entity_id}${suffix}`;
+        }
         default:
           return proposalType;
       }
