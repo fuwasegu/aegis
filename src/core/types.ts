@@ -27,6 +27,11 @@ export interface Document {
    * Not updated by arbitrary `update_doc` approve — use sync_docs to refresh.
    */
   source_synced_at: string | null;
+  /**
+   * ADR-014: when `status` is `deprecated`, optional approved document that supersedes this one
+   * (set when approving a `deprecate` proposal with `replaced_by_doc_id`).
+   */
+  replaced_by_doc_id?: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS documents (
     template_origin TEXT,
     source_path     TEXT,
     source_synced_at TEXT,
+    replaced_by_doc_id TEXT REFERENCES documents(doc_id),
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
