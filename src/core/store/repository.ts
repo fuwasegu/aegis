@@ -357,6 +357,15 @@ export class Repository {
   }
 
   /**
+   * All non-archived observations for a given event type (e.g. compile_miss impact simulation).
+   */
+  listObservationsByEventType(eventType: string): Observation[] {
+    return this.db
+      .prepare(`SELECT * FROM observations WHERE event_type = ? AND archived_at IS NULL ORDER BY created_at ASC`)
+      .all(eventType) as Observation[];
+  }
+
+  /**
    * Atomically claim up to `limit` pending observations for processing.
    * SELECT candidates and conditional UPDATE run inside a single DB transaction
    * so concurrent processes (separate file-backed connections) cannot claim the same rows.
@@ -706,14 +715,16 @@ export class Repository {
    * Admin observability only. Full-table read: cost grows with compile_log row count (future: SQL aggregates or sampling).
    */
   listCompileLogStatsRows(): Array<{
+    compile_id: string;
     request: string;
     base_doc_ids: string;
     expanded_doc_ids: string | null;
     audit_meta: string | null;
   }> {
     return this.db
-      .prepare('SELECT request, base_doc_ids, expanded_doc_ids, audit_meta FROM compile_log')
+      .prepare('SELECT compile_id, request, base_doc_ids, expanded_doc_ids, audit_meta FROM compile_log')
       .all() as Array<{
+      compile_id: string;
       request: string;
       base_doc_ids: string;
       expanded_doc_ids: string | null;
