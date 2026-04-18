@@ -21,12 +21,15 @@ import {
   type Observation,
   PENDING_CONTENT_PLACEHOLDER,
   type Proposal,
+  type ProposalBundlePreflightLeaf,
+  type ProposalBundlePreflightResult,
   type ProposalStatus,
   type ProposalType,
   type Snapshot,
   type TagMapping,
 } from '../types.js';
 import type { AegisDatabase } from './database.js';
+import { orderPendingBundleProposals } from './proposal-bundle-order.js';
 
 const DOC_OWNERSHIP_SET = new Set<DocOwnership>(['file-anchored', 'standalone', 'derived']);
 
@@ -517,10 +520,17 @@ export class Repository {
   insertProposal(proposal: Omit<Proposal, 'created_at' | 'resolved_at'>): string {
     this.db
       .prepare(`
-      INSERT INTO proposals (proposal_id, proposal_type, payload, status, review_comment)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO proposals (proposal_id, proposal_type, payload, status, review_comment, bundle_id)
+      VALUES (?, ?, ?, ?, ?, ?)
     `)
-      .run(proposal.proposal_id, proposal.proposal_type, proposal.payload, proposal.status, proposal.review_comment);
+      .run(
+        proposal.proposal_id,
+        proposal.proposal_type,
+        proposal.payload,
+        proposal.status,
+        proposal.review_comment,
+        proposal.bundle_id ?? null,
+      );
     return proposal.proposal_id;
   }
 
@@ -576,6 +586,20 @@ export class Repository {
         AND status = 'pending'
     `)
       .all(proposalType) as Proposal[];
+  }
+
+  /** Pending proposals that share the same ADR-015 bundle id (all-or-nothing approval). */
+  listPendingProposalsByBundle(bundleId: string): Proposal[] {
+    return this.db
+      .prepare(
+        `
+      SELECT * FROM proposals
+      WHERE bundle_id = ?
+        AND status = 'pending'
+      ORDER BY created_at ASC
+    `,
+      )
+      .all(bundleId) as Proposal[];
   }
 
   countPendingProposals(): number {
@@ -810,14 +834,80 @@ export class Repository {
   // Single transaction: validate → mutate → version++ → snapshot
   // ============================================================
 
+  /**
+   * Apply Canonical mutations for an approved proposal payload (no status / version / snapshot).
+   * Used by {@link approveProposal} and bundle approve/preflight.
+   */
+  private _applyCanonicalMutationFromPayload(
+    proposalId: string,
+    proposalType: ProposalType,
+    payload: Record<string, unknown>,
+    projectRoot?: string,
+  ): void {
+    if (proposalType === 'bootstrap') {
+      if (this.isInitialized()) {
+        throw new AlreadyInitializedError();
+      }
+      this._applyBootstrap(payload as Parameters<Repository['_applyBootstrap']>[0]);
+      return;
+    }
+    if (proposalType === 'add_edge') {
+      this._applyAddEdge(payload as Omit<Edge, 'created_at' | 'status'>);
+      return;
+    }
+    if (proposalType === 'retarget_edge') {
+      this._applyRetargetEdge(payload);
+      return;
+    }
+    if (proposalType === 'remove_edge') {
+      this._applyRemoveEdge(payload);
+      return;
+    }
+    if (proposalType === 'new_doc') {
+      this._applyNewDoc(payload as Omit<Document, 'created_at' | 'updated_at' | 'status'>, projectRoot);
+      if (Array.isArray(payload.tags) && payload.tags.length > 0 && payload.doc_id) {
+        for (const tag of payload.tags as string[]) {
+          this.upsertTagMapping({ tag, doc_id: payload.doc_id as string, confidence: 1.0, source: 'manual' });
+        }
+      }
+      return;
+    }
+    if (proposalType === 'update_doc') {
+      if (payload.content === PENDING_CONTENT_PLACEHOLDER) {
+        throw new Error(
+          `Cannot approve update_doc proposal '${proposalId}': content is a placeholder. ` +
+            'Provide actual content via modifications when approving.',
+        );
+      }
+      this._applyUpdateDoc(payload as Parameters<Repository['_applyUpdateDoc']>[0]);
+      if (Array.isArray(payload.tags) && payload.tags.length > 0 && payload.doc_id) {
+        for (const tag of payload.tags as string[]) {
+          this.upsertTagMapping({ tag, doc_id: payload.doc_id as string, confidence: 1.0, source: 'manual' });
+        }
+      }
+      return;
+    }
+    if (proposalType === 'deprecate') {
+      this._applyDeprecate(payload as Parameters<Repository['_applyDeprecate']>[0]);
+      return;
+    }
+    throw new Error(`Unsupported proposal_type for approval: ${proposalType}`);
+  }
+
   approveProposal(proposalId: string, modifications?: Record<string, unknown>, projectRoot?: string): CanonicalVersion {
     return this.db.transaction(() => {
       const proposal = this.getProposal(proposalId);
       if (!proposal) throw new Error(`Proposal ${proposalId} not found`);
       if (proposal.status !== 'pending')
         throw new Error(`Proposal ${proposalId} is not pending (status: ${proposal.status})`);
+      if (proposal.bundle_id != null && String(proposal.bundle_id).trim() !== '') {
+        throw new Error(
+          `Proposal ${proposalId} belongs to bundle '${proposal.bundle_id}'. ` +
+            'Use approveProposalBundle(bundle_id) for all-or-nothing approval.',
+        );
+      }
 
-      const payload = JSON.parse(proposal.payload);
+      const payload = JSON.parse(proposal.payload) as Record<string, unknown>;
 
       // Apply admin modifications to payload before mutation
       if (modifications && Object.keys(modifications).length > 0) {
@@ -835,41 +925,7 @@ export class Repository {
           .run(JSON.stringify(payload), proposalId);
       }
 
-      if (proposal.proposal_type === 'bootstrap') {
-        // Re-init guard: bootstrap is only allowed on uninitialized projects
-        if (this.isInitialized()) {
-          throw new AlreadyInitializedError();
-        }
-        this._applyBootstrap(payload);
-      } else if (proposal.proposal_type === 'add_edge') {
-        this._applyAddEdge(payload);
-      } else if (proposal.proposal_type === 'retarget_edge') {
-        this._applyRetargetEdge(payload);
-      } else if (proposal.proposal_type === 'remove_edge') {
-        this._applyRemoveEdge(payload);
-      } else if (proposal.proposal_type === 'new_doc') {
-        this._applyNewDoc(payload, projectRoot);
-        if (Array.isArray(payload.tags) && payload.tags.length > 0 && payload.doc_id) {
-          for (const tag of payload.tags as string[]) {
-            this.upsertTagMapping({ tag, doc_id: payload.doc_id as string, confidence: 1.0, source: 'manual' });
-          }
-        }
-      } else if (proposal.proposal_type === 'update_doc') {
-        if (payload.content === PENDING_CONTENT_PLACEHOLDER) {
-          throw new Error(
-            `Cannot approve update_doc proposal '${proposalId}': content is a placeholder. ` +
-              'Provide actual content via modifications when approving.',
-          );
-        }
-        this._applyUpdateDoc(payload);
-        if (Array.isArray(payload.tags) && payload.tags.length > 0 && payload.doc_id) {
-          for (const tag of payload.tags as string[]) {
-            this.upsertTagMapping({ tag, doc_id: payload.doc_id as string, confidence: 1.0, source: 'manual' });
-          }
-        }
-      } else if (proposal.proposal_type === 'deprecate') {
-        this._applyDeprecate(payload);
-      }
+      this._applyCanonicalMutationFromPayload(proposalId, proposal.proposal_type as ProposalType, payload, projectRoot);
 
       // Update proposal status
       const now = new Date().toISOString();
@@ -883,6 +939,208 @@ export class Repository {
       // Create snapshot
       const snapshot = this.createSnapshot();
 
+      return { knowledge_version: newVersion, snapshot_id: snapshot.snapshot_id };
+    })();
+  }
+
+  /**
+   * Dry-run: validate every pending proposal in the bundle against current Canonical state,
+   * applying mutations under a SAVEPOINT then rolling back (no knowledge_version / snapshot).
+   */
+  preflightProposalBundle(bundleId: string, projectRoot?: string): ProposalBundlePreflightResult {
+    return this.db.transaction(() => {
+      const pending = this.listPendingProposalsByBundle(bundleId);
+      if (pending.length === 0) {
+        throw new Error(`No pending proposals for bundle_id '${bundleId}'`);
+      }
+
+      type ParseOk = { ok: true };
+      type ParseFail = { ok: false; error: string };
+      const parseById = new Map<string, ParseOk | ParseFail>();
+      for (const p of pending) {
+        try {
+          JSON.parse(p.payload);
+          parseById.set(p.proposal_id, { ok: true });
+        } catch {
+          parseById.set(p.proposal_id, {
+            ok: false,
+            error: `Invalid JSON in proposal payload for ${p.proposal_id}`,
+          });
+        }
+      }
+
+      const validForOrdering = pending.filter((p) => parseById.get(p.proposal_id)!.ok);
+
+      if (validForOrdering.length === 0) {
+        const leaves: ProposalBundlePreflightLeaf[] = pending.map((p) => {
+          const pr = parseById.get(p.proposal_id)! as ParseFail;
+          return {
+            proposal_id: p.proposal_id,
+            proposal_type: p.proposal_type,
+            ok: false,
+            error: pr.error,
+          };
+        });
+        return {
+          bundle_id: bundleId,
+          ordered_proposal_ids: [],
+          leaves,
+          ok: false,
+          ordering_error: 'All proposals in the bundle have invalid JSON payloads',
+        };
+      }
+
+      let ordered: Proposal[] | undefined;
+      let orderingError: string | undefined;
+      try {
+        ordered = orderPendingBundleProposals(this, validForOrdering);
+      } catch (e) {
+        orderingError = e instanceof Error ? e.message : String(e);
+      }
+
+      if (orderingError !== undefined || ordered === undefined) {
+        const leaves: ProposalBundlePreflightLeaf[] = pending.map((p) => {
+          const pr = parseById.get(p.proposal_id)!;
+          if (!pr.ok) {
+            return {
+              proposal_id: p.proposal_id,
+              proposal_type: p.proposal_type,
+              ok: false,
+              error: pr.error,
+            };
+          }
+          return {
+            proposal_id: p.proposal_id,
+            proposal_type: p.proposal_type,
+            ok: false,
+            error: orderingError ?? 'ordering failed',
+            skipped: true,
+          };
+        });
+        return {
+          bundle_id: bundleId,
+          ordered_proposal_ids: [],
+          leaves,
+          ok: false,
+          ordering_error: orderingError ?? 'ordering failed',
+        };
+      }
+
+      const orderedProposals = ordered;
+
+      const sp = 'aegis_bundle_preflight';
+      this.db.exec(`SAVEPOINT ${sp}`);
+      try {
+        const simById = new Map<string, ProposalBundlePreflightLeaf>();
+
+        for (const p of orderedProposals) {
+          try {
+            const payload = JSON.parse(p.payload) as Record<string, unknown>;
+            if (projectRoot) {
+              this._normalizeStoredSourcePathsForApprove(payload, p.proposal_type as ProposalType, projectRoot);
+            }
+            this._applyCanonicalMutationFromPayload(
+              p.proposal_id,
+              p.proposal_type as ProposalType,
+              payload,
+              projectRoot,
+            );
+            simById.set(p.proposal_id, { proposal_id: p.proposal_id, proposal_type: p.proposal_type, ok: true });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            simById.set(p.proposal_id, {
+              proposal_id: p.proposal_id,
+              proposal_type: p.proposal_type,
+              ok: false,
+              error: msg,
+            });
+          }
+        }
+
+        this.db.exec(`ROLLBACK TO SAVEPOINT ${sp}`);
+
+        const leaves: ProposalBundlePreflightLeaf[] = pending.map((p) => {
+          const pr = parseById.get(p.proposal_id)!;
+          if (!pr.ok) {
+            return {
+              proposal_id: p.proposal_id,
+              proposal_type: p.proposal_type,
+              ok: false,
+              error: pr.error,
+            };
+          }
+          const row = simById.get(p.proposal_id);
+          if (!row) {
+            return {
+              proposal_id: p.proposal_id,
+              proposal_type: p.proposal_type,
+              ok: false,
+              error: 'internal: missing preflight simulation row',
+            };
+          }
+          return row;
+        });
+
+        const ok = leaves.every((l) => l.ok);
+        return {
+          bundle_id: bundleId,
+          ordered_proposal_ids: orderedProposals.map((p) => p.proposal_id),
+          leaves,
+          ok,
+        };
+      } catch (e) {
+        this.db.exec(`ROLLBACK TO SAVEPOINT ${sp}`);
+        throw e;
+      }
+    })();
+  }
+
+  /**
+   * ADR-015: Approve every pending proposal in the bundle in one transaction — one knowledge_version bump and one snapshot.
+   */
+  approveProposalBundle(bundleId: string, projectRoot?: string): CanonicalVersion {
+    return this.db.transaction(() => {
+      const pending = this.listPendingProposalsByBundle(bundleId);
+      if (pending.length === 0) {
+        throw new Error(`No pending proposals for bundle_id '${bundleId}'`);
+      }
+
+      const ordered = orderPendingBundleProposals(this, pending);
+
+      for (const p of ordered) {
+        const fresh = this.getProposal(p.proposal_id);
+        if (!fresh || fresh.status !== 'pending') {
+          throw new Error(`Proposal ${p.proposal_id} is no longer pending (concurrent modification?)`);
+        }
+        if (fresh.bundle_id !== bundleId) {
+          throw new Error(
+            `Proposal ${p.proposal_id} bundle_id mismatch (expected '${bundleId}', got '${fresh.bundle_id}')`,
+          );
+        }
+
+        const payload = JSON.parse(fresh.payload) as Record<string, unknown>;
+        if (projectRoot) {
+          this._normalizeStoredSourcePathsForApprove(payload, fresh.proposal_type as ProposalType, projectRoot);
+          this.db
+            .prepare('UPDATE proposals SET payload = ? WHERE proposal_id = ?')
+            .run(JSON.stringify(payload), fresh.proposal_id);
+        }
+
+        this._applyCanonicalMutationFromPayload(
+          fresh.proposal_id,
+          fresh.proposal_type as ProposalType,
+          payload,
+          projectRoot,
+        );
+
+        const now = new Date().toISOString();
+        this.db
+          .prepare('UPDATE proposals SET status = ?, resolved_at = ? WHERE proposal_id = ?')
+          .run('approved', now, fresh.proposal_id);
+      }
+
+      const newVersion = this.incrementVersion();
+      const snapshot = this.createSnapshot();
       return { knowledge_version: newVersion, snapshot_id: snapshot.snapshot_id };
     })();
   }

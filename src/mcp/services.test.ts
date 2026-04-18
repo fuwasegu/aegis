@@ -527,6 +527,45 @@ describe('AegisService — Admin delegation', () => {
     expect(extraDoc!.title).toBe('Extra Guidelines');
   });
 
+  it('approve_proposal rejects proposals with bundle_id; preflight_proposal_bundle returns ordering_error', () => {
+    repo.insertProposal({
+      proposal_id: 'p-b',
+      proposal_type: 'new_doc',
+      payload: JSON.stringify({
+        doc_id: 'bundled-only',
+        title: 'B',
+        kind: 'guideline',
+        content: 'c',
+        content_hash: hash('c'),
+      }),
+      status: 'pending',
+      review_comment: null,
+      bundle_id: 'admin-bundle',
+    });
+    expect(() => service.approveProposal('p-b', undefined, 'admin')).toThrow('approveProposalBundle');
+
+    repo.insertProposal({
+      proposal_id: 'p-edge-svc',
+      proposal_type: 'add_edge',
+      payload: JSON.stringify({
+        edge_id: 'e-svc',
+        source_type: 'path',
+        source_value: 'src/**',
+        target_doc_id: 'nope',
+        edge_type: 'path_requires',
+        priority: 100,
+        specificity: 0,
+      }),
+      status: 'pending',
+      review_comment: null,
+      bundle_id: 'bad-order',
+    });
+    const pf = service.preflightProposalBundle('bad-order', 'admin');
+    expect(pf.ok).toBe(false);
+    expect(pf.ordering_error).toBeTruthy();
+    expect(pf.leaves).toHaveLength(1);
+  });
+
   it('reject_proposal via admin surface records reason', () => {
     repo.insertProposal({
       proposal_id: 'p-rej',

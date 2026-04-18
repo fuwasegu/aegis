@@ -277,6 +277,30 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
     );
 
     server.tool(
+      'aegis_preflight_proposal_bundle',
+      'Dry-run all pending proposals sharing a bundle_id: validates ordering and mutations; rolls back (no Canonical change).',
+      {
+        bundle_id: z.string().describe('The bundle_id shared by pending proposals'),
+      },
+      async (params) => {
+        const result = service.preflightProposalBundle(params.bundle_id, surface);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      },
+    );
+
+    server.tool(
+      'aegis_approve_proposal_bundle',
+      'Approve every pending proposal in the bundle in one transaction (one knowledge_version / one snapshot). All-or-nothing.',
+      {
+        bundle_id: z.string().describe('The bundle_id shared by pending proposals'),
+      },
+      async (params) => {
+        const result = service.approveProposalBundle(params.bundle_id, surface);
+        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      },
+    );
+
+    server.tool(
       'aegis_reject_proposal',
       'Reject a pending proposal with a reason.',
       {

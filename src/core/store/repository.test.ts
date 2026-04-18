@@ -1635,6 +1635,319 @@ describe('Repository', () => {
     });
   });
 
+  describe('Proposal bundle (ADR-015)', () => {
+    it('preflight succeeds and approve applies ordered new_doc then add_edge with single version bump', () => {
+      repo.insertDocument({
+        doc_id: 'anchor',
+        title: 'A',
+        kind: 'guideline',
+        content: 'c',
+        content_hash: hash('c'),
+        status: 'approved',
+      });
+
+      const bundleId = 'bundle-test-1';
+      repo.insertProposal({
+        proposal_id: 'p-edge',
+        proposal_type: 'add_edge',
+        payload: JSON.stringify({
+          edge_id: 'e-bundle-1',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'nd1',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 0,
+        }),
+        status: 'pending',
+        review_comment: null,
+        bundle_id: bundleId,
+      });
+      repo.insertProposal({
+        proposal_id: 'p-new',
+        proposal_type: 'new_doc',
+        payload: JSON.stringify({
+          doc_id: 'nd1',
+          title: 'N',
+          kind: 'guideline',
+          content: 'nc',
+          content_hash: hash('nc'),
+        }),
+        status: 'pending',
+        review_comment: null,
+        bundle_id: bundleId,
+      });
+
+      const pf = repo.preflightProposalBundle(bundleId);
+      expect(pf.ok).toBe(true);
+      expect(pf.leaves.every((l) => l.ok)).toBe(true);
+      expect(pf.ordered_proposal_ids[0]).toBe('p-new');
+      expect(pf.ordered_proposal_ids[1]).toBe('p-edge');
+
+      const v0 = repo.getKnowledgeMeta().current_version;
+      const out = repo.approveProposalBundle(bundleId);
+      const v1 = repo.getKnowledgeMeta().current_version;
+      expect(v1).toBe(v0 + 1);
+      expect(out.knowledge_version).toBe(v1);
+
+      expect(repo.getProposal('p-new')?.status).toBe('approved');
+      expect(repo.getProposal('p-edge')?.status).toBe('approved');
+      expect(repo.getDocumentById('nd1')?.status).toBe('approved');
+      expect(repo.getEdgeById('e-bundle-1')?.status).toBe('approved');
+    });
+
+    it('preflight returns ordering_error when add_edge target is missing from Canonical and bundle', () => {
+      const bundleId = 'bundle-bad';
+      repo.insertProposal({
+        proposal_id: 'p-edge-only',
+        proposal_type: 'add_edge',
+        payload: JSON.stringify({
+          edge_id: 'e-no-doc',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'missing-doc',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 0,
+        }),
+        status: 'pending',
+        review_comment: null,
+        bundle_id: bundleId,
+      });
+
+      const pf = repo.preflightProposalBundle(bundleId);
+      expect(pf.ok).toBe(false);
+      expect(pf.ordering_error).toBeTruthy();
+      expect(pf.leaves.every((l) => !l.ok)).toBe(true);
+      expect(() => repo.approveProposalBundle(bundleId)).toThrow();
+    });
+
+    it('reject approveProposal when proposal has bundle_id', () => {
+      repo.insertProposal({
+        proposal_id: 'p-bundled',
+        proposal_type: 'new_doc',
+        payload: JSON.stringify({
+          doc_id: 'solo',
+          title: 'S',
+          kind: 'guideline',
+          content: 'z',
+          content_hash: hash('z'),
+        }),
+        status: 'pending',
+        review_comment: null,
+        bundle_id: 'b-x',
+      });
+      expect(() => repo.approveProposal('p-bundled')).toThrow('approveProposalBundle');
+    });
+
+    it('preflight rolls back partial mutations when the second leaf fails', () => {
+      const bundleId = 'bundle-partial-fail';
+      repo.insertProposal({
+        proposal_id: 'p-new-doc-only',
+        proposal_type: 'new_doc',
+        payload: JSON.stringify({
+          doc_id: 'okdoc',
+          title: 'Ok',
+          kind: 'guideline',
+          content: 'x',
+          content_hash: hash('x'),
+        }),
+        status: 'pending',
+        review_comment: null,
+        bundle_id: bundleId,
+      });
+      repo.insertProposal({
+        proposal_id: 'p-update-ph',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({
+          doc_id: 'okdoc',
+          content: PENDING_CONTENT_PLACEHOLDER,
+          content_hash: hash(PENDING_CONTENT_PLACEHOLDER),
+        }),
+        status: 'pending',
+        review_comment: null,
+        bundle_id: bundleId,
+      });
+
+      const pf = repo.preflightProposalBundle(bundleId);
+      expect(pf.ok).toBe(false);
+      expect(pf.leaves).toHaveLength(2);
+      expect(pf.leaves[0].ok).toBe(true);
+      expect(pf.leaves[1].ok).toBe(false);
+      expect(pf.leaves[1].error).toContain('placeholder');
+      expect(repo.getDocumentById('okdoc')).toBeUndefined();
+    });
+
+    it('preflight continues validating later leaves after a leaf fails', () => {
+      const bundleId = 'bundle-three-leaf';
+      repo.insertProposal({
+        proposal_id: 'p-1-new',
+        proposal_type: 'new_doc',
+        payload: JSON.stringify({
+          doc_id: 'tri',
+          title: 'T',
+          kind: 'guideline',
+          content: 'a',
+          content_hash: hash('a'),
+        }),
+        status: 'pending',
+        review_comment: null,
+        bundle_id: bundleId,
+      });
+      repo.insertProposal({
+        proposal_id: 'p-2-upd',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({
+          doc_id: 'tri',
+          content: PENDING_CONTENT_PLACEHOLDER,
+          content_hash: hash(PENDING_CONTENT_PLACEHOLDER),
+        }),
+        status: 'pending',
+        review_comment: null,
+        bundle_id: bundleId,
+      });
+      repo.insertProposal({
+        proposal_id: 'p-3-edge',
+        proposal_type: 'add_edge',
+        payload: JSON.stringify({
+          edge_id: 'e-tri',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'tri',
+          edge_type: 'path_requires',
+          priority: 100,
+          specificity: 0,
+        }),
+        status: 'pending',
+        review_comment: null,
+        bundle_id: bundleId,
+      });
+
+      const pf = repo.preflightProposalBundle(bundleId);
+      expect(pf.leaves).toHaveLength(3);
+      expect(pf.leaves[0].ok).toBe(true);
+      expect(pf.leaves[1].ok).toBe(false);
+      expect(pf.leaves[2].ok).toBe(true);
+      expect(pf.ok).toBe(false);
+    });
+
+    it('preflight returns leaf error for invalid JSON payload', () => {
+      const bundleId = 'bundle-json';
+      repo.insertProposal({
+        proposal_id: 'p-json-bad',
+        proposal_type: 'new_doc',
+        payload: '{"doc_id": broken',
+        status: 'pending',
+        review_comment: null,
+        bundle_id: bundleId,
+      });
+
+      const pf = repo.preflightProposalBundle(bundleId);
+      expect(pf.leaves).toHaveLength(1);
+      expect(pf.leaves[0].ok).toBe(false);
+      expect(pf.leaves[0].error).toContain('JSON');
+    });
+
+    it('preflight returns leaf error when source_path escapes projectRoot', () => {
+      const root = mkdtempSync(join(tmpdir(), 'aegis-bundle-pf-'));
+      try {
+        const bundleId = 'bundle-escape';
+        repo.insertProposal({
+          proposal_id: 'p-esc',
+          proposal_type: 'new_doc',
+          payload: JSON.stringify({
+            doc_id: 'esc-doc',
+            title: 'E',
+            kind: 'guideline',
+            content: 'c',
+            content_hash: hash('c'),
+            ownership: 'file-anchored',
+            source_path: join(root, '..', 'outside-secret', 'x.md'),
+          }),
+          status: 'pending',
+          review_comment: null,
+          bundle_id: bundleId,
+        });
+
+        const pf = repo.preflightProposalBundle(bundleId, root);
+        expect(pf.leaves).toHaveLength(1);
+        expect(pf.leaves[0].ok).toBe(false);
+        expect(pf.leaves[0].error).toMatch(/outside|project/i);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('preflight: invalid JSON leaf does not mask a valid sibling leaf result', () => {
+      const bundleId = 'bundle-mixed-json';
+      repo.insertProposal({
+        proposal_id: 'p-x',
+        proposal_type: 'new_doc',
+        payload: 'not-json{',
+        status: 'pending',
+        review_comment: null,
+        bundle_id: bundleId,
+      });
+      repo.insertProposal({
+        proposal_id: 'p-y',
+        proposal_type: 'new_doc',
+        payload: JSON.stringify({
+          doc_id: 'mixed-ok',
+          title: 'M',
+          kind: 'guideline',
+          content: 'mm',
+          content_hash: hash('mm'),
+        }),
+        status: 'pending',
+        review_comment: null,
+        bundle_id: bundleId,
+      });
+
+      const pf = repo.preflightProposalBundle(bundleId);
+      expect(pf.leaves).toHaveLength(2);
+      expect(pf.leaves[0].ok).toBe(false);
+      expect(pf.leaves[0].error).toMatch(/JSON/i);
+      expect(pf.leaves[1].ok).toBe(true);
+      expect(pf.ok).toBe(false);
+    });
+
+    it('reject bundle mixing deprecate(document) with update_doc on the same doc', () => {
+      repo.insertDocument({
+        doc_id: 'dep-mix',
+        title: 'D',
+        kind: 'guideline',
+        content: 'c',
+        content_hash: hash('c'),
+        status: 'approved',
+      });
+      const bundleId = 'bundle-dep-upd';
+      repo.insertProposal({
+        proposal_id: 'p-dep-m',
+        proposal_type: 'deprecate',
+        payload: JSON.stringify({ entity_type: 'document', entity_id: 'dep-mix' }),
+        status: 'pending',
+        review_comment: null,
+        bundle_id: bundleId,
+      });
+      repo.insertProposal({
+        proposal_id: 'p-up-m',
+        proposal_type: 'update_doc',
+        payload: JSON.stringify({
+          doc_id: 'dep-mix',
+          content: 'new body',
+          content_hash: hash('new body'),
+        }),
+        status: 'pending',
+        review_comment: null,
+        bundle_id: bundleId,
+      });
+
+      const pf = repo.preflightProposalBundle(bundleId);
+      expect(pf.ordering_error).toMatch(/Bundle conflict/i);
+      expect(() => repo.approveProposalBundle(bundleId)).toThrow(/Bundle conflict/i);
+    });
+  });
+
   describe('Adapter Meta', () => {
     it('returns undefined when no meta is set', () => {
       expect(repo.getAdapterMeta()).toBeUndefined();

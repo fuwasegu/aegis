@@ -130,8 +130,31 @@ export interface Proposal {
   payload: string; // JSON
   status: ProposalStatus;
   review_comment: string | null;
+  /** ADR-015: groups proposals for `preflightProposalBundle` / `approveProposalBundle` (all-or-nothing). */
+  bundle_id?: string | null;
   created_at: string;
   resolved_at: string | null;
+}
+
+/** One row per proposal in `preflightProposalBundle` (leaf validation). */
+export interface ProposalBundlePreflightLeaf {
+  proposal_id: string;
+  proposal_type: ProposalType;
+  ok: boolean;
+  error?: string;
+  /** True when earlier leaf failed or ordering failed before this proposal could run. */
+  skipped?: boolean;
+}
+
+/** Result of validating every proposal in a bundle (dry-run; DB unchanged). */
+export interface ProposalBundlePreflightResult {
+  bundle_id: string;
+  /** Topological apply order used by approve and preflight (empty when ordering fails). */
+  ordered_proposal_ids: string[];
+  leaves: ProposalBundlePreflightLeaf[];
+  ok: boolean;
+  /** Set when proposals cannot be ordered (dependency / cycle); every leaf lists this reason. */
+  ordering_error?: string;
 }
 
 // ============================================================
