@@ -1,4 +1,17 @@
 export {
+  aggregateRefactorSignals,
+  buildSplitCandidatePayload,
+  cohortMedianGapRateForKind,
+  DEFAULT_REFACTOR_TRIGGER,
+  DOC_REFACTOR_ALGORITHM_VERSION,
+  type DocRefactorAggregate,
+  effectiveGapRateThreshold,
+  finiteMedian,
+  gapRate,
+  type RefactorTrigger,
+  shouldEmitSplitCandidate,
+} from './doc-refactor.js';
+export {
   buildCoverageOptimizationContext,
   buildMissClustersFromObservations,
   buildPathClustersFromFiles,

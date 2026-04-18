@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DOC_REFACTOR_ALGORITHM_VERSION } from '../core/optimization/doc-refactor.js';
 import { type AegisDatabase, createInMemoryDatabase, Repository } from '../core/store/index.js';
 import { buildObserveContent } from './server.js';
 import { AegisService, ObserveValidationError, SurfaceViolationError } from './services.js';
@@ -2021,6 +2022,71 @@ describe('AegisService — maintenance', () => {
     }
     await service.processObservations('compile_miss', 'admin');
     expect(repo.countUnanalyzedObservations('compile_miss')).toBe(0);
+  });
+
+  it('processObservations runs doc-refactor pass once and emits split_candidate doc_gap_detected', async () => {
+    repo.insertProposal({
+      proposal_id: 'boot-int',
+      proposal_type: 'bootstrap',
+      payload: JSON.stringify({
+        documents: [
+          { doc_id: 'd1', title: 'd1', kind: 'guideline', content: 'x', content_hash: hash('x') },
+          { doc_id: 'd2', title: 'd2', kind: 'guideline', content: 'x', content_hash: hash('x') },
+          { doc_id: 'd3', title: 'd3', kind: 'guideline', content: 'x', content_hash: hash('x') },
+        ],
+        edges: [
+          {
+            edge_id: 'e-int',
+            source_type: 'path',
+            source_value: 'src/**',
+            target_doc_id: 'd1',
+            edge_type: 'path_requires',
+            priority: 100,
+            specificity: 0,
+          },
+        ],
+        layer_rules: [],
+      }),
+      status: 'pending',
+      review_comment: null,
+    });
+    const { snapshot_id } = repo.approveProposal('boot-int');
+
+    for (let i = 0; i < 10; i++) {
+      repo.insertCompileLog({
+        compile_id: `cmp-${i}`,
+        snapshot_id,
+        request: '{}',
+        base_doc_ids: JSON.stringify(['d1', 'd2', 'd3']),
+        expanded_doc_ids: null,
+        audit_meta: null,
+      });
+    }
+
+    const miss = (id: string, files: string[], cid: string) =>
+      repo.insertObservation({
+        observation_id: id,
+        event_type: 'compile_miss',
+        payload: JSON.stringify({
+          target_files: files,
+          target_doc_id: 'd1',
+          review_comment: 'm',
+        }),
+        related_compile_id: cid,
+        related_snapshot_id: snapshot_id,
+      });
+
+    miss('cm-a', ['src/a/x.ts'], 'cmp-0');
+    miss('cm-b', ['src/b/y.ts'], 'cmp-1');
+    miss('cm-c', ['src/a/z.ts'], 'cmp-2');
+
+    await service.processObservations('compile_miss', 'admin');
+
+    const gaps = repo.listObservationsByEventType('doc_gap_detected');
+    expect(gaps.length).toBe(1);
+    const pl = JSON.parse(gaps[0]!.payload) as { gap_kind: string; algorithm_version: string };
+    expect(pl.gap_kind).toBe('split_candidate');
+    expect(pl.algorithm_version).toBe(DOC_REFACTOR_ALGORITHM_VERSION);
   });
 });
 
