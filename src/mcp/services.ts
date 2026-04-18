@@ -41,6 +41,7 @@ import type {
   EdgeSpec,
   ObservationEventType,
   ObserveEvent,
+  ProposalBundlePreflightResult,
 } from '../core/types.js';
 
 export type Surface = 'agent' | 'admin';
@@ -358,6 +359,7 @@ export class AegisService {
       proposal_type: proposal.proposal_type,
       payload: JSON.parse(proposal.payload),
       status: proposal.status,
+      bundle_id: proposal.bundle_id ?? null,
       review_comment: proposal.review_comment,
       created_at: proposal.created_at,
       resolved_at: proposal.resolved_at,
@@ -377,6 +379,16 @@ export class AegisService {
   ): CanonicalVersion {
     this.assertAdmin('aegis_approve_proposal', surface);
     return this.repo.approveProposal(proposalId, modifications, this.projectRoot);
+  }
+
+  preflightProposalBundle(bundleId: string, surface: Surface): ProposalBundlePreflightResult {
+    this.assertAdmin('aegis_preflight_proposal_bundle', surface);
+    return this.repo.preflightProposalBundle(bundleId, this.projectRoot);
+  }
+
+  approveProposalBundle(bundleId: string, surface: Surface): CanonicalVersion {
+    this.assertAdmin('aegis_approve_proposal_bundle', surface);
+    return this.repo.approveProposalBundle(bundleId, this.projectRoot);
   }
 
   rejectProposal(proposalId: string, reason: string, surface: Surface): { proposal_id: string; status: 'rejected' } {

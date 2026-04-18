@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS proposals (
     status          TEXT NOT NULL DEFAULT 'pending'
                     CHECK (status IN ('pending', 'approved', 'rejected', 'withdrawn')),
     review_comment  TEXT,
+    bundle_id       TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     resolved_at     TEXT
 );
