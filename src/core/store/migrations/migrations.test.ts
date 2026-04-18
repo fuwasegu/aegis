@@ -8,11 +8,12 @@ import {
   upAddAuditMeta,
   upAddDocGapEventType,
   upAddDocumentsOwnership,
+  upAddStalenessBaselinesAndEvent,
   upExpandProposalTypeEdgeMutations,
 } from './index.js';
 
 describe('schema migrations (ADR-013)', () => {
-  it('records migrations 001–008 on first open', async () => {
+  it('records migrations 001–009 on first open', async () => {
     const db = await createInMemoryDatabase();
     const rows = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all() as {
       version: number;
@@ -27,6 +28,7 @@ describe('schema migrations (ADR-013)', () => {
       { version: 6, name: 'add_source_synced_at' },
       { version: 7, name: 'add_replaced_by_doc_id' },
       { version: 8, name: 'add_proposal_bundle_id' },
+      { version: 9, name: 'add_staleness_baselines_and_event' },
     ]);
   });
 
@@ -36,8 +38,8 @@ describe('schema migrations (ADR-013)', () => {
     const rows = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as {
       version: number;
     }[];
-    expect(rows).toHaveLength(8);
-    expect(rows.map((r) => r.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(rows).toHaveLength(9);
+    expect(rows.map((r) => r.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
   it('applies baseline DDL including compile_log.audit_meta', async () => {
@@ -266,5 +268,47 @@ describe('schema migrations (ADR-013)', () => {
     const rowB = db.prepare("SELECT ownership FROM documents WHERE doc_id = 'b'").get() as { ownership: string };
     expect(rowA.ownership).toBe('file-anchored');
     expect(rowB.ownership).toBe('standalone');
+  });
+
+  it('upAddStalenessBaselinesAndEvent adds staleness_baselines and staleness_detected CHECK', async () => {
+    const SQL = await initSqlJs();
+    const raw = new SQL.Database();
+    raw.run('PRAGMA foreign_keys = ON');
+    raw.exec(`
+      CREATE TABLE proposals (
+        proposal_id     TEXT PRIMARY KEY,
+        proposal_type   TEXT NOT NULL,
+        payload         TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'pending',
+        review_comment  TEXT,
+        created_at      TEXT NOT NULL,
+        resolved_at     TEXT
+      );
+      CREATE TABLE observations (
+        observation_id      TEXT PRIMARY KEY,
+        event_type          TEXT NOT NULL
+                            CHECK (event_type IN ('compile_miss', 'review_correction',
+                                                  'pr_merged', 'manual_note', 'document_import',
+                                                  'doc_gap_detected')),
+        payload             TEXT NOT NULL,
+        related_compile_id  TEXT,
+        related_snapshot_id TEXT,
+        created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        archived_at         TEXT,
+        analyzed_at         TEXT
+      );
+      INSERT INTO observations (observation_id, event_type, payload, created_at)
+        VALUES ('o1', 'compile_miss', '{}', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    `);
+    const db = new AegisDatabase(raw, null, SQL);
+    upAddStalenessBaselinesAndEvent(db);
+    const master = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='observations'").get() as {
+      sql: string;
+    };
+    expect(master.sql).toContain('staleness_detected');
+    const tbl = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='staleness_baselines'").get() as {
+      sql: string;
+    };
+    expect(tbl.sql).toContain('fingerprint_json');
   });
 });

@@ -8,3 +8,4 @@ export type { ProposeResult } from './propose.js';
 export { ProposeService } from './propose.js';
 export { ReviewCorrectionAnalyzer } from './review-correction-analyzer.js';
 export { RuleBasedAnalyzer } from './rule-analyzer.js';
+export { StalenessAnalyzer } from './staleness-analyzer.js';
