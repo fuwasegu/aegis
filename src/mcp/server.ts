@@ -150,7 +150,15 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
     'Record an observation event. Writes to Observation Layer only (never Canonical).',
     {
       event_type: z
-        .enum(['compile_miss', 'review_correction', 'pr_merged', 'manual_note', 'document_import', 'doc_gap_detected'])
+        .enum([
+          'compile_miss',
+          'review_correction',
+          'pr_merged',
+          'manual_note',
+          'document_import',
+          'doc_gap_detected',
+          'staleness_detected',
+        ])
         .describe('Event type'),
       related_compile_id: z.string().optional().describe('Required for compile_miss'),
       related_snapshot_id: z.string().optional().describe('Required for compile_miss, optional for review_correction'),
@@ -438,6 +446,7 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
             'manual_note',
             'document_import',
             'doc_gap_detected',
+            'staleness_detected',
           ])
           .optional()
           .describe('Filter by event type'),
@@ -468,6 +477,7 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
             'manual_note',
             'document_import',
             'doc_gap_detected',
+            'staleness_detected',
           ])
           .optional()
           .describe('Process only this event type (default: all types)'),

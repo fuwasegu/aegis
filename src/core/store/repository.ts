@@ -150,6 +150,28 @@ export class Repository {
       .all() as Document[];
   }
 
+  /** ADR-015 Task 015-07: Level-3 linked-artifact fingerprint baseline (JSON object string). */
+  getStalenessBaseline(docId: string): string | null {
+    const row = this.db.prepare('SELECT fingerprint_json FROM staleness_baselines WHERE doc_id = ?').get(docId) as
+      | { fingerprint_json: string }
+      | undefined;
+    return row?.fingerprint_json ?? null;
+  }
+
+  upsertStalenessBaseline(docId: string, fingerprintJson: string): void {
+    this.db
+      .prepare(
+        `
+      INSERT INTO staleness_baselines (doc_id, fingerprint_json, updated_at)
+      VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      ON CONFLICT(doc_id) DO UPDATE SET
+        fingerprint_json = excluded.fingerprint_json,
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    `,
+      )
+      .run(docId, fingerprintJson);
+  }
+
   setDocumentTemplateOrigin(docId: string, origin: string): void {
     this.db.prepare('UPDATE documents SET template_origin = ? WHERE doc_id = ?').run(origin, docId);
   }
@@ -338,6 +360,14 @@ export class Repository {
     `)
       .run(obs.observation_id, obs.event_type, obs.payload, obs.related_compile_id, obs.related_snapshot_id);
     return obs.observation_id;
+  }
+
+  /** Dedupe diagnostics: same payload already present (unarchived), including analyzed rows. */
+  hasUnarchivedObservationWithExactPayload(eventType: string, payload: string): boolean {
+    const row = this.db
+      .prepare(`SELECT 1 FROM observations WHERE event_type = ? AND payload = ? AND archived_at IS NULL LIMIT 1`)
+      .get(eventType, payload);
+    return row !== undefined;
   }
 
   getObservation(observationId: string): Observation | undefined {

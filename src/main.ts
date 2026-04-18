@@ -355,6 +355,17 @@ function printMaintenanceSummary(result: MaintenanceRunResult): void {
     console.log(`     ${st.stale_file_anchored_doc_ids.join(', ')}`);
   }
 
+  if (st.semantic) {
+    console.log(
+      `\n   semantic staleness (${st.semantic.algorithm_version}): ${st.semantic.findings.length} finding(s), ${st.semantic.baseline_writes} baseline write(s)`,
+    );
+    if (st.semantic.findings.length > 0) {
+      for (const f of st.semantic.findings) {
+        console.log(`     [L${String(f.level)}/${f.kind}] ${f.doc_id}: ${f.detail}`);
+      }
+    }
+  }
+
   console.log('\n3. archive_observations');
   const ar = result.archive_observations;
   console.log(`   eligible (older than threshold, no pending block): ${ar.eligible_count}`);

@@ -6,6 +6,10 @@ export { migration005, upExpandProposalTypeEdgeMutations } from './005_expand_pr
 export { migration006, upAddSourceSyncedAt } from './006_add_source_synced_at.js';
 export { migration007, upAddReplacedByDocId } from './007_add_replaced_by_doc_id.js';
 export { migration008, upAddProposalBundleId } from './008_add_proposal_bundle_id.js';
+export {
+  migration009,
+  upAddStalenessBaselinesAndEvent,
+} from './009_add_staleness_baselines_and_event.js';
 export { ensureSchemaMigrationsTable, runMigrations } from './runner.js';
 export type { Migration } from './types.js';
 
@@ -17,6 +21,7 @@ import { migration005 } from './005_expand_proposal_type_edge_mutations.js';
 import { migration006 } from './006_add_source_synced_at.js';
 import { migration007 } from './007_add_replaced_by_doc_id.js';
 import { migration008 } from './008_add_proposal_bundle_id.js';
+import { migration009 } from './009_add_staleness_baselines_and_event.js';
 
 /** Registered migrations in version order (append new migrations here). */
 export const ALL_MIGRATIONS = [
@@ -28,4 +33,5 @@ export const ALL_MIGRATIONS = [
   migration006,
   migration007,
   migration008,
+  migration009,
 ];

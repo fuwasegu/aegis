@@ -71,7 +71,8 @@ export type ObservationEventType =
   | 'pr_merged'
   | 'manual_note'
   | 'document_import'
-  | 'doc_gap_detected';
+  | 'doc_gap_detected'
+  | 'staleness_detected';
 
 /** ADR-015 §3 — persisted contract for `doc_gap_detected` (optimization layer input). */
 export type DocGapKind = 'content_gap' | 'split_candidate' | 'routing_gap';
@@ -97,6 +98,18 @@ export interface DocGapPayload {
   suggested_next_action: DocGapSuggestedNextAction;
   /** Reproducibility / invalidation (e.g. threshold changes). */
   algorithm_version: string;
+}
+
+/** ADR-015 Task 015-07: deterministic semantic staleness (Levels 1–3). */
+export interface StalenessDetectedPayload {
+  doc_id: string;
+  level: 1 | 2 | 3;
+  /** e.g. hash_mismatch | source_missing | rename_candidate | symbol_drift | linked_file_removed */
+  kind: string;
+  detail: string;
+  algorithm_version: string;
+  paths?: string[];
+  rename_candidate_path?: string;
 }
 
 export interface Observation {
@@ -500,6 +513,10 @@ export type ObserveEvent =
       related_compile_id?: string | null;
       related_snapshot_id?: string | null;
       payload: DocGapPayload;
+    }
+  | {
+      event_type: 'staleness_detected';
+      payload: StalenessDetectedPayload;
     };
 
 export interface CanonicalVersion {

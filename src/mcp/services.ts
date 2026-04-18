@@ -22,9 +22,14 @@ import { ManualNoteAnalyzer } from '../core/automation/manual-note-analyzer.js';
 import { PrMergedAnalyzer } from '../core/automation/pr-merged-analyzer.js';
 import { type ProposeResult, ProposeService } from '../core/automation/propose.js';
 import { ReviewCorrectionAnalyzer } from '../core/automation/review-correction-analyzer.js';
+import { StalenessAnalyzer } from '../core/automation/staleness-analyzer.js';
 import type { InitPreview } from '../core/init/engine.js';
 import { initConfirm as coreInitConfirm, initDetect as coreInitDetect } from '../core/init/engine.js';
 import { detectUpgrade, generateUpgradeProposals, type UpgradePreview } from '../core/init/upgrade.js';
+import {
+  collectSemanticStalenessFindings,
+  SEMANTIC_STALENESS_ALGORITHM_VERSION,
+} from '../core/optimization/staleness.js';
 import { normalizeSourcePath, resolveSourcePath } from '../core/paths.js';
 import { ContextCompiler } from '../core/read/compiler.js';
 import { listStaleFileAnchoredDocIds, SOURCE_SYNC_STALE_WARNING_DAYS } from '../core/source-sync-staleness.js';
@@ -42,6 +47,7 @@ import type {
   ObservationEventType,
   ObserveEvent,
   ProposalBundlePreflightResult,
+  StalenessDetectedPayload,
 } from '../core/types.js';
 
 export type Surface = 'agent' | 'admin';
@@ -78,6 +84,12 @@ export interface MaintenanceRunResult {
   staleness_report: {
     threshold_days: number;
     stale_file_anchored_doc_ids: string[];
+    /** ADR-015 Task 015-07: deterministic semantic staleness (Levels 1–3). */
+    semantic?: {
+      algorithm_version: string;
+      findings: StalenessDetectedPayload[];
+      baseline_writes: number;
+    };
   };
 }
 
@@ -119,6 +131,7 @@ export class AegisService {
       ['manual_note', new ManualNoteAnalyzer(repo)],
       ['document_import', new DocumentImportAnalyzer(repo)],
       ['doc_gap_detected', new DocGapAnalyzer()],
+      ['staleness_detected', new StalenessAnalyzer()],
     ]);
   }
 
@@ -278,6 +291,32 @@ export class AegisService {
         }
         if (typeof p.algorithm_version !== 'string' || !p.algorithm_version.trim()) {
           throw new ObserveValidationError('doc_gap_detected algorithm_version must be a non-empty string');
+        }
+        break;
+      }
+      case 'staleness_detected': {
+        if (typeof p.doc_id !== 'string' || !p.doc_id) {
+          throw new ObserveValidationError('staleness_detected doc_id is required');
+        }
+        if (p.level !== 1 && p.level !== 2 && p.level !== 3) {
+          throw new ObserveValidationError('staleness_detected level must be 1, 2, or 3');
+        }
+        if (typeof p.kind !== 'string' || !p.kind) {
+          throw new ObserveValidationError('staleness_detected kind is required');
+        }
+        if (typeof p.detail !== 'string' || !p.detail) {
+          throw new ObserveValidationError('staleness_detected detail is required');
+        }
+        if (typeof p.algorithm_version !== 'string' || !p.algorithm_version.trim()) {
+          throw new ObserveValidationError('staleness_detected algorithm_version is required');
+        }
+        if (p.paths !== undefined) {
+          if (!Array.isArray(p.paths) || !p.paths.every((x) => typeof x === 'string')) {
+            throw new ObserveValidationError('staleness_detected paths must be an array of strings when provided');
+          }
+        }
+        if (p.rename_candidate_path !== undefined && typeof p.rename_candidate_path !== 'string') {
+          throw new ObserveValidationError('staleness_detected rename_candidate_path must be a string when provided');
         }
         break;
       }
@@ -548,6 +587,37 @@ export class AegisService {
     const check_upgrade = this.checkUpgrade(surface);
 
     const nowMs = Date.now();
+
+    const semantic_scan = collectSemanticStalenessFindings({
+      docs: this.repo.getApprovedDocuments(),
+      edges: this.repo.getApprovedEdges(),
+      projectRoot: this.projectRoot,
+      getBaseline: (id) => this.repo.getStalenessBaseline(id),
+      persistLevel3Baselines: !dryRun,
+    });
+
+    if (!dryRun) {
+      for (const u of semantic_scan.baselineUpserts) {
+        this.repo.upsertStalenessBaseline(u.doc_id, u.fingerprint_json);
+      }
+      for (const f of semantic_scan.findings) {
+        const payloadStr = JSON.stringify(f);
+        if (this.repo.hasUnarchivedObservationWithExactPayload('staleness_detected', payloadStr)) {
+          continue;
+        }
+        this.repo.insertObservation({
+          observation_id: uuidv4(),
+          event_type: 'staleness_detected',
+          payload: payloadStr,
+          related_compile_id: null,
+          related_snapshot_id: null,
+        });
+      }
+      if (semantic_scan.findings.length > 0) {
+        await this.processObservations('staleness_detected', surface);
+      }
+    }
+
     const staleness_report = {
       threshold_days: SOURCE_SYNC_STALE_WARNING_DAYS,
       stale_file_anchored_doc_ids: listStaleFileAnchoredDocIds(
@@ -555,6 +625,11 @@ export class AegisService {
         SOURCE_SYNC_STALE_WARNING_DAYS,
         nowMs,
       ),
+      semantic: {
+        algorithm_version: SEMANTIC_STALENESS_ALGORITHM_VERSION,
+        findings: semantic_scan.findings,
+        baseline_writes: semantic_scan.baselineUpserts.length,
+      },
     };
 
     return {
