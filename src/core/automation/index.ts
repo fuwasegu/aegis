@@ -1,6 +1,8 @@
 export type { ObservationAnalyzer } from './analyzer.js';
+export { CompileMissAnalyzer } from './compile-miss-analyzer.js';
 export { CoverageAnalyzer } from './coverage-analyzer.js';
 export { DocGapAnalyzer } from './doc-gap-analyzer.js';
+export { DocRefactorAnalyzer } from './doc-refactor-analyzer.js';
 export { DocumentImportAnalyzer } from './document-import-analyzer.js';
 export { ManualNoteAnalyzer } from './manual-note-analyzer.js';
 export { PrMergedAnalyzer } from './pr-merged-analyzer.js';

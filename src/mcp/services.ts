@@ -15,7 +15,7 @@ import { deployCursorAdapter } from '../adapters/cursor/generate.js';
 import { deploySkills } from '../adapters/skills.js';
 import type { AdapterConfig, AdapterResult } from '../adapters/types.js';
 import type { ObservationAnalyzer } from '../core/automation/analyzer.js';
-import { CoverageAnalyzer } from '../core/automation/coverage-analyzer.js';
+import { CompileMissAnalyzer } from '../core/automation/compile-miss-analyzer.js';
 import { DocGapAnalyzer } from '../core/automation/doc-gap-analyzer.js';
 import { DocumentImportAnalyzer } from '../core/automation/document-import-analyzer.js';
 import { ManualNoteAnalyzer } from '../core/automation/manual-note-analyzer.js';
@@ -125,7 +125,7 @@ export class AegisService {
   ) {
     this.compiler = new ContextCompiler(repo, tagger, adapterOutdated);
     this.analyzerRegistry = new Map<ObservationEventType, ObservationAnalyzer>([
-      ['compile_miss', new CoverageAnalyzer(repo)],
+      ['compile_miss', new CompileMissAnalyzer(repo)],
       ['review_correction', new ReviewCorrectionAnalyzer(repo)],
       ['pr_merged', new PrMergedAnalyzer(repo)],
       ['manual_note', new ManualNoteAnalyzer(repo)],
@@ -1108,6 +1108,14 @@ export class AegisService {
         } catch (e) {
           allErrors.push(`[${et}] Pipeline error: ${e instanceof Error ? e.message : String(e)}`);
           break;
+        }
+      }
+
+      if (et === 'compile_miss' && analyzer instanceof CompileMissAnalyzer) {
+        try {
+          await analyzer.runDocRefactorPass();
+        } catch (e) {
+          allErrors.push(`[${et}] DocRefactor pass: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
     }
