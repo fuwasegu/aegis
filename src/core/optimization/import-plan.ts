@@ -121,9 +121,7 @@ function slugDocId(raw: string, index: number): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 48);
   /** Deterministic ASCII doc_id segment when heading is CJK-only (must satisfy {@link DOC_ID_PATTERN}). */
-  const base =
-    slug ||
-    `u${createHash('sha256').update(nf).digest('hex').slice(0, 12)}`;
+  const base = slug || `u${createHash('sha256').update(nf).digest('hex').slice(0, 12)}`;
   const candidate = `${base}-${index}`;
   if (DOC_ID_PATTERN.test(candidate)) return candidate;
   return `unit-${index}`;

@@ -159,8 +159,7 @@ describe('import-plan', () => {
       doc_id: 'approved-ja',
       title: '既存',
       kind: 'guideline',
-      content:
-        '## X\n\nこれは承認済みドキュメントです。アーキテクチャのルールを説明しています。同じ文章の続きです。',
+      content: '## X\n\nこれは承認済みドキュメントです。アーキテクチャのルールを説明しています。同じ文章の続きです。',
       content_hash: digest(
         '## X\n\nこれは承認済みドキュメントです。アーキテクチャのルールを説明しています。同じ文章の続きです。',
       ),

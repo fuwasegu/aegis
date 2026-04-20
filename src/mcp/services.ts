@@ -125,7 +125,10 @@ export class ObserveValidationError extends Error {
  * Normalize file/slice text so import-plan compares like `analyzeDoc({ file_path })` reads vs stored slice.
  */
 function normalizeImportAnchorText(s: string): string {
-  return s.replace(/^\ufeff/u, '').replace(/\r\n/g, '\n').trim();
+  return s
+    .replace(/^\ufeff/u, '')
+    .replace(/\r\n/g, '\n')
+    .trim();
 }
 
 /**
@@ -1105,7 +1108,12 @@ export class AegisService {
         }
         const units = plan.suggested_units;
         for (const u of units) {
-          const anchorPath = maybeImportPlanFileAnchor(this.projectRoot, repoRelSourcePath, units.length, u.content_slice);
+          const anchorPath = maybeImportPlanFileAnchor(
+            this.projectRoot,
+            repoRelSourcePath,
+            units.length,
+            u.content_slice,
+          );
           unitRows.push({
             doc_id: u.doc_id,
             title: u.title,
