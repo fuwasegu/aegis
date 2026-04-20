@@ -70,6 +70,7 @@ export class ProposeService {
           payload: JSON.stringify(draft.payload),
           status: 'pending',
           review_comment: null,
+          bundle_id: draft.bundle_id ?? null,
         });
 
         for (const obsId of draft.evidence_observation_ids) {

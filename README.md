@@ -26,7 +26,7 @@ Aegis uses two MCP surfaces — both are required:
 | Surface | Role | Tools |
 |---------|------|-------|
 | **agent** | Context compilation, observation recording, and related reads — no Canonical mutations | 5 tools (compile, observe, audit, known_tags, detect) |
-| **admin** | Initialization, approval, triage | 17 tools (5 shared + 12 admin-only) |
+| **admin** | Initialization, approval, triage | 23 tools (5 shared + 18 admin-only) |
 
 > The agent surface alone cannot initialize a project or approve proposals. This separation ensures AI agents cannot modify architecture rules without human approval. ([INV-6](docs/technical-guide.md))
 
@@ -251,7 +251,7 @@ You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 | `aegis_get_known_tags` | Distinct intent tags from tag_mappings (approved-linked) with `knowledge_version` and SHA-256 `tag_catalog_hash` for caching |
 | `aegis_init_detect` | Analyze a project to generate initialization preview |
 
-### MCP Tools — Admin Surface (additional 12 tools, 17 total)
+### MCP Tools — Admin Surface (additional 18 tools, 23 total)
 
 | Tool | Description |
 |------|-------------|
@@ -259,14 +259,20 @@ You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 | `aegis_list_proposals` | List proposals with optional status filter |
 | `aegis_get_proposal` | Get full proposal details with evidence |
 | `aegis_approve_proposal` | Approve a pending proposal |
+| `aegis_preflight_proposal_bundle` | Dry-run pending proposals sharing a `bundle_id` |
+| `aegis_approve_proposal_bundle` | Approve all pending proposals in a bundle (atomic) |
 | `aegis_reject_proposal` | Reject a pending proposal with reason |
 | `aegis_check_upgrade` | Check for template version upgrades |
 | `aegis_apply_upgrade` | Generate proposals for template upgrades |
 | `aegis_archive_observations` | Archive old observations |
+| `aegis_get_stats` | Aggregate knowledge counts and health signals |
 | `aegis_list_observations` | List observations with outcome-based filtering (proposed / skipped / pending) |
 | `aegis_import_doc` | Import a document into Canonical Knowledge (from `content` or `file_path`) |
+| `aegis_analyze_doc` | ADR-015: analyze content or `file_path` into an ImportPlan (read-only) |
+| `aegis_analyze_import_batch` | ADR-015: batch import analysis with cross-doc overlap |
+| `aegis_execute_import_plan` | ADR-015: create `document_import` proposals sharing a `bundle_id` |
 | `aegis_process_observations` | Trigger observation analysis pipeline for pending observations |
-| `aegis_sync_docs` | Synchronize imported documents with their source files |
+| `aegis_sync_docs` | Synchronize file-anchored documents with their source files |
 
 ### CLI Subcommands
 

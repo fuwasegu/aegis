@@ -1679,6 +1679,201 @@ describe('AegisService — importDoc file_path', () => {
 });
 
 // ============================================================
+// import plan (ADR-015)
+// ============================================================
+
+describe('AegisService — import plan', () => {
+  let db: AegisDatabase;
+  let repo: Repository;
+  let service: AegisService;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+    tmpDir = mkdtempSync(join(tmpdir(), 'aegis-imp-'));
+    service = new AegisService(repo, TEMPLATES_ROOT, null, [], false, tmpDir);
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('analyzeDoc returns an ImportPlan; executeImportPlan sets proposal bundle_id', () => {
+    const plan = service.analyzeDoc(
+      { content: '## U1\n\nRef `src/mcp/server.ts` for wiring.\n', source_label: 'x.md' },
+      'admin',
+    );
+    expect(plan.resolved_source_path).toBeNull();
+    const result = service.executeImportPlan({ import_plan: plan }, 'admin');
+    expect(result.proposal_ids.length).toBeGreaterThan(0);
+    const p0 = repo.getProposal(result.proposal_ids[0]);
+    expect(p0?.bundle_id).toBe(result.bundle_id);
+  });
+
+  it('executeImportPlan does not attach source_path from source_label alone (provenance only)', () => {
+    const plan = service.analyzeDoc(
+      { content: '## Labeled\n\nbody', source_label: 'docs/not-a-real-file.md' },
+      'admin',
+    );
+    expect(plan.resolved_source_path).toBeNull();
+    const result = service.executeImportPlan({ import_plan: plan }, 'admin');
+    const payload = JSON.parse(repo.getProposal(result.proposal_ids[0])!.payload) as Record<string, unknown>;
+    expect(payload.source_path).toBeUndefined();
+  });
+
+  it('analyzeDoc sets resolved_source_path when content is read from file_path', () => {
+    const fp = join(tmpDir, 'on-disk.md');
+    writeFileSync(fp, '## From file\n\nok\n');
+    const plan = service.analyzeDoc({ file_path: fp }, 'admin');
+    expect(plan.resolved_source_path).toBe('on-disk.md');
+  });
+
+  it('analyzeDoc rejects whitespace-only content', () => {
+    expect(() => service.analyzeDoc({ content: '  \n\t  ' }, 'admin')).toThrow(/whitespace-only/);
+  });
+
+  it('executeImportPlan sets source_path for single ## file when section body matches disk (file_path)', () => {
+    const fp = join(tmpDir, 'single-h2.md');
+    writeFileSync(fp, '## Single\n\nHello anchor.\n');
+    const plan = service.analyzeDoc({ file_path: fp }, 'admin');
+    expect(plan.suggested_units.length).toBe(1);
+    const exec = service.executeImportPlan({ import_plan: plan }, 'admin');
+    const newDocs = exec.proposal_ids
+      .map((id) => repo.getProposal(id))
+      .filter((p): p is NonNullable<typeof p> => p != null && p.proposal_type === 'new_doc');
+    const sourcePaths = newDocs.map((p) => (JSON.parse(p.payload) as { source_path?: string }).source_path);
+    expect(sourcePaths.some((sp) => sp === 'single-h2.md')).toBe(true);
+  });
+
+  it('executeImportPlan sets source_path on new_doc only when slice equals whole file (file_path)', () => {
+    const fp = join(tmpDir, 'whole.md');
+    writeFileSync(fp, '# One\n\nBody line.\n');
+    const plan = service.analyzeDoc({ file_path: fp }, 'admin');
+    expect(plan.suggested_units.length).toBe(1);
+    const exec = service.executeImportPlan({ import_plan: plan }, 'admin');
+    const newDocs = exec.proposal_ids
+      .map((id) => repo.getProposal(id))
+      .filter((p): p is NonNullable<typeof p> => p != null && p.proposal_type === 'new_doc');
+    expect(newDocs.length).toBeGreaterThan(0);
+    const sourcePaths = newDocs.map((p) => {
+      try {
+        return (JSON.parse(p.payload) as { source_path?: string }).source_path;
+      } catch {
+        return undefined;
+      }
+    });
+    expect(sourcePaths.some((sp) => sp === 'whole.md')).toBe(true);
+  });
+
+  it('executeImportPlan omits source_path when file_path markdown splits into multiple ## units', () => {
+    const fp = join(tmpDir, 'multi.md');
+    writeFileSync(fp, '## A\n\nalpha\n\n## B\n\nbeta\n');
+    const plan = service.analyzeDoc({ file_path: fp }, 'admin');
+    expect(plan.suggested_units.length).toBe(2);
+    const exec = service.executeImportPlan({ import_plan: plan }, 'admin');
+    const newDocs = exec.proposal_ids
+      .map((id) => repo.getProposal(id))
+      .filter((p): p is NonNullable<typeof p> => p != null && p.proposal_type === 'new_doc');
+    expect(newDocs.length).toBeGreaterThanOrEqual(1);
+    for (const p of newDocs) {
+      expect((JSON.parse(p.payload) as { source_path?: string }).source_path).toBeUndefined();
+    }
+  });
+
+  it('approve + sync_docs dry-run stays quiet for anchored single-file import-plan doc', () => {
+    const fp = join(tmpDir, 'whole2.md');
+    writeFileSync(fp, '# Doc\n\nHello.\n');
+    const plan = service.analyzeDoc({ file_path: fp }, 'admin');
+    const docIds = plan.suggested_units.map((u) => u.doc_id);
+    const { bundle_id } = service.executeImportPlan({ import_plan: plan }, 'admin');
+    service.approveProposalBundle(bundle_id, 'admin');
+    const sync = service.syncDocs({ dryRun: true }, 'admin');
+    const would = sync.would_create_proposals ?? [];
+    for (const id of docIds) {
+      expect(would).not.toContain(id);
+    }
+  });
+
+  it('executeImportPlan throws when every proposal is a duplicate of pending proposals', () => {
+    const plan = service.analyzeDoc({ content: '## DupTest\n\nRef `src/z/m.ts`.\n', source_label: 'once.md' }, 'admin');
+    const first = service.executeImportPlan({ import_plan: plan, bundle_id: 'bundle-first' }, 'admin');
+    expect(first.proposal_ids.length).toBeGreaterThan(0);
+    const obsTotalAfterFirst = service.listObservations({}, 'admin').total;
+    expect(() => service.executeImportPlan({ import_plan: plan, bundle_id: 'bundle-second' }, 'admin')).toThrow(
+      /duplicates an existing pending proposal/,
+    );
+    expect(service.listObservations({}, 'admin').total).toBe(obsTotalAfterFirst);
+  });
+
+  it('executeImportPlan rolls back partial bundle when only some drafts duplicate pending proposals', () => {
+    const itemA = { content: '## PartialDupA\n\nRef `src/partial/a.ts`.\n', source_label: 'pa.md' };
+    const itemB = { content: '## PartialDupB\n\nRef `src/partial/b.ts`.\n', source_label: 'pb.md' };
+
+    // Multi-file batches use doc_id suffixes like `…-b0`; a single-file batch does not — use the same
+    // ImportPlan object as the first file in a two-item batch so semantic keys match on the second execute.
+    const batch2 = service.analyzeImportBatch({ items: [itemA, itemB] }, 'admin');
+    const planAFromBatch = batch2.plans[0];
+    service.executeImportPlan({ import_plan: planAFromBatch }, 'admin');
+
+    const proposalsBefore = repo.listProposals('pending', 500, 0).total;
+    const observationsBefore = service.listObservations({}, 'admin').total;
+
+    expect(() => service.executeImportPlan({ batch_plan: batch2 }, 'admin')).toThrow(/consistent bundle/);
+
+    expect(repo.listProposals('pending', 500, 0).total).toBe(proposalsBefore);
+    expect(service.listObservations({}, 'admin').total).toBe(observationsBefore);
+
+    const partialBDocId = batch2.plans[1]?.suggested_units[0]?.doc_id;
+    expect(partialBDocId).toBeDefined();
+    const pending = repo.listProposals('pending', 500, 0).proposals;
+    const hasPartialB = pending.some((p) => {
+      if (p.proposal_type !== 'new_doc') return false;
+      try {
+        const pl = JSON.parse(p.payload) as { doc_id?: string };
+        return pl.doc_id === partialBDocId;
+      } catch {
+        return false;
+      }
+    });
+    expect(hasPartialB).toBe(false);
+  });
+
+  it('executeImportPlan accepts batch_plan with distinct auto doc_ids', () => {
+    const batch = service.analyzeImportBatch(
+      {
+        items: [
+          { content: '## S\n\n`src/a.ts`', source_label: 'a.md' },
+          { content: '## S\n\n`src/b.ts`', source_label: 'b.md' },
+        ],
+      },
+      'admin',
+    );
+    const out = service.executeImportPlan({ batch_plan: batch }, 'admin');
+    expect(out.proposal_ids.length).toBeGreaterThan(0);
+    const docIds = new Set(
+      out.proposal_ids
+        .map((id) => {
+          const p = repo.getProposal(id);
+          if (!p) return null;
+          const pl = JSON.parse(p.payload) as { doc_id?: string };
+          return pl.doc_id ?? null;
+        })
+        .filter((x): x is string => x != null),
+    );
+    expect(docIds.size).toBeGreaterThan(1);
+  });
+
+  it('blocks import plan tools on agent surface', () => {
+    expect(() => service.analyzeDoc({ content: '## A\n\nb' }, 'agent')).toThrow(SurfaceViolationError);
+    expect(() => service.analyzeImportBatch({ items: [{ content: '## A\n\nb' }] }, 'agent')).toThrow(
+      SurfaceViolationError,
+    );
+    expect(() => service.executeImportPlan({ import_plan: { bad: true } }, 'agent')).toThrow(SurfaceViolationError);
+  });
+});
+
+// ============================================================
 // syncDocs
 // ============================================================
 
@@ -2595,5 +2790,48 @@ describe('BudgetExceededError — MCP handler', () => {
 
     await client.close();
     await server.close();
+  });
+});
+
+describe('aegis import plan — MCP wiring', () => {
+  it('admin registers import plan tools; agent omits them; analyze_doc returns resolved_source_path null without file', async () => {
+    const db = await createInMemoryDatabase();
+    const repo = new Repository(db);
+    const tmpDir = mkdtempSync(join(tmpdir(), 'aegis-ip-mcp-'));
+    const service = new AegisService(repo, TEMPLATES_ROOT, null, [], false, tmpDir);
+
+    const adminSrv = createAegisServer(service, 'admin');
+    const adminCli = new Client({ name: 'adm', version: '0.0.1' });
+    const [ac1, ac2] = InMemoryTransport.createLinkedPair();
+    await Promise.all([adminCli.connect(ac1), adminSrv.connect(ac2)]);
+    const adminNames = (await adminCli.listTools()).tools.map((t) => t.name);
+    expect(adminNames).toContain('aegis_analyze_doc');
+    expect(adminNames).toContain('aegis_analyze_import_batch');
+    expect(adminNames).toContain('aegis_execute_import_plan');
+
+    const res = await adminCli.callTool({
+      name: 'aegis_analyze_doc',
+      arguments: { content: '## T\n\nbody\n', source_label: 'label-only.md' },
+    });
+    expect(res.isError).not.toBe(true);
+    const plan = JSON.parse((res.content as Array<{ type: string; text: string }>)[0].text) as {
+      resolved_source_path: string | null;
+    };
+    expect(plan.resolved_source_path).toBeNull();
+
+    await adminCli.close();
+    await adminSrv.close();
+
+    const agentSrv = createAegisServer(service, 'agent');
+    const agentCli = new Client({ name: 'ag', version: '0.0.1' });
+    const [gc1, gc2] = InMemoryTransport.createLinkedPair();
+    await Promise.all([agentCli.connect(gc1), agentSrv.connect(gc2)]);
+    const agentNames = (await agentCli.listTools()).tools.map((t) => t.name);
+    expect(agentNames.some((n) => n.includes('import_plan') || n.includes('analyze_doc'))).toBe(false);
+
+    await agentCli.close();
+    await agentSrv.close();
+
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 });

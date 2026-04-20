@@ -4,8 +4,10 @@
  *
  * Surface separation (INV-6):
  * - Agent Surface: compile_context, observe, get_compile_audit, get_known_tags, init_detect (5 tools)
- * - Admin Surface: agent tools + init_confirm,
- *                  list/get/approve/reject_proposals, list_observations, sync_docs, get_stats (18 tools total)
+ * - Admin Surface: same 5 plus 18 admin-only (list/get proposals, approve/reject, bundle preflight/approve,
+ *                  init_confirm, check_upgrade, apply_upgrade, archive_observations, get_stats, import_doc,
+ *                  analyze_doc, analyze_import_batch, execute_import_plan, list/process_observations, sync_docs)
+ *                  → 23 tools total on admin surface (5 shared + 18 admin-only)
  * - propose is NOT exposed (internal only)
  *
  * init_detect is on both surfaces (read-only preview).
@@ -430,6 +432,80 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         } catch (e: any) {
           return { content: [{ type: 'text', text: `Import failed: ${e.message}` }], isError: true };
+        }
+      },
+    );
+
+    server.tool(
+      'aegis_analyze_doc',
+      'ADR-015: deterministic import analysis (read-only). Returns ImportPlan with suggested_units, overlap_warnings, coverage_delta. Provide content or file_path.',
+      {
+        content: z.string().optional().describe('Markdown body (when not using file_path).'),
+        file_path: z.string().optional().describe('Absolute path to a markdown file to analyze.'),
+        source_label: z
+          .string()
+          .nullable()
+          .optional()
+          .describe(
+            'Optional provenance label only — never stored as Canonical source_path (use file_path if you need file anchoring).',
+          ),
+      },
+      async (params) => {
+        try {
+          const result = service.analyzeDoc(params, surface);
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        } catch (e: any) {
+          return { content: [{ type: 'text', text: `Analyze failed: ${e.message}` }], isError: true };
+        }
+      },
+    );
+
+    server.tool(
+      'aegis_analyze_import_batch',
+      'ADR-015: batch import analysis — one ImportPlan per item plus cross_doc_overlap between sources.',
+      {
+        items: z
+          .array(
+            z.object({
+              content: z.string().optional(),
+              file_path: z.string().optional(),
+              source_label: z.string().nullable().optional(),
+            }),
+          )
+          .describe('Non-empty list of documents to analyze (each needs content or file_path).'),
+      },
+      async (params) => {
+        try {
+          const result = service.analyzeImportBatch(params, surface);
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        } catch (e: any) {
+          return { content: [{ type: 'text', text: `Batch analyze failed: ${e.message}` }], isError: true };
+        }
+      },
+    );
+
+    server.tool(
+      'aegis_execute_import_plan',
+      'ADR-015: create document_import-backed proposals sharing one bundle_id (use preflight/approve_proposal_bundle). Pass import_plan or batch_plan JSON from analyze_doc / analyze_import_batch. ' +
+        'When resolved_source_path is set from file_path, source_path anchors are attached only if there is exactly one suggested unit whose slice matches the whole file after normalization — ' +
+        'otherwise derived/split sections stay standalone; when anchored, stored document content is read from disk so sync_docs hashing matches.',
+      {
+        import_plan: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe('Single-document ImportPlan object (mutually exclusive with batch_plan).'),
+        batch_plan: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe('BatchImportPlan object from analyze_import_batch.'),
+        bundle_id: z.string().optional().describe('Optional bundle id (UUID generated when omitted).'),
+      },
+      async (params) => {
+        try {
+          const result = service.executeImportPlan(params, surface);
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        } catch (e: any) {
+          return { content: [{ type: 'text', text: `execute_import_plan failed: ${e.message}` }], isError: true };
         }
       },
     );

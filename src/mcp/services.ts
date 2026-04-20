@@ -17,7 +17,11 @@ import type { AdapterConfig, AdapterResult } from '../adapters/types.js';
 import type { ObservationAnalyzer } from '../core/automation/analyzer.js';
 import { CompileMissAnalyzer } from '../core/automation/compile-miss-analyzer.js';
 import { DocGapAnalyzer } from '../core/automation/doc-gap-analyzer.js';
-import { DocumentImportAnalyzer } from '../core/automation/document-import-analyzer.js';
+import {
+  buildDocumentImportDraftsFromPayload,
+  DocumentImportAnalyzer,
+  type DocumentImportObservationPayload,
+} from '../core/automation/document-import-analyzer.js';
 import { ManualNoteAnalyzer } from '../core/automation/manual-note-analyzer.js';
 import { PrMergedAnalyzer } from '../core/automation/pr-merged-analyzer.js';
 import { type ProposeResult, ProposeService } from '../core/automation/propose.js';
@@ -26,6 +30,15 @@ import { StalenessAnalyzer } from '../core/automation/staleness-analyzer.js';
 import type { InitPreview } from '../core/init/engine.js';
 import { initConfirm as coreInitConfirm, initDetect as coreInitDetect } from '../core/init/engine.js';
 import { detectUpgrade, generateUpgradeProposals, type UpgradePreview } from '../core/init/upgrade.js';
+import {
+  analyzeDocumentForImportPlan,
+  analyzeImportBatch,
+  type BatchImportPlan,
+  type ImportPlan,
+  parseBatchImportPlanJson,
+  parseImportPlanJson,
+  splitMarkdownSections,
+} from '../core/optimization/import-plan.js';
 import {
   collectSemanticStalenessFindings,
   SEMANTIC_STALENESS_ALGORITHM_VERSION,
@@ -47,6 +60,7 @@ import type {
   ObservationEventType,
   ObserveEvent,
   ProposalBundlePreflightResult,
+  ProposalDraft,
   StalenessDetectedPayload,
 } from '../core/types.js';
 
@@ -104,6 +118,51 @@ export class ObserveValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ObserveValidationError';
+  }
+}
+
+/**
+ * Normalize file/slice text so import-plan compares like `analyzeDoc({ file_path })` reads vs stored slice.
+ */
+function normalizeImportAnchorText(s: string): string {
+  return s
+    .replace(/^\ufeff/u, '')
+    .replace(/\r\n/g, '\n')
+    .trim();
+}
+
+/**
+ * ADR-015 / ADR-010: `sync_docs` hashes **full files** against file-anchored docs. Attach `source_path`
+ * only when exactly one suggested unit exists and the unit body matches the source file:
+ * either full-file text (no `##` split) or a single `##` section body — same rules as `splitMarkdownSections`.
+ */
+function maybeImportPlanFileAnchor(
+  projectRoot: string,
+  repoRelNormalized: string | undefined,
+  suggestedUnitCount: number,
+  contentSlice: string,
+): string | undefined {
+  if (suggestedUnitCount !== 1) return undefined;
+  if (repoRelNormalized == null || String(repoRelNormalized).trim() === '') return undefined;
+  try {
+    const absPath = resolveSourcePath(repoRelNormalized, projectRoot);
+    if (!existsSync(absPath)) return undefined;
+    const diskRaw = readFileSync(absPath, 'utf-8');
+    const diskNorm = normalizeImportAnchorText(diskRaw);
+    const slice = normalizeImportAnchorText(contentSlice);
+    if (diskNorm === slice) {
+      return repoRelNormalized;
+    }
+    const sections = splitMarkdownSections(diskRaw);
+    if (sections.length === 1) {
+      const bodyNorm = normalizeImportAnchorText(sections[0].body);
+      if (bodyNorm === slice) {
+        return repoRelNormalized;
+      }
+    }
+    return undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -892,6 +951,285 @@ export class AegisService {
       observation_id: observationId,
       warnings,
     };
+  }
+
+  /**
+   * ADR-015: deterministic import analysis (read-only). Returns an ImportPlan for review/editing before execute_import_plan.
+   */
+  analyzeDoc(
+    params: { content?: string; file_path?: string; source_label?: string | null },
+    surface: Surface,
+  ): ImportPlan {
+    this.assertAdmin('aegis_analyze_doc', surface);
+
+    let body = params.content;
+    let label: string | null = params.source_label ?? null;
+
+    if (params.file_path) {
+      if (!existsSync(params.file_path)) {
+        throw new Error(`File not found: ${params.file_path}`);
+      }
+      body = readFileSync(params.file_path, 'utf-8');
+      if (label == null || label === '') {
+        try {
+          label = normalizeSourcePath(params.file_path, this.projectRoot);
+        } catch {
+          label = params.file_path;
+        }
+      }
+    }
+
+    if (!body || typeof body !== 'string') {
+      throw new Error('Either content or file_path is required');
+    }
+
+    let resolved_source_path: string | null = null;
+    if (params.file_path) {
+      try {
+        resolved_source_path = normalizeSourcePath(params.file_path, this.projectRoot);
+      } catch {
+        resolved_source_path = null;
+      }
+    }
+
+    return analyzeDocumentForImportPlan(this.repo, body, label, { resolved_source_path });
+  }
+
+  /**
+   * ADR-015: batch import analysis — per-document ImportPlans plus cross-document overlap signals.
+   */
+  analyzeImportBatch(
+    params: {
+      items: Array<{ content?: string; file_path?: string; source_label?: string | null }>;
+    },
+    surface: Surface,
+  ): BatchImportPlan {
+    this.assertAdmin('aegis_analyze_import_batch', surface);
+
+    if (!Array.isArray(params.items) || params.items.length === 0) {
+      throw new Error('items must be a non-empty array');
+    }
+
+    const inputs: Array<{ content: string; source_label: string | null; resolved_source_path: string | null }> = [];
+    for (const item of params.items) {
+      let content = item.content;
+      let source_label: string | null = item.source_label ?? null;
+      let resolved_source_path: string | null = null;
+
+      if (item.file_path) {
+        if (!existsSync(item.file_path)) {
+          throw new Error(`File not found: ${item.file_path}`);
+        }
+        content = readFileSync(item.file_path, 'utf-8');
+        try {
+          resolved_source_path = normalizeSourcePath(item.file_path, this.projectRoot);
+        } catch {
+          resolved_source_path = null;
+        }
+        if (source_label == null || source_label === '') {
+          source_label = resolved_source_path ?? item.file_path;
+        }
+      }
+
+      if (!content || typeof content !== 'string') {
+        throw new Error('Each item requires content or file_path');
+      }
+
+      inputs.push({ content, source_label, resolved_source_path });
+    }
+
+    return analyzeImportBatch(this.repo, inputs);
+  }
+
+  /**
+   * ADR-015: materialize an ImportPlan or BatchImportPlan as pending proposals sharing one bundle_id (approve via approve_proposal_bundle).
+   */
+  executeImportPlan(
+    params: { import_plan?: unknown; batch_plan?: unknown; bundle_id?: string },
+    surface: Surface,
+  ): {
+    bundle_id: string;
+    proposal_ids: string[];
+    observation_ids: string[];
+    skipped_duplicate_count: number;
+  } {
+    this.assertAdmin('aegis_execute_import_plan', surface);
+
+    const bundleId =
+      params.bundle_id && String(params.bundle_id).trim() !== '' ? String(params.bundle_id).trim() : uuidv4();
+
+    const unitRows: Array<{
+      doc_id: string;
+      title: string;
+      kind: string;
+      content: string;
+      edge_hints: EdgeSpec[];
+      tags: string[];
+      source_path?: string;
+    }> = [];
+
+    if (params.import_plan != null && params.batch_plan != null) {
+      throw new Error('Provide only one of import_plan or batch_plan');
+    }
+
+    if (params.import_plan != null) {
+      const plan = parseImportPlanJson(this.repo, params.import_plan);
+      let repoRelSourcePath: string | undefined;
+      if (plan.resolved_source_path != null && String(plan.resolved_source_path).trim() !== '') {
+        try {
+          repoRelSourcePath = normalizeSourcePath(plan.resolved_source_path, this.projectRoot);
+        } catch (e) {
+          throw new Error(`Invalid resolved_source_path in import_plan: ${(e as Error).message}`);
+        }
+      }
+      const su = plan.suggested_units;
+      for (const u of su) {
+        const anchorPath = maybeImportPlanFileAnchor(this.projectRoot, repoRelSourcePath, su.length, u.content_slice);
+        unitRows.push({
+          doc_id: u.doc_id,
+          title: u.title,
+          kind: u.kind,
+          content: u.content_slice,
+          edge_hints: u.edge_hints,
+          tags: u.tags,
+          ...(anchorPath ? { source_path: anchorPath } : {}),
+        });
+      }
+    } else if (params.batch_plan != null) {
+      const batch = parseBatchImportPlanJson(this.repo, params.batch_plan);
+      for (const plan of batch.plans) {
+        let repoRelSourcePath: string | undefined;
+        if (plan.resolved_source_path != null && String(plan.resolved_source_path).trim() !== '') {
+          try {
+            repoRelSourcePath = normalizeSourcePath(plan.resolved_source_path, this.projectRoot);
+          } catch (e) {
+            throw new Error(`Invalid resolved_source_path in batch plan: ${(e as Error).message}`);
+          }
+        }
+        const units = plan.suggested_units;
+        for (const u of units) {
+          const anchorPath = maybeImportPlanFileAnchor(
+            this.projectRoot,
+            repoRelSourcePath,
+            units.length,
+            u.content_slice,
+          );
+          unitRows.push({
+            doc_id: u.doc_id,
+            title: u.title,
+            kind: u.kind,
+            content: u.content_slice,
+            edge_hints: u.edge_hints,
+            tags: u.tags,
+            ...(anchorPath ? { source_path: anchorPath } : {}),
+          });
+        }
+      }
+    } else {
+      throw new Error('import_plan or batch_plan is required');
+    }
+
+    const seenDocIds = new Set<string>();
+    for (const row of unitRows) {
+      if (seenDocIds.has(row.doc_id)) {
+        throw new Error(`Duplicate doc_id in import plan: '${row.doc_id}'`);
+      }
+      seenDocIds.add(row.doc_id);
+    }
+
+    const observationIds: string[] = [];
+    const drafts: ProposalDraft[] = [];
+
+    let outcome!: {
+      bundle_id: string;
+      proposal_ids: string[];
+      observation_ids: string[];
+      skipped_duplicate_count: number;
+    };
+
+    /** One transaction: observations + proposals + analyzed markers roll back together on failure (ADR-015 bundle all-or-nothing). */
+    this.repo.runInTransaction(() => {
+      observationIds.length = 0;
+      drafts.length = 0;
+
+      for (const row of unitRows) {
+        const observationId = uuidv4();
+        /** File-anchored docs must hash like `sync_docs` (raw `readFileSync`) — use disk bytes when anchored. */
+        let effectiveContent = row.content;
+        if (row.source_path) {
+          try {
+            const abs = resolveSourcePath(row.source_path, this.projectRoot);
+            if (existsSync(abs)) {
+              effectiveContent = readFileSync(abs, 'utf-8');
+            }
+          } catch {
+            // keep row.content
+          }
+        }
+        const payload: Record<string, unknown> = {
+          content: effectiveContent,
+          doc_id: row.doc_id,
+          title: row.title,
+          kind: row.kind,
+          edge_hints: row.edge_hints,
+          tags: row.tags,
+        };
+        if (row.source_path) {
+          payload.source_path = row.source_path;
+        }
+
+        this.validateDocumentImportPayload(payload);
+
+        this.repo.insertObservation({
+          observation_id: observationId,
+          event_type: 'document_import',
+          payload: JSON.stringify(payload),
+          related_compile_id: null,
+          related_snapshot_id: null,
+        });
+        observationIds.push(observationId);
+
+        const built = buildDocumentImportDraftsFromPayload(
+          this.repo,
+          payload as DocumentImportObservationPayload,
+          observationId,
+        );
+        for (const d of built) {
+          drafts.push({ ...d, bundle_id: bundleId });
+        }
+      }
+
+      const proposeService = new ProposeService(this.repo);
+      const proposals = proposeService.propose(drafts);
+
+      if (proposals.created_proposal_ids.length === 0) {
+        if (drafts.length === 0) {
+          throw new Error('execute_import_plan: internal error — no proposal drafts were generated');
+        }
+        throw new Error(
+          'execute_import_plan: every proposal duplicates an existing pending proposal (same semantic key). ' +
+            'Reject or approve those proposals, then retry.',
+        );
+      }
+
+      if (proposals.skipped_duplicate_count > 0) {
+        throw new Error(
+          'execute_import_plan: cannot create a consistent bundle — one or more drafts duplicate existing pending proposals ' +
+            '(same semantic key). Resolve pending proposals or adjust the import plan so every unit is novel.',
+        );
+      }
+
+      this.repo.markObservationsAnalyzed(observationIds);
+
+      outcome = {
+        bundle_id: bundleId,
+        proposal_ids: proposals.created_proposal_ids,
+        observation_ids: [...observationIds],
+        skipped_duplicate_count: proposals.skipped_duplicate_count,
+      };
+    });
+
+    return outcome;
   }
 
   /**
