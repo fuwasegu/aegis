@@ -5,7 +5,8 @@
  * MissCluster: compile_miss observations grouped by derived pattern + missing_doc.
  */
 
-import type { Observation } from '../types.js';
+import type { Repository } from '../store/repository.js';
+import type { CoChangePatternRow, Observation } from '../types.js';
 
 /** Directory-level glob + member paths (deterministic ordering). */
 export interface PathCluster {
@@ -24,6 +25,18 @@ export interface MissCluster {
 }
 
 /**
+ * Load persisted co-change aggregates (ADR-015 Task 015-08).
+ * Returns an empty array when the cache is empty or the store is unreadable — never throws.
+ */
+export function loadCoChangePatterns(repo: Repository): CoChangePatternRow[] {
+  try {
+    return repo.listCoChangePatterns();
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Derive a directory-level glob from a file path (RuleBasedAnalyzer-compatible).
  * "app/Domain/User/UserEntity.php" → "app/Domain/User/**"
  */
@@ -36,18 +49,22 @@ export function derivePathPattern(filePath: string): string {
 }
 
 /**
- * Cluster target file paths by derived path pattern.
- */
-/**
  * Path + miss clusters for a compile_miss processing batch (ADR-015 optimization context).
+ * When `repo` is passed, includes persisted co-change aggregates (ADR-015 Task 015-08) for callers that need them.
  */
 export function buildCoverageOptimizationContext(
   compileMissObservations: Observation[],
   batchTargetFiles: string[],
-): { pathClusters: PathCluster[]; missClusters: MissCluster[] } {
+  repo?: Repository | null,
+): {
+  pathClusters: PathCluster[];
+  missClusters: MissCluster[];
+  coChangePatterns: CoChangePatternRow[];
+} {
   return {
     pathClusters: buildPathClustersFromFiles(batchTargetFiles),
     missClusters: buildMissClustersFromObservations(compileMissObservations),
+    coChangePatterns: repo ? loadCoChangePatterns(repo) : [],
   };
 }
 

@@ -36,6 +36,17 @@ export interface Document {
   updated_at: string;
 }
 
+/**
+ * ADR-015 Task 015-08: co-change aggregate row (operational cache, not Canonical Knowledge).
+ */
+export interface CoChangePatternRow {
+  code_pattern: string;
+  doc_pattern: string;
+  co_change_count: number;
+  total_code_changes: number;
+  confidence: number;
+}
+
 export type EdgeSourceType = 'path' | 'layer' | 'command' | 'doc';
 export type EdgeType = 'path_requires' | 'layer_requires' | 'command_requires' | 'doc_depends_on';
 

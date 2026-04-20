@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Observation } from '../types.js';
 import {
+  buildCoverageOptimizationContext,
   buildMissClustersFromObservations,
   buildPathClustersFromFiles,
   derivePathPattern,
@@ -70,6 +71,11 @@ describe('edge-candidate-builder', () => {
     const a = clusters.find((c) => c.missing_doc === 'doc-a');
     expect(a!.miss_count).toBe(2);
     expect(a!.related_compile_ids).toEqual(['c1', 'c2']);
+  });
+
+  it('buildCoverageOptimizationContext attaches empty coChangePatterns without repo', () => {
+    const ctx = buildCoverageOptimizationContext([], []);
+    expect(ctx.coChangePatterns).toEqual([]);
   });
 
   it('buildMissClustersFromObservations splits multi-directory target_files into multiple clusters', () => {
