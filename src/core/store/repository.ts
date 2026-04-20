@@ -974,8 +974,32 @@ export class Repository {
   }
 
   /**
+   * Applies one proposal's mutation against current Canonical state for preflight (never throws).
+   */
+  private _preflightLeafApply(p: Proposal, projectRoot?: string): ProposalBundlePreflightLeaf {
+    try {
+      const payload = JSON.parse(p.payload) as Record<string, unknown>;
+      if (projectRoot) {
+        this._normalizeStoredSourcePathsForApprove(payload, p.proposal_type as ProposalType, projectRoot);
+      }
+      this._applyCanonicalMutationFromPayload(p.proposal_id, p.proposal_type as ProposalType, payload, projectRoot);
+      return { proposal_id: p.proposal_id, proposal_type: p.proposal_type, ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        proposal_id: p.proposal_id,
+        proposal_type: p.proposal_type,
+        ok: false,
+        error: msg,
+      };
+    }
+  }
+
+  /**
    * Dry-run: validate every pending proposal in the bundle against current Canonical state,
    * applying mutations under a SAVEPOINT then rolling back (no knowledge_version / snapshot).
+   * When topological ordering fails, each JSON-valid leaf is still simulated in isolation
+   * (SAVEPOINT per leaf) so independent failures surface per proposal while `ordering_error` explains the bundle.
    */
   preflightProposalBundle(bundleId: string, projectRoot?: string): ProposalBundlePreflightResult {
     return this.db.transaction(() => {
@@ -1029,6 +1053,18 @@ export class Repository {
       }
 
       if (orderingError !== undefined || ordered === undefined) {
+        const isoSp = 'aegis_bundle_pf_iso';
+        this.db.exec(`SAVEPOINT ${isoSp}`);
+        const isoById = new Map<string, ProposalBundlePreflightLeaf>();
+        try {
+          for (const p of validForOrdering) {
+            isoById.set(p.proposal_id, this._preflightLeafApply(p, projectRoot));
+            this.db.exec(`ROLLBACK TO SAVEPOINT ${isoSp}`);
+          }
+        } finally {
+          this.db.exec(`RELEASE SAVEPOINT ${isoSp}`);
+        }
+
         const leaves: ProposalBundlePreflightLeaf[] = pending.map((p) => {
           const pr = parseById.get(p.proposal_id)!;
           if (!pr.ok) {
@@ -1039,13 +1075,16 @@ export class Repository {
               error: pr.error,
             };
           }
-          return {
-            proposal_id: p.proposal_id,
-            proposal_type: p.proposal_type,
-            ok: false,
-            error: orderingError ?? 'ordering failed',
-            skipped: true,
-          };
+          const row = isoById.get(p.proposal_id);
+          if (!row) {
+            return {
+              proposal_id: p.proposal_id,
+              proposal_type: p.proposal_type,
+              ok: false,
+              error: 'internal: missing isolated preflight row',
+            };
+          }
+          return row;
         });
         return {
           bundle_id: bundleId,
@@ -1064,27 +1103,9 @@ export class Repository {
         const simById = new Map<string, ProposalBundlePreflightLeaf>();
 
         for (const p of orderedProposals) {
-          try {
-            const payload = JSON.parse(p.payload) as Record<string, unknown>;
-            if (projectRoot) {
-              this._normalizeStoredSourcePathsForApprove(payload, p.proposal_type as ProposalType, projectRoot);
-            }
-            this._applyCanonicalMutationFromPayload(
-              p.proposal_id,
-              p.proposal_type as ProposalType,
-              payload,
-              projectRoot,
-            );
-            simById.set(p.proposal_id, { proposal_id: p.proposal_id, proposal_type: p.proposal_type, ok: true });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            simById.set(p.proposal_id, {
-              proposal_id: p.proposal_id,
-              proposal_type: p.proposal_type,
-              ok: false,
-              error: msg,
-            });
-          }
+          simById.set(p.proposal_id, this._preflightLeafApply(p, projectRoot));
+          // Note: mutations accumulate in the SAVEPOINT until ROLLBACK TO below;
+          // each call applies on top of prior proposals' effects (ordered bundle simulation).
         }
 
         this.db.exec(`ROLLBACK TO SAVEPOINT ${sp}`);
@@ -1296,6 +1317,24 @@ export class Repository {
           'Approve or reactivate the document first.',
       );
     }
+    if (payload.source_type === 'doc') {
+      if (typeof payload.source_value !== 'string' || payload.source_value.length === 0) {
+        throw new Error('Cannot add edge: doc source requires non-empty `source_value` (source document id).');
+      }
+      const sourceDoc = this.getDocumentById(payload.source_value);
+      if (!sourceDoc) {
+        throw new Error(
+          `Cannot add edge: source document '${payload.source_value}' does not exist. ` +
+            'If there is a pending new_doc proposal for this document, approve it first.',
+        );
+      }
+      if (sourceDoc.status !== 'approved') {
+        throw new Error(
+          `Cannot add edge: source document '${payload.source_value}' is not approved (status: ${sourceDoc.status}). ` +
+            'Approve or reactivate the document first.',
+        );
+      }
+    }
     if (payload.edge_type === 'doc_depends_on') {
       if (this.wouldCreateCycle(payload.source_value, payload.target_doc_id)) {
         throw new CycleDetectedError(payload.source_value, payload.target_doc_id);
@@ -1360,6 +1399,18 @@ export class Repository {
     }
     if (newSource === existing.source_value && newTarget === existing.target_doc_id) {
       throw new Error(`retarget_edge: no change for edge '${edgeId}'`);
+    }
+    if (existing.source_type === 'doc') {
+      if (typeof newSource !== 'string' || newSource.length === 0) {
+        throw new Error(`retarget_edge: doc source requires non-empty source document id`);
+      }
+      const sourceDoc = this.getDocumentById(newSource);
+      if (!sourceDoc) {
+        throw new Error(`retarget_edge: source document '${newSource}' does not exist`);
+      }
+      if (sourceDoc.status !== 'approved') {
+        throw new Error(`retarget_edge: source document '${newSource}' is not approved (status: ${sourceDoc.status})`);
+      }
     }
     if (newTarget !== existing.target_doc_id) {
       const targetDoc = this.getDocumentById(newTarget);

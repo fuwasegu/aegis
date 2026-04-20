@@ -17,7 +17,7 @@ function parsePayload(p: Proposal): Record<string, unknown> {
 }
 
 /** Reject bundles that both deprecate a document and mutate/route to that document (ordering cannot fix). */
-function assertNoDeprecateVersusMutationConflicts(proposals: Proposal[]): void {
+function assertNoDeprecateVersusMutationConflicts(repo: Repository, proposals: Proposal[]): void {
   const deprecateDocIds = new Set<string>();
   for (const p of proposals) {
     if (p.proposal_type !== 'deprecate') continue;
@@ -53,11 +53,52 @@ function assertNoDeprecateVersusMutationConflicts(proposals: Proposal[]): void {
           `Bundle conflict: add_edge targets document '${t}' which is deprecated in this bundle`,
         );
       }
+      if (raw.source_type === 'doc') {
+        const s = raw.source_value;
+        if (typeof s === 'string' && s.length > 0 && deprecateDocIds.has(s)) {
+          throw new ProposalBundleOrderingError(
+            `Bundle conflict: add_edge uses source document '${s}' which is deprecated in this bundle`,
+          );
+        }
+      }
     }
-    if (p.proposal_type === 'retarget_edge' && typeof raw.target_doc_id === 'string' && raw.target_doc_id.length > 0) {
-      if (deprecateDocIds.has(raw.target_doc_id)) {
+    if (p.proposal_type === 'retarget_edge') {
+      if (typeof raw.target_doc_id === 'string' && raw.target_doc_id.length > 0) {
+        if (deprecateDocIds.has(raw.target_doc_id)) {
+          throw new ProposalBundleOrderingError(
+            `Bundle conflict: retarget_edge targets document '${raw.target_doc_id}' which is deprecated in this bundle`,
+          );
+        }
+      }
+      const edgeId = raw.edge_id;
+      if (typeof edgeId !== 'string' || edgeId.length === 0) {
+        continue;
+      }
+      const existing = repo.getEdgeById(edgeId);
+      let resolvedSourceType: string | undefined;
+      let newSourceStr = '';
+      if (existing) {
+        resolvedSourceType = existing.source_type;
+        newSourceStr = existing.source_value;
+      } else {
+        const addP = proposals.find((x) => {
+          if (x.proposal_type !== 'add_edge') return false;
+          const ar = parsePayload(x);
+          return ar.edge_id === edgeId;
+        });
+        if (addP) {
+          const ar = parsePayload(addP);
+          resolvedSourceType = typeof ar.source_type === 'string' ? ar.source_type : undefined;
+          const sv = ar.source_value;
+          newSourceStr = typeof sv === 'string' ? sv : '';
+        }
+      }
+      if (typeof raw.source_value === 'string' && raw.source_value.length > 0) {
+        newSourceStr = raw.source_value;
+      }
+      if (resolvedSourceType === 'doc' && newSourceStr.length > 0 && deprecateDocIds.has(newSourceStr)) {
         throw new ProposalBundleOrderingError(
-          `Bundle conflict: retarget_edge targets document '${raw.target_doc_id}' which is deprecated in this bundle`,
+          `Bundle conflict: retarget_edge uses source document '${newSourceStr}' which is deprecated in this bundle`,
         );
       }
     }
@@ -68,6 +109,7 @@ function requireDocReady(
   docId: string,
   approvedDocIds: Set<string>,
   newDocPidByDocId: Map<string, string>,
+  updateDocPidByDocId: Map<string, string>,
   consumerPid: string,
   addOrderingEdge: (before: string, after: string) => void,
   label: string,
@@ -78,8 +120,13 @@ function requireDocReady(
     addOrderingEdge(creator, consumerPid);
     return;
   }
+  const updater = updateDocPidByDocId.get(docId);
+  if (updater) {
+    addOrderingEdge(updater, consumerPid);
+    return;
+  }
   throw new ProposalBundleOrderingError(
-    `${label}: document '${docId}' is not approved and is not created by a new_doc in this bundle`,
+    `${label}: document '${docId}' is not approved and is not created by a new_doc or update_doc in this bundle`,
   );
 }
 
@@ -122,7 +169,7 @@ export function orderPendingBundleProposals(repo: Repository, proposals: Proposa
     return proposals;
   }
 
-  assertNoDeprecateVersusMutationConflicts(proposals);
+  assertNoDeprecateVersusMutationConflicts(repo, proposals);
 
   const approvedDocIds = new Set(repo.getApprovedDocuments().map((d) => d.doc_id));
   const approvedEdgeIds = new Set(repo.getApprovedEdges().map((e) => e.edge_id));
@@ -130,6 +177,7 @@ export function orderPendingBundleProposals(repo: Repository, proposals: Proposa
 
   const newDocPidByDocId = new Map<string, string>();
   const addEdgePidByEdgeId = new Map<string, string>();
+  const updateDocPidByDocId = new Map<string, string>();
 
   for (const p of proposals) {
     const raw = parsePayload(p);
@@ -158,6 +206,28 @@ export function orderPendingBundleProposals(repo: Repository, proposals: Proposa
         throw new ProposalBundleOrderingError(`add_edge proposal ${p.proposal_id}: edge_id '${eid}' already exists`);
       }
       addEdgePidByEdgeId.set(eid, p.proposal_id);
+    }
+  }
+
+  for (const p of proposals) {
+    if (p.proposal_type !== 'update_doc') continue;
+    const raw = parsePayload(p);
+    const docId = raw.doc_id;
+    if (typeof docId !== 'string' || docId.length === 0) {
+      throw new ProposalBundleOrderingError(`update_doc proposal ${p.proposal_id}: missing doc_id`);
+    }
+    if (updateDocPidByDocId.has(docId)) {
+      throw new ProposalBundleOrderingError(`Duplicate update_doc for doc_id '${docId}' in bundle`);
+    }
+    if (newDocPidByDocId.has(docId)) {
+      continue;
+    }
+    const doc = repo.getDocumentById(docId);
+    if (!doc) {
+      throw new ProposalBundleOrderingError(`update_doc proposal ${p.proposal_id}: document '${docId}' does not exist`);
+    }
+    if (!approvedDocIds.has(docId)) {
+      updateDocPidByDocId.set(docId, p.proposal_id);
     }
   }
 
@@ -191,7 +261,30 @@ export function orderPendingBundleProposals(repo: Repository, proposals: Proposa
         if (typeof target !== 'string' || target.length === 0) {
           throw new ProposalBundleOrderingError(`add_edge ${pid}: missing target_doc_id`);
         }
-        requireDocReady(target, approvedDocIds, newDocPidByDocId, pid, addOrderingEdge, `add_edge ${pid}`);
+        requireDocReady(
+          target,
+          approvedDocIds,
+          newDocPidByDocId,
+          updateDocPidByDocId,
+          pid,
+          addOrderingEdge,
+          `add_edge ${pid}`,
+        );
+        if (raw.source_type === 'doc') {
+          const src = raw.source_value;
+          if (typeof src !== 'string' || src.length === 0) {
+            throw new ProposalBundleOrderingError(`add_edge ${pid}: doc source requires non-empty source_value`);
+          }
+          requireDocReady(
+            src,
+            approvedDocIds,
+            newDocPidByDocId,
+            updateDocPidByDocId,
+            pid,
+            addOrderingEdge,
+            `add_edge ${pid} source doc`,
+          );
+        }
         break;
       }
       case 'update_doc': {
@@ -199,7 +292,15 @@ export function orderPendingBundleProposals(repo: Repository, proposals: Proposa
         if (typeof docId !== 'string') {
           throw new ProposalBundleOrderingError(`update_doc ${pid}: missing doc_id`);
         }
-        requireDocReady(docId, approvedDocIds, newDocPidByDocId, pid, addOrderingEdge, `update_doc ${pid}`);
+        requireDocReady(
+          docId,
+          approvedDocIds,
+          newDocPidByDocId,
+          updateDocPidByDocId,
+          pid,
+          addOrderingEdge,
+          `update_doc ${pid}`,
+        );
         break;
       }
       case 'deprecate': {
@@ -212,7 +313,15 @@ export function orderPendingBundleProposals(repo: Repository, proposals: Proposa
           throw new ProposalBundleOrderingError(`deprecate ${pid}: missing entity_id`);
         }
         if (entityType === 'document') {
-          requireDocReady(entityId, approvedDocIds, newDocPidByDocId, pid, addOrderingEdge, `deprecate ${pid}`);
+          requireDocReady(
+            entityId,
+            approvedDocIds,
+            newDocPidByDocId,
+            updateDocPidByDocId,
+            pid,
+            addOrderingEdge,
+            `deprecate ${pid}`,
+          );
         } else if (entityType === 'edge') {
           requireEdgeReady(entityId, approvedEdgeIds, addEdgePidByEdgeId, pid, addOrderingEdge, `deprecate ${pid}`);
         } else {
@@ -228,6 +337,7 @@ export function orderPendingBundleProposals(repo: Repository, proposals: Proposa
             replacedBy.trim(),
             approvedDocIds,
             newDocPidByDocId,
+            updateDocPidByDocId,
             pid,
             addOrderingEdge,
             `deprecate ${pid} replaced_by_doc_id`,
@@ -242,6 +352,33 @@ export function orderPendingBundleProposals(repo: Repository, proposals: Proposa
         }
         requireEdgeReady(edgeId, approvedEdgeIds, addEdgePidByEdgeId, pid, addOrderingEdge, `retarget_edge ${pid}`);
         const existing = repo.getEdgeById(edgeId);
+        let resolvedSourceType: string | undefined;
+        let newSourceStr = '';
+        if (existing) {
+          resolvedSourceType = existing.source_type;
+          newSourceStr = existing.source_value;
+        } else {
+          const addPid = addEdgePidByEdgeId.get(edgeId);
+          const addProp = proposals.find((x) => x.proposal_id === addPid);
+          const addRaw = addProp ? parsePayload(addProp) : undefined;
+          resolvedSourceType = typeof addRaw?.source_type === 'string' ? addRaw.source_type : undefined;
+          const sv = addRaw?.source_value;
+          newSourceStr = typeof sv === 'string' ? sv : '';
+        }
+        if (typeof raw.source_value === 'string' && raw.source_value.length > 0) {
+          newSourceStr = raw.source_value;
+        }
+        if (resolvedSourceType === 'doc' && newSourceStr.length > 0) {
+          requireDocReady(
+            newSourceStr,
+            approvedDocIds,
+            newDocPidByDocId,
+            updateDocPidByDocId,
+            pid,
+            addOrderingEdge,
+            `retarget_edge ${pid} source doc`,
+          );
+        }
         let newTarget: string | undefined;
         if (typeof raw.target_doc_id === 'string' && raw.target_doc_id.length > 0) {
           newTarget = raw.target_doc_id;
@@ -255,7 +392,15 @@ export function orderPendingBundleProposals(repo: Repository, proposals: Proposa
           if (typeof t === 'string') newTarget = t;
         }
         if (typeof newTarget === 'string' && newTarget.length > 0) {
-          requireDocReady(newTarget, approvedDocIds, newDocPidByDocId, pid, addOrderingEdge, `retarget_edge ${pid}`);
+          requireDocReady(
+            newTarget,
+            approvedDocIds,
+            newDocPidByDocId,
+            updateDocPidByDocId,
+            pid,
+            addOrderingEdge,
+            `retarget_edge ${pid}`,
+          );
         }
         break;
       }
