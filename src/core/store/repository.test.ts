@@ -2298,4 +2298,58 @@ describe('Repository', () => {
       expect(meta!.deployed_version).toBe('2.0.0');
     });
   });
+
+  describe('Co-change cache (ADR-015 Task 015-08)', () => {
+    it('persistCoChangeCache replaces rows and advances last_processed_commit together', () => {
+      expect(repo.getCoChangeLastProcessedCommit()).toBeNull();
+
+      repo.persistCoChangeCache(
+        [
+          {
+            code_pattern: 'src/**',
+            doc_pattern: 'docs/**',
+            co_change_count: 2,
+            total_code_changes: 2,
+            confidence: 1,
+          },
+        ],
+        new Map([['src/**', 2]]),
+        'deadbeef',
+        'fp-one',
+      );
+
+      expect(repo.listCoChangePatterns()).toHaveLength(1);
+      expect(repo.getCoChangeLastProcessedCommit()).toBe('deadbeef');
+      expect(repo.getCoChangeKbFingerprint()).toBe('fp-one');
+      expect(repo.listCoChangeCodeTotals().get('src/**')).toBe(2);
+
+      repo.persistCoChangeCache([], new Map(), 'cafe', 'fp-two');
+      expect(repo.listCoChangePatterns()).toHaveLength(0);
+      expect(repo.getCoChangeLastProcessedCommit()).toBe('cafe');
+      expect(repo.getCoChangeKbFingerprint()).toBe('fp-two');
+      expect(repo.listCoChangeCodeTotals().size).toBe(0);
+    });
+
+    it('clearCoChangeCache wipes patterns and meta pointers', () => {
+      repo.persistCoChangeCache(
+        [
+          {
+            code_pattern: 'a/**',
+            doc_pattern: 'b/**',
+            co_change_count: 1,
+            total_code_changes: 1,
+            confidence: 1,
+          },
+        ],
+        new Map([['a/**', 1]]),
+        'abc',
+        'fp',
+      );
+      repo.clearCoChangeCache();
+      expect(repo.listCoChangePatterns()).toHaveLength(0);
+      expect(repo.listCoChangeCodeTotals().size).toBe(0);
+      expect(repo.getCoChangeLastProcessedCommit()).toBeNull();
+      expect(repo.getCoChangeKbFingerprint()).toBeNull();
+    });
+  });
 });

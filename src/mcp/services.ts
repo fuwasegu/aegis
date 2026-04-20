@@ -30,6 +30,7 @@ import { StalenessAnalyzer } from '../core/automation/staleness-analyzer.js';
 import type { InitPreview } from '../core/init/engine.js';
 import { initConfirm as coreInitConfirm, initDetect as coreInitDetect } from '../core/init/engine.js';
 import { detectUpgrade, generateUpgradeProposals, type UpgradePreview } from '../core/init/upgrade.js';
+import { runCoChangeCacheJob } from '../core/optimization/co-change-cache.js';
 import {
   analyzeDocumentForImportPlan,
   analyzeImportBatch,
@@ -94,6 +95,14 @@ export interface MaintenanceRunResult {
     archived_count?: number;
   };
   check_upgrade: UpgradePreview | { not_found: true; template_id: string } | null;
+  /** ADR-015 Task 015-08: git co-change aggregates (maintenance-built cache). */
+  co_change_cache: {
+    git_available: boolean;
+    commits_scanned: number;
+    pattern_rows: number;
+    full_scan: boolean;
+    skipped_reason?: string;
+  };
   /** ADR-014: file-anchored docs whose source_synced_at is absent or older than threshold. */
   staleness_report: {
     threshold_days: number;
@@ -645,6 +654,12 @@ export class AegisService {
 
     const check_upgrade = this.checkUpgrade(surface);
 
+    const co_change_cache = await runCoChangeCacheJob({
+      projectRoot: this.projectRoot,
+      repo: this.repo,
+      dryRun,
+    });
+
     const nowMs = Date.now();
 
     const semantic_scan = collectSemanticStalenessFindings({
@@ -697,6 +712,7 @@ export class AegisService {
       sync_docs,
       archive_observations,
       check_upgrade,
+      co_change_cache,
       staleness_report,
     };
   }

@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { normalizeSourcePath, resolveSourcePath } from '../paths.js';
 import {
   type CanonicalVersion,
+  type CoChangePatternRow,
   type CompileLog,
   type DocOwnership,
   type Document,
@@ -1797,6 +1798,142 @@ export class Repository {
            deployed_at = excluded.deployed_at`,
       )
       .run(version);
+  }
+
+  // ============================================================
+  // Co-change cache (ADR-015 Task 015-08, operational metadata)
+  // ============================================================
+
+  getCoChangeLastProcessedCommit(): string | null {
+    try {
+      const row = this.db.prepare('SELECT last_processed_commit FROM co_change_meta WHERE id = 1').get() as
+        | { last_processed_commit: string | null }
+        | undefined;
+      return row?.last_processed_commit ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  getCoChangeKbFingerprint(): string | null {
+    try {
+      const row = this.db.prepare('SELECT kb_paths_fingerprint FROM co_change_meta WHERE id = 1').get() as
+        | { kb_paths_fingerprint: string | null }
+        | undefined;
+      return row?.kb_paths_fingerprint ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  setCoChangeLastProcessedCommit(sha: string | null): void {
+    this.db
+      .prepare(
+        `INSERT INTO co_change_meta (id, last_processed_commit, updated_at)
+         VALUES (1, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         ON CONFLICT(id) DO UPDATE SET
+           last_processed_commit = excluded.last_processed_commit,
+           updated_at = excluded.updated_at`,
+      )
+      .run(sha);
+  }
+
+  listCoChangePatterns(): CoChangePatternRow[] {
+    return this.db
+      .prepare(
+        `SELECT code_pattern, doc_pattern, co_change_count, total_code_changes, confidence
+         FROM co_change_patterns
+         ORDER BY code_pattern ASC, doc_pattern ASC`,
+      )
+      .all() as CoChangePatternRow[];
+  }
+
+  /** Per code_pattern counts including code-only commits (incremental co-change correctness). */
+  listCoChangeCodeTotals(): Map<string, number> {
+    try {
+      const rows = this.db
+        .prepare(`SELECT code_pattern, code_commit_count FROM co_change_code_totals ORDER BY code_pattern ASC`)
+        .all() as Array<{ code_pattern: string; code_commit_count: number }>;
+      return new Map(rows.map((r) => [r.code_pattern, r.code_commit_count]));
+    } catch {
+      return new Map();
+    }
+  }
+
+  replaceCoChangePatterns(rows: CoChangePatternRow[]): void {
+    const del = this.db.prepare('DELETE FROM co_change_patterns');
+    const ins = this.db.prepare(
+      `INSERT INTO co_change_patterns (
+         code_pattern, doc_pattern, co_change_count, total_code_changes, confidence, updated_at
+       ) VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+    );
+    const tx = this.db.transaction(() => {
+      del.run();
+      for (const r of rows) {
+        ins.run(r.code_pattern, r.doc_pattern, r.co_change_count, r.total_code_changes, r.confidence);
+      }
+    });
+    tx();
+  }
+
+  /**
+   * Atomically replace pattern rows, code-pattern totals, and advance `last_processed_commit`.
+   */
+  persistCoChangeCache(
+    rows: CoChangePatternRow[],
+    codeCommitTotals: Map<string, number>,
+    lastProcessedCommit: string,
+    kbPathsFingerprint: string,
+  ): void {
+    const delP = this.db.prepare('DELETE FROM co_change_patterns');
+    const insP = this.db.prepare(
+      `INSERT INTO co_change_patterns (
+         code_pattern, doc_pattern, co_change_count, total_code_changes, confidence, updated_at
+       ) VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+    );
+    const delT = this.db.prepare('DELETE FROM co_change_code_totals');
+    const insT = this.db.prepare(
+      `INSERT INTO co_change_code_totals (code_pattern, code_commit_count, updated_at)
+       VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+    );
+    const upd = this.db.prepare(
+      `UPDATE co_change_meta
+       SET last_processed_commit = ?,
+           kb_paths_fingerprint = ?,
+           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = 1`,
+    );
+    const sortedTotals = [...codeCommitTotals.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const tx = this.db.transaction(() => {
+      delP.run();
+      delT.run();
+      for (const r of rows) {
+        insP.run(r.code_pattern, r.doc_pattern, r.co_change_count, r.total_code_changes, r.confidence);
+      }
+      for (const [pattern, cnt] of sortedTotals) {
+        insT.run(pattern, cnt);
+      }
+      upd.run(lastProcessedCommit, kbPathsFingerprint);
+    });
+    tx();
+  }
+
+  /** Clear cache rows and meta pointers (no approved KB sources). */
+  clearCoChangeCache(): void {
+    const tx = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM co_change_patterns').run();
+      this.db.prepare('DELETE FROM co_change_code_totals').run();
+      this.db
+        .prepare(
+          `UPDATE co_change_meta
+           SET last_processed_commit = NULL,
+               kb_paths_fingerprint = NULL,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+           WHERE id = 1`,
+        )
+        .run();
+    });
+    tx();
   }
 
   searchArchivedObservations(

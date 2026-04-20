@@ -385,6 +385,19 @@ function printMaintenanceSummary(result: MaintenanceRunResult): void {
     console.log('   (unexpected check_upgrade shape)');
   }
 
+  console.log('\n5. co_change_cache');
+  const cc = result.co_change_cache;
+  if (!cc.git_available) {
+    console.log(`   skipped (${cc.skipped_reason ?? 'unavailable'})`);
+  } else {
+    console.log(`   commits_scanned: ${cc.commits_scanned}`);
+    console.log(`   pattern_rows: ${cc.pattern_rows}`);
+    console.log(`   full_scan: ${cc.full_scan}`);
+    if (cc.skipped_reason) {
+      console.log(`   note: ${cc.skipped_reason}`);
+    }
+  }
+
   console.log('');
 }
 

@@ -34,7 +34,7 @@ export class CoverageAnalyzer implements ObservationAnalyzer {
         return [];
       }
     });
-    const { missClusters } = buildCoverageOptimizationContext(compileMisses, batchTargetFiles);
+    const { missClusters } = buildCoverageOptimizationContext(compileMisses, batchTargetFiles, this.repo);
 
     const filteredDrafts: ProposalDraft[] = [];
     for (const draft of base.drafts) {

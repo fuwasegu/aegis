@@ -1,3 +1,16 @@
+export type { CoChangePatternRow } from '../types.js';
+export {
+  CoChangeAggregator,
+  type CoChangeCacheJobResult,
+  classifyChangedPaths,
+  fingerprintKbPaths,
+  kbSourcePathSetForApprovedDocs,
+  normalizeGitPath,
+  parseCommitFileLog,
+  pathsRepoRelativeToProject,
+  type RunCoChangeCacheJobOptions,
+  runCoChangeCacheJob,
+} from './co-change-cache.js';
 export {
   aggregateRefactorSignals,
   buildSplitCandidatePayload,
@@ -16,6 +29,7 @@ export {
   buildMissClustersFromObservations,
   buildPathClustersFromFiles,
   derivePathPattern,
+  loadCoChangePatterns,
   type MissCluster,
   type PathCluster,
 } from './edge-candidate-builder.js';
