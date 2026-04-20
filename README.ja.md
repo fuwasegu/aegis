@@ -26,7 +26,7 @@ Aegis は 2 つの MCP surface を使います — 両方が必要です:
 | Surface | 役割 | ツール数 |
 |---------|------|----------|
 | **agent** | コンテキスト取得・オブザベーション記録など（Canonical Knowledge は変更不可） | 5 ツール（compile, observe, audit, known_tags, detect） |
-| **admin** | 初期化・承認・トリアージ | 17 ツール（共通 5 + Admin 専用 12） |
+| **admin** | 初期化・承認・トリアージ | 23 ツール（共通 5 + Admin 専用 18） |
 
 > agent surface だけでは初期化もプロポーザル承認もできません。この分離により、AI エージェントが人間の承認なしにアーキテクチャルールを変更することを防ぎます。（[INV-6](docs/technical-guide.ja.md)）
 
@@ -251,7 +251,7 @@ HuggingFace URI を直接指定することも可能: `--model hf:user/repo:file
 | `aegis_get_known_tags` | tag_mappings の意図タグ一覧（承認ドキュメントに紐づくもの）と `knowledge_version`、キャッシュ用 SHA-256 `tag_catalog_hash` |
 | `aegis_init_detect` | プロジェクト分析と初期化プレビュー生成 |
 
-### MCP ツール — Admin Surface（追加 12 ツール、計 17）
+### MCP ツール — Admin Surface（追加 18 ツール、計 23）
 
 | ツール | 説明 |
 |--------|------|
@@ -259,14 +259,20 @@ HuggingFace URI を直接指定することも可能: `--model hf:user/repo:file
 | `aegis_list_proposals` | プロポーザル一覧（ステータスフィルタ付き） |
 | `aegis_get_proposal` | プロポーザル詳細とエビデンスの取得 |
 | `aegis_approve_proposal` | 保留中のプロポーザルを承認 |
+| `aegis_preflight_proposal_bundle` | 同一 `bundle_id` の保留プロポーザルをドライラン検証 |
+| `aegis_approve_proposal_bundle` | バンドル単位で保留プロポーザルを一括承認（原子的） |
 | `aegis_reject_proposal` | プロポーザルを理由付きで却下 |
 | `aegis_check_upgrade` | テンプレートバージョンのアップグレード確認 |
 | `aegis_apply_upgrade` | テンプレートアップグレードのプロポーザル生成 |
 | `aegis_archive_observations` | 古いオブザベーションをアーカイブ |
+| `aegis_get_stats` | ナレッジ集計とヘルスシグナル |
 | `aegis_list_observations` | オブザベーション一覧（outcome フィルタ: proposed / skipped / pending） |
 | `aegis_import_doc` | ドキュメントを Canonical Knowledge にインポート（`content` または `file_path` 指定） |
+| `aegis_analyze_doc` | ADR-015: `content` または `file_path` を ImportPlan に分析（読み取り専用） |
+| `aegis_analyze_import_batch` | ADR-015: 一括取り込み分析（ドキュメント横断の重複検知） |
+| `aegis_execute_import_plan` | ADR-015: ImportPlan を `bundle_id` 共有のプロポーザルに具体化 |
 | `aegis_process_observations` | 未分析のオブザベーションに対して分析パイプラインを実行 |
-| `aegis_sync_docs` | インポート済みドキュメントをソースファイルと同期 |
+| `aegis_sync_docs` | ファイルアンカー済みドキュメントをソースファイルと同期 |
 
 ### CLI サブコマンド
 

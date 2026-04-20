@@ -23,16 +23,20 @@ npm test               # run all tests
 - `aegis_get_known_tags` — List distinct intent tags (approved-resolvable) with `knowledge_version` and SHA-256 `tag_catalog_hash` for client caching.
 - `aegis_init_detect` — Analyze a project to generate initialization preview (read-only).
 
-## Admin Surface Tools (12 additional tools, 17 total)
+## Admin Surface Tools (18 additional tools, 23 total)
 
 - `aegis_init_confirm` — Confirm initialization using preview_hash from init_detect.
 - `aegis_list_proposals` / `aegis_get_proposal` — Review pending proposals.
 - `aegis_approve_proposal` / `aegis_reject_proposal` — Approve or reject with optional modifications.
+- `aegis_preflight_proposal_bundle` / `aegis_approve_proposal_bundle` — Validate or approve pending proposals sharing a `bundle_id`.
 - `aegis_check_upgrade` — Check for template version upgrades.
 - `aegis_apply_upgrade` — Generate proposals for template upgrade changes.
 - `aegis_archive_observations` — Archive old observations.
+- `aegis_get_stats` — Aggregate knowledge counts and health signals.
 - `aegis_list_observations` — List observations with outcome-based filtering (proposed / skipped / pending).
 - `aegis_import_doc` — Import a document into Canonical Knowledge (from `content` or `file_path`).
+- `aegis_analyze_doc` / `aegis_analyze_import_batch` — ADR-015 import-plan analysis (read-only).
+- `aegis_execute_import_plan` — Materialize analyzed import plans as proposal bundles.
 - `aegis_process_observations` — Trigger observation analysis pipeline for pending observations.
 - `aegis_sync_docs` — Synchronize imported documents with their source files.
 
@@ -89,7 +93,7 @@ templates/      — Reserved for custom user templates (--template-dir)
 ## Design Decisions
 
 - Agent surface registers 5 tools (compile_context, observe, get_compile_audit, get_known_tags, init_detect)
-- Admin surface registers 17 tools (the 5 agent tools + 12 admin-only)
+- Admin surface registers 23 tools (the 5 agent tools + 18 admin-only)
 - init_detect is on both surfaces (read-only). init_confirm is admin-only (mutates Canonical)
 - init_confirm must run in the admin process (previewCache is in-memory)
 - After init_confirm, adapters are auto-deployed (.cursor/rules/, AGENTS.md) — non-fatal if deployment fails

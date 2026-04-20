@@ -29,6 +29,23 @@ export {
   validatePathRequiresEdge,
 } from './edge-validation.js';
 export {
+  type AnalyzeImportPlanOptions,
+  analyzeDocumentForImportPlan,
+  analyzeImportBatch,
+  type BatchImportPlan,
+  type CoverageDelta,
+  type CrossDocOverlap,
+  extractPathLikeStrings,
+  IMPORT_PLAN_ALGORITHM_VERSION,
+  type ImportPlan,
+  jaccardSimilarity,
+  type OverlapWarning,
+  parseBatchImportPlanJson,
+  parseImportPlanJson,
+  type SuggestedImportUnit,
+  splitMarkdownSections,
+} from './import-plan.js';
+export {
   collectSemanticStalenessFindings,
   extractTsExportedSymbols,
   findRenameCandidatePath,

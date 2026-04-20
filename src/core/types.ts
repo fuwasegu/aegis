@@ -532,6 +532,8 @@ export interface ProposalDraft {
   proposal_type: ProposalType;
   payload: Record<string, unknown>;
   evidence_observation_ids: string[];
+  /** ADR-015 import-plan / bundles: when set, proposals are grouped for approveProposalBundle. */
+  bundle_id?: string | null;
 }
 
 export interface AnalysisContext {
