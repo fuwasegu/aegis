@@ -7,13 +7,14 @@ import {
 } from './source-sync-staleness.js';
 import type { Document } from './types.js';
 
-function doc(partial: Partial<Document> & Pick<Document, 'doc_id' | 'title' | 'ownership' | 'source_path'>): Document {
+function doc(partial: Partial<Document> & Pick<Document, 'doc_id' | 'title' | 'ownership'>): Document {
   return {
     kind: 'guideline',
     content: 'c',
     content_hash: 'h',
     status: 'approved',
     template_origin: null,
+    source_refs_json: null,
     source_synced_at: null,
     created_at: 't',
     updated_at: 't',
@@ -55,6 +56,45 @@ describe('source-sync-staleness (ADR-014)', () => {
       source_synced_at: '2025-01-01T00:00:00.000Z',
     });
     expect(isFileAnchoredSourceStale(d, 90, now)).toBe(true);
+  });
+
+  it('treats single file anchor in source_refs_json (no source_path) as ADR-014 path (015-10)', () => {
+    const d = doc({
+      doc_id: 'json-file',
+      title: 'JF',
+      ownership: 'file-anchored',
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: 'a.md', anchor_type: 'file', anchor_value: '' }]),
+      source_synced_at: null,
+    });
+    expect(isFileAnchoredSourceStale(d, 90, now)).toBe(true);
+  });
+
+  it('does not flag single section anchor ref for ADR-014 whole-file staleness', () => {
+    const d = doc({
+      doc_id: 'sec-only',
+      title: 'Sec',
+      ownership: 'file-anchored',
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: 'a.md', anchor_type: 'section', anchor_value: '## X' }]),
+      source_synced_at: null,
+    });
+    expect(isFileAnchoredSourceStale(d, 90, now)).toBe(false);
+  });
+
+  it('ignores multi-source refs for ADR-014 operational staleness (015-10)', () => {
+    const d = doc({
+      doc_id: 'ms',
+      title: 'MS',
+      ownership: 'file-anchored',
+      source_path: 'a.md',
+      source_refs_json: JSON.stringify([
+        { asset_path: 'a.md', anchor_type: 'file', anchor_value: '' },
+        { asset_path: 'b.md', anchor_type: 'file', anchor_value: '' },
+      ]),
+      source_synced_at: null,
+    });
+    expect(isFileAnchoredSourceStale(d, 90, now)).toBe(false);
   });
 
   it('ignores standalone docs even with source_path', () => {

@@ -9,6 +9,8 @@ import {
   extractTsExportedSymbols,
   findRenameCandidatePath,
   linkedPathsForDoc,
+  linkedPathsForMultiSourceStaleness,
+  linkedPathsFromSourceRefs,
   listRepoRelativeFiles,
   SEMANTIC_STALENESS_ALGORITHM_VERSION,
   stableStringifyFingerprints,
@@ -52,6 +54,7 @@ export interface Delta {}
       ownership: 'file-anchored',
       template_origin: null,
       source_path: 'docs/x.md',
+      source_refs_json: null,
       source_synced_at: null,
       created_at: '2020-01-01T00:00:00.000Z',
       updated_at: '2020-01-01T00:00:00.000Z',
@@ -86,6 +89,7 @@ export interface Delta {}
       ownership: 'file-anchored',
       template_origin: null,
       source_path: 'docs/old.md',
+      source_refs_json: null,
       source_synced_at: null,
       created_at: '2020-01-01T00:00:00.000Z',
       updated_at: '2020-01-01T00:00:00.000Z',
@@ -123,6 +127,7 @@ export interface Delta {}
       ownership: 'standalone',
       template_origin: null,
       source_path: null,
+      source_refs_json: null,
       source_synced_at: null,
       created_at: '2020-01-01T00:00:00.000Z',
       updated_at: '2020-01-01T00:00:00.000Z',
@@ -178,6 +183,7 @@ export interface Delta {}
       ownership: 'standalone',
       template_origin: null,
       source_path: null,
+      source_refs_json: null,
       source_synced_at: null,
       created_at: '2020-01-01T00:00:00.000Z',
       updated_at: '2020-01-01T00:00:00.000Z',
@@ -207,5 +213,97 @@ export interface Delta {}
 
     expect(r.findings).toHaveLength(0);
     expect(r.baselineUpserts.some((b) => b.doc_id === 'g2')).toBe(true);
+  });
+
+  it('multi-source doc fingerprints source_refs_json assets without path_requires edges (015-10)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aegis-ms-'));
+    mkdirSync(join(root, 'docs'), { recursive: true });
+    const a1 = 'alpha v1\n';
+    const b0 = 'beta\n';
+    writeFileSync(join(root, 'docs/a.md'), a1, 'utf-8');
+    writeFileSync(join(root, 'docs/b.md'), b0, 'utf-8');
+
+    const doc: Document = {
+      doc_id: 'ms1',
+      title: 'M',
+      kind: 'guideline',
+      content: 'merged body',
+      content_hash: hashUtf8('merged body'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: 'docs/ghost.md',
+      source_refs_json: JSON.stringify([
+        { asset_path: 'docs/a.md', anchor_type: 'file', anchor_value: '' },
+        { asset_path: 'docs/b.md', anchor_type: 'file', anchor_value: '' },
+      ]),
+      source_synced_at: null,
+      created_at: '2020-01-01T00:00:00.000Z',
+      updated_at: '2020-01-01T00:00:00.000Z',
+    };
+
+    expect(linkedPathsFromSourceRefs(doc)).toEqual(['docs/a.md', 'docs/b.md']);
+
+    const baselineJson = stableStringifyFingerprints({
+      'docs/a.md': `raw:${hashUtf8(a1)}`,
+      'docs/b.md': `raw:${hashUtf8(b0)}`,
+    });
+
+    writeFileSync(join(root, 'docs/a.md'), 'alpha v2\n', 'utf-8');
+
+    const r = collectSemanticStalenessFindings({
+      docs: [doc],
+      edges: [],
+      projectRoot: root,
+      getBaseline: () => baselineJson,
+      persistLevel3Baselines: false,
+    });
+
+    expect(r.findings.some((f) => f.level === 3 && f.paths?.includes('docs/a.md'))).toBe(true);
+  });
+
+  it('multi-source Level-3 fingerprints include legacy source_path alongside source_refs (015-10)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aegis-ms-ps-'));
+    mkdirSync(join(root, 'docs'), { recursive: true });
+    const p0 = 'p0\n';
+    const s0 = 's0\n';
+    writeFileSync(join(root, 'docs/primary.md'), p0, 'utf-8');
+    writeFileSync(join(root, 'docs/secondary.md'), s0, 'utf-8');
+
+    const doc: Document = {
+      doc_id: 'ms-ps',
+      title: 'M',
+      kind: 'guideline',
+      content: 'merged',
+      content_hash: hashUtf8('merged'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: 'docs/primary.md',
+      source_refs_json: JSON.stringify([{ asset_path: 'docs/secondary.md', anchor_type: 'file', anchor_value: '' }]),
+      source_synced_at: null,
+      created_at: '2020-01-01T00:00:00.000Z',
+      updated_at: '2020-01-01T00:00:00.000Z',
+    };
+
+    expect(linkedPathsFromSourceRefs(doc)).toEqual(['docs/secondary.md']);
+    expect(linkedPathsForMultiSourceStaleness(doc)).toEqual(['docs/primary.md', 'docs/secondary.md']);
+
+    const baselineJson = stableStringifyFingerprints({
+      'docs/primary.md': `raw:${hashUtf8(p0)}`,
+      'docs/secondary.md': `raw:${hashUtf8(s0)}`,
+    });
+
+    writeFileSync(join(root, 'docs/primary.md'), 'p1\n', 'utf-8');
+
+    const r = collectSemanticStalenessFindings({
+      docs: [doc],
+      edges: [],
+      projectRoot: root,
+      getBaseline: () => baselineJson,
+      persistLevel3Baselines: false,
+    });
+
+    expect(r.findings.some((f) => f.level === 3 && f.paths?.includes('docs/primary.md'))).toBe(true);
   });
 });

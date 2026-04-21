@@ -2,6 +2,7 @@
  * ADR-014 Phase 2: file-anchored documents — last successful source verification (source_synced_at).
  */
 
+import { primaryAssetPathForHashSync, sourceRefCountFromDocument } from './source-refs.js';
 import type { Document } from './types.js';
 
 /** Default threshold for compile warnings and maintenance staleness report (days). */
@@ -9,7 +10,9 @@ export const SOURCE_SYNC_STALE_WARNING_DAYS = 90;
 
 export function isFileAnchoredSourceStale(doc: Document, thresholdDays: number, nowMs: number): boolean {
   if (doc.ownership !== 'file-anchored') return false;
-  if (!doc.source_path?.trim()) return false;
+  /** ADR-014 notices assume single-file hash sync; N:M units use semantic / multi-path flows (015-10). */
+  if (sourceRefCountFromDocument(doc) > 1) return false;
+  if (!primaryAssetPathForHashSync(doc)?.trim()) return false;
   const synced = doc.source_synced_at;
   if (synced == null || synced === '') return true;
   const t = Date.parse(synced);

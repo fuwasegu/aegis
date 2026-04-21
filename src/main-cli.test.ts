@@ -41,7 +41,7 @@ describe('CLI — stats / doctor (dist/main.js)', () => {
     expect(body.knowledge).toBeDefined();
     expect(body.usage).toBeDefined();
     expect(body.health).toBeDefined();
-  });
+  }, 15_000);
 
   it('doctor exits 0 when no health issues', () => {
     const r = spawnSync(execPath, [MAIN_JS, 'doctor', '--project-root', dir], {

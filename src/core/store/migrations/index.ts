@@ -13,6 +13,7 @@ export {
 export { migration010, upAddCoChangeCache } from './010_add_co_change_cache.js';
 export { migration011, upCoChangeKbFingerprint } from './011_co_change_kb_fingerprint.js';
 export { migration012, upCoChangeCodeTotals } from './012_co_change_code_totals.js';
+export { migration013, upAddSourceRefsJson } from './013_add_source_refs_json.js';
 export { ensureSchemaMigrationsTable, runMigrations } from './runner.js';
 export type { Migration } from './types.js';
 
@@ -28,6 +29,7 @@ import { migration009 } from './009_add_staleness_baselines_and_event.js';
 import { migration010 } from './010_add_co_change_cache.js';
 import { migration011 } from './011_co_change_kb_fingerprint.js';
 import { migration012 } from './012_co_change_code_totals.js';
+import { migration013 } from './013_add_source_refs_json.js';
 
 /** Registered migrations in version order (append new migrations here). */
 export const ALL_MIGRATIONS = [
@@ -43,4 +45,5 @@ export const ALL_MIGRATIONS = [
   migration010,
   migration011,
   migration012,
+  migration013,
 ];

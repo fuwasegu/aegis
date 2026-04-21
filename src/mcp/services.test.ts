@@ -1646,6 +1646,30 @@ describe('AegisService — importDoc file_path', () => {
     expect(payload.source_path).toBe('auto-source.md');
   });
 
+  it('includes normalized source_refs on document_import observation payload', async () => {
+    writeFileSync(join(tmpDir, 'readme.md'), '# Hello');
+    const refs = [
+      { asset_path: 'readme.md', anchor_type: 'file' as const, anchor_value: '' },
+      { asset_path: 'routes.ts', anchor_type: 'lines' as const, anchor_value: '10-20' },
+    ];
+    const result = await service.importDoc(
+      {
+        file_path: join(tmpDir, 'readme.md'),
+        doc_id: 'multi-ref-doc',
+        title: 'MR',
+        kind: 'guideline',
+        source_refs: refs,
+      },
+      'admin',
+    );
+
+    const obs = repo.getObservation(result.observation_id);
+    const payload = JSON.parse(obs!.payload) as { source_refs?: Array<{ anchor_type: string; anchor_value: string }> };
+    expect(payload.source_refs?.length).toBe(2);
+    expect(payload.source_refs?.[1]?.anchor_type).toBe('lines');
+    expect(payload.source_refs?.[1]?.anchor_value).toBe('10-20');
+  });
+
   it('does not override explicit source_path but normalizes it', async () => {
     const filePath = join(tmpDir, 'explicit.md');
     writeFileSync(filePath, 'content');
@@ -1697,6 +1721,16 @@ describe('AegisService — import plan', () => {
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('analyzeDoc carries source_refs through the import plan', () => {
+    const refs = [
+      { asset_path: 'docs/a.md', anchor_type: 'file' as const, anchor_value: '' },
+      { asset_path: 'docs/b.md', anchor_type: 'section' as const, anchor_value: '## Intro' },
+    ];
+    const plan = service.analyzeDoc({ content: '## One\nbody', source_refs: refs }, 'admin');
+    expect(plan.source_refs?.length).toBe(2);
+    expect(plan.source_refs?.[1]?.anchor_value).toBe('## Intro');
   });
 
   it('analyzeDoc returns an ImportPlan; executeImportPlan sets proposal bundle_id', () => {
@@ -1781,14 +1815,44 @@ describe('AegisService — import plan', () => {
     }
   });
 
-  it('approve + sync_docs dry-run stays quiet for anchored single-file import-plan doc', () => {
+  it('executeImportPlan merges resolved_source_path into source_refs when split + extra refs (015-10)', () => {
+    const fp = join(tmpDir, 'multi-extra.md');
+    writeFileSync(fp, '## A\n\nalpha\n\n## B\n\nbeta\n');
+    writeFileSync(join(tmpDir, 'extra-ref.md'), 'extra\n');
+
+    const plan = service.analyzeDoc(
+      {
+        file_path: fp,
+        source_refs: [{ asset_path: 'extra-ref.md', anchor_type: 'file', anchor_value: '' }],
+      },
+      'admin',
+    );
+    expect(plan.suggested_units.length).toBe(2);
+
+    const exec = service.executeImportPlan({ import_plan: plan }, 'admin');
+    const newDocPayloads = exec.proposal_ids
+      .map((id) => repo.getProposal(id))
+      .filter((p): p is NonNullable<typeof p> => p != null && p.proposal_type === 'new_doc')
+      .map((p) => JSON.parse(p.payload) as { source_refs_json?: string | null });
+
+    expect(newDocPayloads.length).toBeGreaterThanOrEqual(2);
+    for (const pl of newDocPayloads) {
+      expect(pl.source_refs_json).toBeTruthy();
+      const refs = JSON.parse(pl.source_refs_json!) as Array<{ asset_path: string }>;
+      const paths = refs.map((r) => r.asset_path);
+      expect(paths).toContain('multi-extra.md');
+      expect(paths).toContain('extra-ref.md');
+    }
+  });
+
+  it('approve + sync_docs dry-run stays quiet for anchored single-file import-plan doc', async () => {
     const fp = join(tmpDir, 'whole2.md');
     writeFileSync(fp, '# Doc\n\nHello.\n');
     const plan = service.analyzeDoc({ file_path: fp }, 'admin');
     const docIds = plan.suggested_units.map((u) => u.doc_id);
     const { bundle_id } = service.executeImportPlan({ import_plan: plan }, 'admin');
     service.approveProposalBundle(bundle_id, 'admin');
-    const sync = service.syncDocs({ dryRun: true }, 'admin');
+    const sync = await service.syncDocs({ dryRun: true }, 'admin');
     const would = sync.would_create_proposals ?? [];
     for (const id of docIds) {
       expect(would).not.toContain(id);
@@ -1907,15 +1971,16 @@ describe('AegisService — syncDocs', () => {
       ownership: 'file-anchored',
       template_origin: null,
       source_path: sourcePath,
+      source_refs_json: null,
     });
   }
 
-  it('detects stale document and creates update_doc proposal with evidence', () => {
+  it('detects stale document and creates update_doc proposal with evidence', async () => {
     writeFileSync(join(tmpDir, 'stale.md'), 'original');
     insertApprovedDoc('stale-doc', 'original', 'stale.md');
 
     writeFileSync(join(tmpDir, 'stale.md'), 'updated content');
-    const result = service.syncDocs({}, 'admin');
+    const result = await service.syncDocs({}, 'admin');
 
     expect(result.checked).toBe(1);
     expect(result.proposals_created).toHaveLength(1);
@@ -1932,16 +1997,133 @@ describe('AegisService — syncDocs', () => {
     expect(evidence[0].event_type).toBe('document_import');
   });
 
-  it('reports up_to_date when file has not changed', () => {
+  it('reports up_to_date when file has not changed', async () => {
     writeFileSync(join(tmpDir, 'fresh.md'), 'same content');
     insertApprovedDoc('fresh-doc', 'same content', 'fresh.md');
 
-    const result = service.syncDocs({}, 'admin');
+    const result = await service.syncDocs({}, 'admin');
     expect(result.up_to_date).toBe(1);
     expect(result.proposals_created).toHaveLength(0);
   });
 
-  it('refreshes source_synced_at when sync_docs finds hash match (ADR-014)', () => {
+  it('syncDocs does not treat multi slice refs on one asset as skipped_invalid_anchor', async () => {
+    const rel = 'twice.md';
+    writeFileSync(join(tmpDir, rel), 'body');
+    repo.insertDocument({
+      doc_id: 'twice-slice',
+      title: 'T',
+      kind: 'guideline',
+      content: 'x',
+      content_hash: hash('x'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([
+        { asset_path: rel, anchor_type: 'section', anchor_value: '## A' },
+        { asset_path: rel, anchor_type: 'lines', anchor_value: '1-2' },
+      ]),
+    });
+
+    const result = await service.syncDocs({ dryRun: true }, 'admin');
+    expect(result.skipped_invalid_anchor).not.toContain('twice-slice');
+  });
+
+  it('does not whole-file hash-sync a single section anchor ref (015-10)', async () => {
+    const rel = 'slice.md';
+    const fileBody = '# Title\n\nintro\n\nfooter noise';
+    const sliceBody = '# Title\n\nintro';
+    writeFileSync(join(tmpDir, rel), fileBody);
+    repo.insertDocument({
+      doc_id: 'slice-doc',
+      title: 'Slice',
+      kind: 'guideline',
+      content: sliceBody,
+      content_hash: hash(sliceBody),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: rel, anchor_type: 'section', anchor_value: '# Title' }]),
+    });
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.proposals_created).toHaveLength(0);
+    expect(result.skipped_invalid_anchor).not.toContain('slice-doc');
+    expect(result.not_found).not.toContain('slice-doc');
+  });
+
+  it('whole-file sync_docs applies to single file anchor in source_refs_json without source_path', async () => {
+    writeFileSync(join(tmpDir, 'only.md'), 'original');
+    repo.insertDocument({
+      doc_id: 'refs-only',
+      title: 'Refs',
+      kind: 'guideline',
+      content: 'original',
+      content_hash: hash('original'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: 'only.md', anchor_type: 'file', anchor_value: '' }]),
+    });
+    writeFileSync(join(tmpDir, 'only.md'), 'updated');
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.proposals_created).toHaveLength(1);
+    const proposal = repo.getProposal(result.proposals_created[0]);
+    expect(JSON.parse(proposal!.payload).doc_id).toBe('refs-only');
+  });
+
+  it('whole-file sync_docs applies when file + slice refs share one asset (015-10)', async () => {
+    writeFileSync(join(tmpDir, 'mixed.md'), 'full body');
+    repo.insertDocument({
+      doc_id: 'file-plus-section',
+      title: 'M',
+      kind: 'guideline',
+      content: 'full body',
+      content_hash: hash('full body'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([
+        { asset_path: 'mixed.md', anchor_type: 'file', anchor_value: '' },
+        { asset_path: 'mixed.md', anchor_type: 'section', anchor_value: '## H' },
+      ]),
+    });
+    writeFileSync(join(tmpDir, 'mixed.md'), 'changed on disk');
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.skipped_invalid_anchor).not.toContain('file-plus-section');
+    expect(result.proposals_created.map((id) => JSON.parse(repo.getProposal(id)!.payload).doc_id as string)).toContain(
+      'file-plus-section',
+    );
+  });
+
+  it('does not whole-file hash-sync when source_path plus source_refs_json name two distinct assets', async () => {
+    writeFileSync(join(tmpDir, 'primary.md'), '# Doc\n\nHello.');
+    writeFileSync(join(tmpDir, 'secondary.md'), 'secondary');
+    const body = '# Doc\n\nHello.';
+    repo.insertDocument({
+      doc_id: 'dual-asset',
+      title: 'Dual',
+      kind: 'guideline',
+      content: body,
+      content_hash: hash(body),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: 'primary.md',
+      source_refs_json: JSON.stringify([{ asset_path: 'secondary.md', anchor_type: 'file', anchor_value: '' }]),
+    });
+
+    const result = await service.syncDocs({ dryRun: true }, 'admin');
+    expect(result.would_create_proposals ?? []).not.toContain('dual-asset');
+    expect(result.multi_source_doc_ids).toContain('dual-asset');
+  });
+
+  it('refreshes source_synced_at when sync_docs finds hash match (ADR-014)', async () => {
     writeFileSync(join(tmpDir, 'fresh.md'), 'same content');
     insertApprovedDoc('fresh-doc', 'same content', 'fresh.md');
     db.prepare(`UPDATE documents SET source_synced_at = ? WHERE doc_id = ?`).run(
@@ -1949,7 +2131,7 @@ describe('AegisService — syncDocs', () => {
       'fresh-doc',
     );
 
-    service.syncDocs({}, 'admin');
+    await service.syncDocs({}, 'admin');
 
     const row = db.prepare('SELECT source_synced_at FROM documents WHERE doc_id = ?').get('fresh-doc') as {
       source_synced_at: string;
@@ -1957,15 +2139,15 @@ describe('AegisService — syncDocs', () => {
     expect(new Date(row.source_synced_at).getUTCFullYear()).toBeGreaterThan(2000);
   });
 
-  it('reports not_found when source file is missing', () => {
+  it('reports not_found when source file is missing', async () => {
     insertApprovedDoc('missing-doc', 'content', 'nonexistent/file.md');
 
-    const result = service.syncDocs({}, 'admin');
+    const result = await service.syncDocs({}, 'admin');
     expect(result.not_found).toContain('missing-doc');
     expect(result.proposals_created).toHaveLength(0);
   });
 
-  it('skips file-anchored docs whose source_path fails resolveSourcePath (e.g. escapes root)', () => {
+  it('skips file-anchored docs whose source_path fails resolveSourcePath (e.g. escapes root)', async () => {
     repo.insertDocument({
       doc_id: 'bad-rel',
       title: 'Bad rel',
@@ -1976,14 +2158,15 @@ describe('AegisService — syncDocs', () => {
       ownership: 'file-anchored',
       template_origin: null,
       source_path: '../../../etc/passwd',
+      source_refs_json: null,
     });
 
-    const result = service.syncDocs({}, 'admin');
+    const result = await service.syncDocs({}, 'admin');
     expect(result.skipped_invalid_anchor).toContain('bad-rel');
     expect(result.proposals_created).toHaveLength(0);
   });
 
-  it('skips file-anchored docs with missing source_path without throwing', () => {
+  it('skips file-anchored docs with missing source_path without throwing', async () => {
     const contentHash = hash('body');
     repo.insertDocument({
       doc_id: 'corrupt-anchor',
@@ -1995,15 +2178,16 @@ describe('AegisService — syncDocs', () => {
       ownership: 'file-anchored',
       template_origin: null,
       source_path: 'x.md',
+      source_refs_json: null,
     });
     db.prepare('UPDATE documents SET source_path = NULL WHERE doc_id = ?').run('corrupt-anchor');
 
-    const result = service.syncDocs({}, 'admin');
+    const result = await service.syncDocs({}, 'admin');
     expect(result.skipped_invalid_anchor).toContain('corrupt-anchor');
     expect(result.proposals_created).toHaveLength(0);
   });
 
-  it('does not sync standalone docs even when source_path is set (ADR-010)', () => {
+  it('does not sync standalone docs even when source_path is set (ADR-010)', async () => {
     writeFileSync(join(tmpDir, 'solo.md'), 'a');
     repo.insertDocument({
       doc_id: 'standalone-sync-skip',
@@ -2015,15 +2199,16 @@ describe('AegisService — syncDocs', () => {
       ownership: 'standalone',
       template_origin: null,
       source_path: 'solo.md',
+      source_refs_json: null,
     });
     writeFileSync(join(tmpDir, 'solo.md'), 'changed on disk');
 
-    const result = service.syncDocs({}, 'admin');
+    const result = await service.syncDocs({}, 'admin');
     expect(result.checked).toBe(0);
     expect(result.proposals_created).toHaveLength(0);
   });
 
-  it('skips documents with pending update_doc proposals', () => {
+  it('skips documents with pending update_doc proposals', async () => {
     writeFileSync(join(tmpDir, 'pending.md'), 'original');
     insertApprovedDoc('pending-doc', 'original', 'pending.md');
     writeFileSync(join(tmpDir, 'pending.md'), 'changed');
@@ -2036,23 +2221,23 @@ describe('AegisService — syncDocs', () => {
       review_comment: null,
     });
 
-    const result = service.syncDocs({}, 'admin');
+    const result = await service.syncDocs({}, 'admin');
     expect(result.skipped_pending).toContain('pending-doc');
     expect(result.proposals_created).toHaveLength(0);
   });
 
-  it('marks sync observations as analyzed', () => {
+  it('marks sync observations as analyzed', async () => {
     writeFileSync(join(tmpDir, 'analyzed.md'), 'original');
     insertApprovedDoc('analyzed-doc', 'original', 'analyzed.md');
     writeFileSync(join(tmpDir, 'analyzed.md'), 'changed');
 
-    service.syncDocs({}, 'admin');
+    await service.syncDocs({}, 'admin');
 
     const unanalyzed = repo.getUnanalyzedObservations('document_import');
     expect(unanalyzed).toHaveLength(0);
   });
 
-  it('filters by doc_ids when specified', () => {
+  it('filters by doc_ids when specified', async () => {
     writeFileSync(join(tmpDir, 'a.md'), 'old-a');
     writeFileSync(join(tmpDir, 'b.md'), 'old-b');
     insertApprovedDoc('doc-a', 'old-a', 'a.md');
@@ -2060,17 +2245,17 @@ describe('AegisService — syncDocs', () => {
     writeFileSync(join(tmpDir, 'a.md'), 'new-a');
     writeFileSync(join(tmpDir, 'b.md'), 'new-b');
 
-    const result = service.syncDocs({ doc_ids: ['doc-a'] }, 'admin');
+    const result = await service.syncDocs({ doc_ids: ['doc-a'] }, 'admin');
     expect(result.checked).toBe(1);
     expect(result.proposals_created).toHaveLength(1);
   });
 
-  it('creates observation with full document_import contract payload', () => {
+  it('creates observation with full document_import contract payload', async () => {
     writeFileSync(join(tmpDir, 'contract.md'), 'original');
     insertApprovedDoc('contract-doc', 'original', 'contract.md');
     writeFileSync(join(tmpDir, 'contract.md'), 'new content');
 
-    service.syncDocs({}, 'admin');
+    await service.syncDocs({}, 'admin');
 
     const allObs = repo.getUnanalyzedObservations('document_import');
     expect(allObs).toHaveLength(0);
@@ -2088,18 +2273,18 @@ describe('AegisService — syncDocs', () => {
     expect(obsPayload.source_path).toBeTruthy();
   });
 
-  it('reject and re-sync creates new observation and proposal', () => {
+  it('reject and re-sync creates new observation and proposal', async () => {
     writeFileSync(join(tmpDir, 'reject.md'), 'original');
     insertApprovedDoc('reject-doc', 'original', 'reject.md');
     writeFileSync(join(tmpDir, 'reject.md'), 'v2');
 
-    const r1 = service.syncDocs({}, 'admin');
+    const r1 = await service.syncDocs({}, 'admin');
     expect(r1.proposals_created).toHaveLength(1);
 
     repo.rejectProposal(r1.proposals_created[0], 'not yet');
 
     writeFileSync(join(tmpDir, 'reject.md'), 'v3');
-    const r2 = service.syncDocs({}, 'admin');
+    const r2 = await service.syncDocs({}, 'admin');
     expect(r2.proposals_created).toHaveLength(1);
 
     const proposal = repo.getProposal(r2.proposals_created[0]);
@@ -2107,12 +2292,12 @@ describe('AegisService — syncDocs', () => {
     expect(payload.content).toBe('v3');
   });
 
-  it('dryRun reports would_create_proposals without proposals or observations', () => {
+  it('dryRun reports would_create_proposals without proposals or observations', async () => {
     writeFileSync(join(tmpDir, 'dry.md'), 'original');
     insertApprovedDoc('dry-doc', 'original', 'dry.md');
     writeFileSync(join(tmpDir, 'dry.md'), 'changed');
 
-    const result = service.syncDocs({ dryRun: true }, 'admin');
+    const result = await service.syncDocs({ dryRun: true }, 'admin');
     expect(result.dry_run).toBe(true);
     expect(result.would_create_proposals).toEqual(['dry-doc']);
     expect(result.proposals_created).toHaveLength(0);

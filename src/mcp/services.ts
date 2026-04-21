@@ -46,6 +46,13 @@ import {
 } from '../core/optimization/staleness.js';
 import { normalizeSourcePath, resolveSourcePath } from '../core/paths.js';
 import { ContextCompiler } from '../core/read/compiler.js';
+import {
+  normalizeSourceRefs,
+  parseSourceRefsJson,
+  primaryAssetPathForHashSync,
+  sourceRefCountFromDocument,
+  validateSourceRef,
+} from '../core/source-refs.js';
 import { listStaleFileAnchoredDocIds, SOURCE_SYNC_STALE_WARNING_DAYS } from '../core/source-sync-staleness.js';
 import type { Repository } from '../core/store/repository.js';
 import type { IntentTagger } from '../core/tagging/tagger.js';
@@ -62,6 +69,7 @@ import type {
   ObserveEvent,
   ProposalBundlePreflightResult,
   ProposalDraft,
+  SourceRef,
   StalenessDetectedPayload,
 } from '../core/types.js';
 
@@ -89,6 +97,9 @@ export interface MaintenanceRunResult {
     skipped_invalid_anchor: string[];
     dry_run?: boolean;
     would_create_proposals?: string[];
+    /** ADR-015 Task 015-10: docs with 2+ source refs (semantic staleness path, not hash sync). */
+    multi_source_doc_ids?: string[];
+    multi_source_staleness_observations?: number;
   };
   archive_observations: {
     eligible_count: number;
@@ -173,6 +184,40 @@ function maybeImportPlanFileAnchor(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * When `analyzeDoc({ file_path, source_refs })` splits into multiple units, each unit must still record
+ * the primary file as provenance alongside extra refs (015-10 / design doc §multi-source).
+ * Single-unit merges only when extra refs exist so plain `file_path` imports stay `source_path`-only.
+ */
+function mergeResolvedPrimaryIntoPlanRefs(
+  projectRoot: string,
+  repoRelPrimary: string | undefined,
+  suggestedUnitCount: number,
+  unit: { title: string },
+  normalizedPlanRefs: SourceRef[] | undefined,
+): SourceRef[] | undefined {
+  const base = repoRelPrimary?.trim();
+  if (!base) {
+    return normalizedPlanRefs;
+  }
+  const needsPrimary = suggestedUnitCount > 1 || (normalizedPlanRefs !== undefined && normalizedPlanRefs.length > 0);
+  if (!needsPrimary) {
+    return normalizedPlanRefs;
+  }
+
+  let primaryRow: SourceRef;
+  if (suggestedUnitCount <= 1) {
+    primaryRow = { asset_path: base, anchor_type: 'file', anchor_value: '' };
+  } else {
+    primaryRow = {
+      asset_path: base,
+      anchor_type: 'section',
+      anchor_value: `## ${unit.title.trim()}`,
+    };
+  }
+  return normalizeSourceRefs([primaryRow, ...(normalizedPlanRefs ?? [])], projectRoot);
 }
 
 /**
@@ -404,6 +449,18 @@ export class AegisService {
     const validKinds = ['guideline', 'pattern', 'constraint', 'template', 'reference'];
     if (typeof p.kind !== 'string' || !validKinds.includes(p.kind)) {
       throw new ObserveValidationError(`document_import: kind must be one of ${validKinds.join(', ')}`);
+    }
+    if (p.source_refs !== undefined) {
+      if (!Array.isArray(p.source_refs)) {
+        throw new ObserveValidationError('document_import: source_refs must be an array when provided');
+      }
+      for (let i = 0; i < p.source_refs.length; i++) {
+        try {
+          validateSourceRef(p.source_refs[i]);
+        } catch (e) {
+          throw new ObserveValidationError(`document_import: source_refs[${i}]: ${(e as Error).message}`);
+        }
+      }
     }
   }
 
@@ -641,7 +698,7 @@ export class AegisService {
       };
     }
 
-    const sync_docs = this.syncDocs({ dryRun }, surface);
+    const sync_docs = await this.syncDocs({ dryRun }, surface);
 
     const eligible_count = this.repo.countObservationsEligibleForArchive(archiveDays);
     let archive_observations: MaintenanceRunResult['archive_observations'];
@@ -910,6 +967,7 @@ export class AegisService {
       edge_hints?: EdgeSpec[];
       tags?: string[];
       source_path?: string;
+      source_refs?: SourceRef[];
     },
     surface: Surface,
   ): Promise<{
@@ -939,6 +997,10 @@ export class AegisService {
 
     if (!payload.content && !params.file_path) {
       throw new Error('Either content or file_path is required');
+    }
+
+    if (params.source_refs?.length) {
+      (payload as Record<string, unknown>).source_refs = normalizeSourceRefs(params.source_refs, this.projectRoot);
     }
 
     this.validateDocumentImportPayload(payload);
@@ -973,7 +1035,7 @@ export class AegisService {
    * ADR-015: deterministic import analysis (read-only). Returns an ImportPlan for review/editing before execute_import_plan.
    */
   analyzeDoc(
-    params: { content?: string; file_path?: string; source_label?: string | null },
+    params: { content?: string; file_path?: string; source_label?: string | null; source_refs?: SourceRef[] },
     surface: Surface,
   ): ImportPlan {
     this.assertAdmin('aegis_analyze_doc', surface);
@@ -1008,7 +1070,15 @@ export class AegisService {
       }
     }
 
-    return analyzeDocumentForImportPlan(this.repo, body, label, { resolved_source_path });
+    const normalizedRefs =
+      params.source_refs && params.source_refs.length > 0
+        ? normalizeSourceRefs(params.source_refs, this.projectRoot)
+        : undefined;
+
+    return analyzeDocumentForImportPlan(this.repo, body, label, {
+      resolved_source_path,
+      ...(normalizedRefs ? { source_refs: normalizedRefs } : {}),
+    });
   }
 
   /**
@@ -1016,7 +1086,12 @@ export class AegisService {
    */
   analyzeImportBatch(
     params: {
-      items: Array<{ content?: string; file_path?: string; source_label?: string | null }>;
+      items: Array<{
+        content?: string;
+        file_path?: string;
+        source_label?: string | null;
+        source_refs?: SourceRef[];
+      }>;
     },
     surface: Surface,
   ): BatchImportPlan {
@@ -1026,7 +1101,12 @@ export class AegisService {
       throw new Error('items must be a non-empty array');
     }
 
-    const inputs: Array<{ content: string; source_label: string | null; resolved_source_path: string | null }> = [];
+    const inputs: Array<{
+      content: string;
+      source_label: string | null;
+      resolved_source_path: string | null;
+      source_refs?: SourceRef[];
+    }> = [];
     for (const item of params.items) {
       let content = item.content;
       let source_label: string | null = item.source_label ?? null;
@@ -1051,7 +1131,11 @@ export class AegisService {
         throw new Error('Each item requires content or file_path');
       }
 
-      inputs.push({ content, source_label, resolved_source_path });
+      const row: (typeof inputs)[number] = { content, source_label, resolved_source_path };
+      if (item.source_refs?.length) {
+        row.source_refs = normalizeSourceRefs(item.source_refs, this.projectRoot);
+      }
+      inputs.push(row);
     }
 
     return analyzeImportBatch(this.repo, inputs);
@@ -1082,6 +1166,7 @@ export class AegisService {
       edge_hints: EdgeSpec[];
       tags: string[];
       source_path?: string;
+      source_refs?: SourceRef[];
     }> = [];
 
     if (params.import_plan != null && params.batch_plan != null) {
@@ -1099,8 +1184,16 @@ export class AegisService {
         }
       }
       const su = plan.suggested_units;
+      const planRefs = plan.source_refs?.length ? normalizeSourceRefs(plan.source_refs, this.projectRoot) : undefined;
       for (const u of su) {
         const anchorPath = maybeImportPlanFileAnchor(this.projectRoot, repoRelSourcePath, su.length, u.content_slice);
+        const mergedRefs = mergeResolvedPrimaryIntoPlanRefs(
+          this.projectRoot,
+          repoRelSourcePath,
+          su.length,
+          u,
+          planRefs,
+        );
         unitRows.push({
           doc_id: u.doc_id,
           title: u.title,
@@ -1109,6 +1202,7 @@ export class AegisService {
           edge_hints: u.edge_hints,
           tags: u.tags,
           ...(anchorPath ? { source_path: anchorPath } : {}),
+          ...(mergedRefs && mergedRefs.length > 0 ? { source_refs: mergedRefs } : {}),
         });
       }
     } else if (params.batch_plan != null) {
@@ -1123,12 +1217,20 @@ export class AegisService {
           }
         }
         const units = plan.suggested_units;
+        const planRefs = plan.source_refs?.length ? normalizeSourceRefs(plan.source_refs, this.projectRoot) : undefined;
         for (const u of units) {
           const anchorPath = maybeImportPlanFileAnchor(
             this.projectRoot,
             repoRelSourcePath,
             units.length,
             u.content_slice,
+          );
+          const mergedRefs = mergeResolvedPrimaryIntoPlanRefs(
+            this.projectRoot,
+            repoRelSourcePath,
+            units.length,
+            u,
+            planRefs,
           );
           unitRows.push({
             doc_id: u.doc_id,
@@ -1138,6 +1240,7 @@ export class AegisService {
             edge_hints: u.edge_hints,
             tags: u.tags,
             ...(anchorPath ? { source_path: anchorPath } : {}),
+            ...(mergedRefs && mergedRefs.length > 0 ? { source_refs: mergedRefs } : {}),
           });
         }
       }
@@ -1192,6 +1295,9 @@ export class AegisService {
         };
         if (row.source_path) {
           payload.source_path = row.source_path;
+        }
+        if (row.source_refs?.length) {
+          payload.source_refs = row.source_refs;
         }
 
         this.validateDocumentImportPayload(payload);
@@ -1258,10 +1364,10 @@ export class AegisService {
    * When `dryRun` is true, no observations or proposals are written; `would_create_proposals`
    * lists doc_ids that would receive update_doc proposals.
    */
-  syncDocs(
+  async syncDocs(
     params: { doc_ids?: string[]; dryRun?: boolean },
     surface: Surface,
-  ): {
+  ): Promise<{
     checked: number;
     up_to_date: number;
     proposals_created: string[];
@@ -1270,7 +1376,9 @@ export class AegisService {
     skipped_invalid_anchor: string[];
     dry_run?: boolean;
     would_create_proposals?: string[];
-  } {
+    multi_source_doc_ids?: string[];
+    multi_source_staleness_observations?: number;
+  }> {
     this.assertAdmin('aegis_sync_docs', surface);
 
     let docs = this.repo.getFileAnchoredDocuments();
@@ -1278,6 +1386,9 @@ export class AegisService {
       const filterSet = new Set(params.doc_ids);
       docs = docs.filter((d) => filterSet.has(d.doc_id));
     }
+
+    const multiDocs = docs.filter((d) => sourceRefCountFromDocument(d) > 1);
+    const multiSourceDocIds = multiDocs.map((d) => d.doc_id);
 
     const up_to_date_ids: string[] = [];
     const not_found: string[] = [];
@@ -1289,13 +1400,30 @@ export class AegisService {
     const drafts: Array<{ draft: import('../core/types.js').ProposalDraft; obsId: string }> = [];
 
     for (const doc of docs) {
-      if (doc.source_path == null || String(doc.source_path).trim() === '') {
+      if (sourceRefCountFromDocument(doc) > 1) {
+        continue;
+      }
+
+      const primaryPath = primaryAssetPathForHashSync(doc);
+      if (primaryPath == null || primaryPath.trim() === '') {
+        const parsed = parseSourceRefsJson(doc.source_refs_json ?? null);
+        if (parsed.length === 1 && parsed[0]!.anchor_type !== 'file') {
+          continue;
+        }
+        if (
+          parsed.length > 1 &&
+          sourceRefCountFromDocument(doc) === 1 &&
+          new Set(parsed.map((r) => r.asset_path.trim())).size === 1 &&
+          parsed.every((r) => r.anchor_type !== 'file')
+        ) {
+          continue;
+        }
         skipped_invalid_anchor.push(doc.doc_id);
         continue;
       }
       let absPath: string;
       try {
-        absPath = resolveSourcePath(doc.source_path, this.projectRoot);
+        absPath = resolveSourcePath(primaryPath, this.projectRoot);
       } catch {
         skipped_invalid_anchor.push(doc.doc_id);
         continue;
@@ -1369,7 +1497,40 @@ export class AegisService {
         skipped_invalid_anchor,
         dry_run: true,
         would_create_proposals,
+        multi_source_doc_ids: multiSourceDocIds,
       };
+    }
+
+    let multi_source_staleness_observations = 0;
+    if (multiDocs.length > 0) {
+      const semantic_scan = collectSemanticStalenessFindings({
+        docs: multiDocs,
+        edges: this.repo.getApprovedEdges(),
+        projectRoot: this.projectRoot,
+        getBaseline: (id) => this.repo.getStalenessBaseline(id),
+        persistLevel3Baselines: true,
+      });
+      for (const u of semantic_scan.baselineUpserts) {
+        this.repo.upsertStalenessBaseline(u.doc_id, u.fingerprint_json);
+      }
+      const insertedObsIds: string[] = [];
+      for (const f of semantic_scan.findings) {
+        const payloadStr = JSON.stringify(f);
+        if (this.repo.hasUnarchivedObservationWithExactPayload('staleness_detected', payloadStr)) continue;
+        const oid = uuidv4();
+        this.repo.insertObservation({
+          observation_id: oid,
+          event_type: 'staleness_detected',
+          payload: payloadStr,
+          related_compile_id: null,
+          related_snapshot_id: null,
+        });
+        insertedObsIds.push(oid);
+        multi_source_staleness_observations++;
+      }
+      if (insertedObsIds.length > 0) {
+        await this.processObservations('staleness_detected', surface);
+      }
     }
 
     if (up_to_date_ids.length > 0) {
@@ -1384,6 +1545,8 @@ export class AegisService {
         skipped_pending,
         not_found,
         skipped_invalid_anchor,
+        multi_source_doc_ids: multiSourceDocIds,
+        multi_source_staleness_observations,
       };
     }
 
@@ -1414,6 +1577,8 @@ export class AegisService {
         skipped_pending,
         not_found,
         skipped_invalid_anchor,
+        multi_source_doc_ids: multiSourceDocIds,
+        multi_source_staleness_observations,
       };
     } catch (err) {
       this.repo.resetObservationsAnalyzed(observationIds);

@@ -65,6 +65,8 @@ export {
   findRenameCandidatePath,
   fingerprintEdgeLinkedArtifacts,
   linkedPathsForDoc,
+  linkedPathsForMultiSourceStaleness,
+  linkedPathsFromSourceRefs,
   listRepoRelativeFiles,
   SEMANTIC_STALENESS_ALGORITHM_VERSION,
   type SemanticStalenessScanInput,
