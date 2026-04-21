@@ -46,6 +46,7 @@ import {
 } from '../core/optimization/staleness.js';
 import { normalizeSourcePath, resolveSourcePath } from '../core/paths.js';
 import { ContextCompiler } from '../core/read/compiler.js';
+import { buildWorkspaceStatus } from '../core/read/workspace-status.js';
 import {
   normalizeSourceRefs,
   parseSourceRefsJson,
@@ -71,6 +72,7 @@ import type {
   ProposalDraft,
   SourceRef,
   StalenessDetectedPayload,
+  WorkspaceStatus,
 } from '../core/types.js';
 
 export type Surface = 'agent' | 'admin';
@@ -475,6 +477,14 @@ export class AegisService {
    * separately for snapshot alignment; the hash intentionally reflects tags only.
    * Read-only on both surfaces (INV-6).
    */
+  /**
+   * ADR-015 Task 015-11: read-only workspace snapshot (compile_log + observations + proposals).
+   * Available on agent and admin surfaces — does not mutate Canonical Knowledge.
+   */
+  workspaceStatus(_surface: Surface, opts?: { window_hours?: number }): WorkspaceStatus {
+    return buildWorkspaceStatus(this.repo, opts);
+  }
+
   getKnownTags(_surface: Surface): { tags: string[]; knowledge_version: number; tag_catalog_hash: string } {
     const tags = this.repo.getAllTags();
     const knowledge_version = this.repo.getKnowledgeMeta().current_version;

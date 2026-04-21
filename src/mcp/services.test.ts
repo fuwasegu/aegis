@@ -167,6 +167,13 @@ describe('AegisService — Surface Authorization', () => {
     expect(result.knowledge_version).toBe(0);
     expect(result.tag_catalog_hash).toHaveLength(64);
   });
+
+  it('agent surface can call workspace_status (read-only)', () => {
+    const ws = service.workspaceStatus('agent');
+    expect(ws.pending_proposal_count).toBe(0);
+    expect(ws.window_hours).toBe(24);
+    expect(ws.unresolved_misses).toEqual([]);
+  });
 });
 
 describe('AegisService — getKnownTags', () => {
@@ -2440,6 +2447,7 @@ describe('AegisService — maintenance', () => {
         base_doc_ids: JSON.stringify(['d1', 'd2', 'd3']),
         expanded_doc_ids: null,
         audit_meta: null,
+        agent_id: null,
       });
     }
 
@@ -2746,6 +2754,40 @@ describe('aegis_get_known_tags — MCP wiring', () => {
   });
 });
 
+describe('aegis_workspace_status — MCP wiring', () => {
+  it('is registered on agent and admin surfaces and returns JSON', async () => {
+    const db = await createInMemoryDatabase();
+    const repo = new Repository(db);
+    const service = new AegisService(repo, TEMPLATES_ROOT);
+
+    for (const surface of ['agent', 'admin'] as const) {
+      const server = createAegisServer(service, surface);
+      const client = new Client({ name: 'ws-client', version: '0.0.1' });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+
+      const tools = await client.listTools();
+      expect(tools.tools.some((t) => t.name === 'aegis_workspace_status')).toBe(true);
+
+      const response = await client.callTool({
+        name: 'aegis_workspace_status',
+        arguments: { window_hours: 12 },
+      });
+      expect(response.isError).not.toBe(true);
+      const content = response.content as Array<{ type: string; text: string }>;
+      const body = JSON.parse(content[0].text) as {
+        window_hours: number;
+        pending_proposal_count: number;
+      };
+      expect(body.window_hours).toBe(12);
+      expect(body.pending_proposal_count).toBe(0);
+
+      await client.close();
+      await server.close();
+    }
+  });
+});
+
 // ============================================================
 // getStats / aegis_get_stats (ADR-012 / ADR-014)
 // ============================================================
@@ -2830,6 +2872,7 @@ describe('AegisService — getStats', () => {
       base_doc_ids: JSON.stringify(['doc-a', 'doc-b', 'doc-a']),
       expanded_doc_ids: JSON.stringify(['exp-z', 'doc-a']),
       audit_meta: JSON.stringify(audit),
+      agent_id: null,
     });
     repo.insertDocument({
       doc_id: 'ghost-doc',

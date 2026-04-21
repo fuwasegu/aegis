@@ -239,6 +239,8 @@ export interface CompileLog {
   base_doc_ids: string; // JSON
   expanded_doc_ids: string | null; // JSON
   audit_meta: string | null; // JSON: CompileAuditMeta | null
+  /** Optional self-reported client id; does not affect P-1 routing (ADR-015 Task 015-11). */
+  agent_id: string | null;
   created_at: string;
 }
 
@@ -295,6 +297,22 @@ export interface CompileRequest {
   max_inline_bytes?: number;
   /** Content delivery mode. Default: 'auto' (source_path docs deferred, small docs inline). */
   content_mode?: ContentMode;
+  /**
+   * Optional client self-id for multi-agent workspace visibility (logged in `compile_log.agent_id`;
+   * omitted from deterministic compile output; does not affect P-1).
+   */
+  agent_id?: string;
+}
+
+/** Read model: multi-agent workspace snapshot (ADR-015 Task 015-11). Does not affect compile determinism. */
+export interface WorkspaceStatus {
+  /** Rolling window used for `active_regions` (hours). */
+  window_hours: number;
+  /** ISO timestamp: compiles with `created_at >= since` are included in `active_regions`. */
+  since: string;
+  active_regions: Array<{ path_pattern: string; last_compiled: string; agent_id?: string }>;
+  unresolved_misses: Array<{ target_files: string[]; missing_doc?: string; count: number }>;
+  pending_proposal_count: number;
 }
 
 export type DeliveryType = 'inline' | 'deferred' | 'omitted';

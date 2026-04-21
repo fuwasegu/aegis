@@ -14,6 +14,8 @@ export { migration010, upAddCoChangeCache } from './010_add_co_change_cache.js';
 export { migration011, upCoChangeKbFingerprint } from './011_co_change_kb_fingerprint.js';
 export { migration012, upCoChangeCodeTotals } from './012_co_change_code_totals.js';
 export { migration013, upAddSourceRefsJson } from './013_add_source_refs_json.js';
+export { migration014, upCompileLogAgentId } from './014_compile_log_agent_id.js';
+export { migration015, upWorkspaceStatusIndexes } from './015_workspace_status_indexes.js';
 export { ensureSchemaMigrationsTable, runMigrations } from './runner.js';
 export type { Migration } from './types.js';
 
@@ -30,6 +32,8 @@ import { migration010 } from './010_add_co_change_cache.js';
 import { migration011 } from './011_co_change_kb_fingerprint.js';
 import { migration012 } from './012_co_change_code_totals.js';
 import { migration013 } from './013_add_source_refs_json.js';
+import { migration014 } from './014_compile_log_agent_id.js';
+import { migration015 } from './015_workspace_status_indexes.js';
 
 /** Registered migrations in version order (append new migrations here). */
 export const ALL_MIGRATIONS = [
@@ -46,4 +50,6 @@ export const ALL_MIGRATIONS = [
   migration011,
   migration012,
   migration013,
+  migration014,
+  migration015,
 ];

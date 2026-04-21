@@ -13,7 +13,7 @@ import {
 } from './index.js';
 
 describe('schema migrations (ADR-013)', () => {
-  it('records migrations 001–013 on first open', async () => {
+  it('records migrations 001–015 on first open', async () => {
     const db = await createInMemoryDatabase();
     const rows = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all() as {
       version: number;
@@ -33,6 +33,8 @@ describe('schema migrations (ADR-013)', () => {
       { version: 11, name: 'co_change_kb_fingerprint' },
       { version: 12, name: 'co_change_code_totals' },
       { version: 13, name: 'add_source_refs_json' },
+      { version: 14, name: 'compile_log_agent_id' },
+      { version: 15, name: 'workspace_status_indexes' },
     ]);
   });
 
@@ -42,14 +44,19 @@ describe('schema migrations (ADR-013)', () => {
     const rows = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as {
       version: number;
     }[];
-    expect(rows).toHaveLength(13);
-    expect(rows.map((r) => r.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+    expect(rows).toHaveLength(15);
+    expect(rows.map((r) => r.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
   });
 
-  it('applies baseline DDL including compile_log.audit_meta', async () => {
+  it('applies baseline DDL including compile_log.audit_meta and agent_id', async () => {
     const db = await createInMemoryDatabase();
     const cols = db.pragma('table_info(compile_log)') as Array<{ name: string }>;
     expect(cols.some((c) => c.name === 'audit_meta')).toBe(true);
+    expect(cols.some((c) => c.name === 'agent_id')).toBe(true);
+    const idx = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='compile_log'")
+      .all() as Array<{ name: string }>;
+    expect(idx.some((r) => r.name === 'idx_compile_log_created_at')).toBe(true);
   });
 
   it('upAddAuditMeta adds audit_meta when compile_log predates the column', async () => {

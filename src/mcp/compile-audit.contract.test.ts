@@ -85,6 +85,13 @@ describe('compile_audit contract — AegisService (012-04)', () => {
     service = new AegisService(repo, TEMPLATES_ROOT);
   });
 
+  it('compileContext persists agent_id on compile_log (ADR-015 Task 015-11)', async () => {
+    bootstrapMinimalDoc(repo);
+    const compiled = await service.compileContext({ target_files: ['src/a.ts'], agent_id: 'cursor-agent-1' }, 'agent');
+    const log = repo.getCompileLog(compiled.compile_id);
+    expect(log?.agent_id).toBe('cursor-agent-1');
+  });
+
   it('getCompileAudit: legacy row (audit_meta null) returns null extended fields on agent surface', () => {
     bootstrapMinimalDoc(repo);
     const snapshot = repo.getCurrentSnapshot()!;
@@ -95,6 +102,7 @@ describe('compile_audit contract — AegisService (012-04)', () => {
       base_doc_ids: '["d1"]',
       expanded_doc_ids: null,
       audit_meta: null,
+      agent_id: null,
     });
 
     const audit = service.getCompileAudit('legacy-compile', 'agent');

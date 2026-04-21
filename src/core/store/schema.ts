@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS compile_log (
     base_doc_ids    TEXT NOT NULL,
     expanded_doc_ids TEXT,
     audit_meta        TEXT,
+    agent_id          TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -203,4 +204,6 @@ CREATE INDEX IF NOT EXISTS idx_observations_type   ON observations(event_type);
 CREATE INDEX IF NOT EXISTS idx_observations_snap   ON observations(related_snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_proposals_status    ON proposals(status);
 CREATE INDEX IF NOT EXISTS idx_tag_mappings_doc    ON tag_mappings(doc_id);
+CREATE INDEX IF NOT EXISTS idx_compile_log_created_at ON compile_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_proposal_evidence_observation ON proposal_evidence(observation_id);
 `;
