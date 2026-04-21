@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS documents (
                     CHECK (ownership IN ('file-anchored', 'standalone', 'derived')),
     template_origin TEXT,
     source_path     TEXT,
+    source_refs_json TEXT,
     source_synced_at TEXT,
     replaced_by_doc_id TEXT REFERENCES documents(doc_id),
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

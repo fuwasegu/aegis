@@ -13,7 +13,7 @@ import {
 } from './index.js';
 
 describe('schema migrations (ADR-013)', () => {
-  it('records migrations 001–012 on first open', async () => {
+  it('records migrations 001–013 on first open', async () => {
     const db = await createInMemoryDatabase();
     const rows = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all() as {
       version: number;
@@ -32,6 +32,7 @@ describe('schema migrations (ADR-013)', () => {
       { version: 10, name: 'add_co_change_cache' },
       { version: 11, name: 'co_change_kb_fingerprint' },
       { version: 12, name: 'co_change_code_totals' },
+      { version: 13, name: 'add_source_refs_json' },
     ]);
   });
 
@@ -41,8 +42,8 @@ describe('schema migrations (ADR-013)', () => {
     const rows = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as {
       version: number;
     }[];
-    expect(rows).toHaveLength(12);
-    expect(rows.map((r) => r.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(rows).toHaveLength(13);
+    expect(rows.map((r) => r.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
   });
 
   it('applies baseline DDL including compile_log.audit_meta', async () => {

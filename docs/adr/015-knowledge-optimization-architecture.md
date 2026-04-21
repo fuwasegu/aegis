@@ -150,10 +150,14 @@ aegis_execute_import_plan (新 admin tool — generates proposals)
 ```typescript
 interface SourceRef {
   asset_path: string;
-  anchor_type: 'file' | 'heading_path' | 'line_range' | 'symbol_id';
-  anchor_value?: string;
+  anchor_type: 'file' | 'section' | 'lines';
+  anchor_value: string;
 }
 ```
+
+`anchor_type` / `anchor_value` の意味は MCP `aegis_import_doc`・`aegis_analyze_doc` の入力と SQLite に保存される JSON と一致する（検証は `validateSourceRef`）。設計ドラフトで検討していた `heading_path` / `line_range` / `symbol_id` の別名は採用せず、`section`（見出し）と `lines`（行範囲）に寄せた。
+
+multi-source 時、Level-3 意味的陳腐化の fingerprint 対象パスは `source_refs_json` の `asset_path` に加え、併存する legacy `source_path` も和集合に含める（`linkedPathsForMultiSourceStaleness`）。`file_path` + 追加 `source_refs` 取り込みで主ファイルの更新が取りこぼされないようにする。
 
 Phase 1 では `documents` テーブルに `source_refs_json` TEXT カラムを追加。
 `source_assets` テーブルへの正式分離は実需証明後。

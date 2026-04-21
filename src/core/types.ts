@@ -11,6 +11,16 @@ export type DocumentKind = 'guideline' | 'pattern' | 'constraint' | 'template' |
 export type EntityStatus = 'draft' | 'proposed' | 'approved' | 'deprecated';
 export type DocOwnership = 'file-anchored' | 'standalone' | 'derived';
 
+/** ADR-015 Task 015-10: anchor within `asset_path` (file = whole file). */
+export type SourceAnchorType = 'file' | 'section' | 'lines';
+
+/** ADR-015 Task 015-10: one repo asset contributing to a delivery unit. */
+export interface SourceRef {
+  asset_path: string;
+  anchor_type: SourceAnchorType;
+  anchor_value: string;
+}
+
 export interface Document {
   doc_id: string;
   title: string;
@@ -21,6 +31,11 @@ export interface Document {
   ownership: DocOwnership;
   template_origin: string | null;
   source_path: string | null;
+  /**
+   * ADR-015 Task 015-10: JSON array of {@link SourceRef} for N:M mapping.
+   * When non-empty, overrides legacy 1:1 `source_path`-only semantics for sync routing.
+   */
+  source_refs_json: string | null;
   /**
    * ADR-014: last time the on-disk `source_path` file was verified to match Canonical `content_hash`
    * (sync_docs hash match, or new_doc approve with `projectRoot` + same-hash re-read).

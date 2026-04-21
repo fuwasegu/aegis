@@ -12,9 +12,10 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import picomatch from 'picomatch';
 import { resolveSourcePath } from '../paths.js';
+import { parseSourceRefsJson, sourceRefCountFromDocument } from '../source-refs.js';
 import type { Document, Edge, StalenessDetectedPayload } from '../types.js';
 
-export const SEMANTIC_STALENESS_ALGORITHM_VERSION = '015-07-1' as const;
+export const SEMANTIC_STALENESS_ALGORITHM_VERSION = '015-10-2' as const;
 
 const SKIP_DIR_NAMES = new Set([
   '.git',
@@ -165,6 +166,25 @@ function fingerprintLinkedFile(projectRoot: string, relPosix: string): string | 
   }
 }
 
+/** Repo-relative posix paths declared in `source_refs_json` (dedupe + sort). */
+export function linkedPathsFromSourceRefs(doc: Pick<Document, 'source_refs_json'>): string[] {
+  const refs = parseSourceRefsJson(doc.source_refs_json ?? null);
+  const paths = refs.map((r) => toPosix(r.asset_path.trim())).filter((p) => p.length > 0);
+  return [...new Set(paths)].sort((a, b) => a.localeCompare(b));
+}
+
+/** Multi-source Level-3 paths: refs plus legacy `source_path` when it names another distinct asset (015-10). */
+export function linkedPathsForMultiSourceStaleness(doc: Pick<Document, 'source_path' | 'source_refs_json'>): string[] {
+  const fromRefs = linkedPathsFromSourceRefs(doc);
+  const raw = doc.source_path != null ? String(doc.source_path).trim() : '';
+  if (raw === '') return fromRefs;
+  return mergeSortedUniquePaths(fromRefs, [toPosix(raw)]);
+}
+
+function mergeSortedUniquePaths(a: string[], b: string[]): string[] {
+  return [...new Set([...a, ...b])].sort((x, y) => x.localeCompare(y));
+}
+
 /** Paths under project matching path_requires edges that target docId (approved path edges only). */
 export function linkedPathsForDoc(docId: string, edges: Edge[], sortedRelFiles: string[]): string[] {
   const matchers: Array<ReturnType<typeof picomatch>> = [];
@@ -268,7 +288,10 @@ export function collectSemanticStalenessFindings(input: SemanticStalenessScanInp
     const isAnchored =
       doc.ownership === 'file-anchored' && typeof doc.source_path === 'string' && doc.source_path.trim().length > 0;
 
-    if (isAnchored) {
+    /** Merged delivery units: single-file hash vs canonical is meaningless (015-10). */
+    const skipLevel1HashVsCanonical = sourceRefCountFromDocument(doc) > 1;
+
+    if (isAnchored && !skipLevel1HashVsCanonical) {
       let absPath: string | undefined;
       try {
         absPath = resolveSourcePath(doc.source_path!.trim(), input.projectRoot);
@@ -330,9 +353,16 @@ export function collectSemanticStalenessFindings(input: SemanticStalenessScanInp
       }
     }
 
-    if (!edgeTargets.has(doc.doc_id)) continue;
+    const multiSource = sourceRefCountFromDocument(doc) > 1;
+    const pathRequiresTarget = edgeTargets.has(doc.doc_id);
+    const refPathsForMulti = linkedPathsForMultiSourceStaleness(doc);
+    if (!pathRequiresTarget && !(multiSource && refPathsForMulti.length > 0)) continue;
 
-    const linked = linkedPathsForDoc(doc.doc_id, input.edges, sortedFiles);
+    const linked = multiSource
+      ? mergeSortedUniquePaths(linkedPathsForDoc(doc.doc_id, input.edges, sortedFiles), refPathsForMulti)
+      : linkedPathsForDoc(doc.doc_id, input.edges, sortedFiles);
+
+    if (linked.length === 0) continue;
     const currentMap = fingerprintEdgeLinkedArtifacts(input.projectRoot, linked);
     const serialized = stableStringifyFingerprints(currentMap);
 

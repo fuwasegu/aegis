@@ -74,6 +74,16 @@ const WORKFLOW_GUIDE = `# Aegis Workflow Guide
 - **Deterministic context**: Same inputs always produce the same compiled context
 `;
 
+const sourceRefSchema = z
+  .object({
+    asset_path: z.string(),
+    anchor_type: z.enum(['file', 'section', 'lines']),
+    anchor_value: z.string().optional().default(''),
+  })
+  .refine((r) => r.anchor_type === 'file' || (typeof r.anchor_value === 'string' && r.anchor_value.trim() !== ''), {
+    message: 'anchor_value is required when anchor_type is section or lines',
+  });
+
 export function createAegisServer(service: AegisService, surface: Surface): McpServer {
   const server = new McpServer({
     name: `aegis-${surface}`,
@@ -425,6 +435,12 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
           .string()
           .optional()
           .describe('Original file path (provenance metadata). Auto-set from file_path if not provided.'),
+        source_refs: z
+          .array(sourceRefSchema)
+          .optional()
+          .describe(
+            'ADR-015 §015-10: repo asset references for N:M mapping (stored as documents.source_refs_json on approve).',
+          ),
       },
       async (params) => {
         try {
@@ -449,6 +465,10 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
           .describe(
             'Optional provenance label only — never stored as Canonical source_path (use file_path if you need file anchoring).',
           ),
+        source_refs: z
+          .array(sourceRefSchema)
+          .optional()
+          .describe('Optional refs echoed on ImportPlan for execute_import_plan (015-10).'),
       },
       async (params) => {
         try {
@@ -470,6 +490,7 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
               content: z.string().optional(),
               file_path: z.string().optional(),
               source_label: z.string().nullable().optional(),
+              source_refs: z.array(sourceRefSchema).optional(),
             }),
           )
           .describe('Non-empty list of documents to analyze (each needs content or file_path).'),
@@ -581,7 +602,7 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
       },
       async (params) => {
         try {
-          const result = service.syncDocs({ doc_ids: params.doc_ids }, surface);
+          const result = await service.syncDocs({ doc_ids: params.doc_ids }, surface);
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         } catch (e: any) {
           return { content: [{ type: 'text', text: `Sync failed: ${e.message}` }], isError: true };

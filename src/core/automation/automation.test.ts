@@ -1822,6 +1822,66 @@ describe('DocumentImportAnalyzer', () => {
     expect(result.drafts[0].payload.title).toBe('Existing Updated');
   });
 
+  it('clears source_refs_json when update supplies source_path without source_refs (015-10)', async () => {
+    repo.insertDocument({
+      doc_id: 'had-refs',
+      title: 'T',
+      kind: 'guideline',
+      content: 'body',
+      content_hash: 'h',
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: 'old.md',
+      source_refs_json: JSON.stringify([{ asset_path: 'x.md', anchor_type: 'file', anchor_value: '' }]),
+    });
+
+    const ctx = makeContext({
+      content: 'body2',
+      doc_id: 'had-refs',
+      title: 'T',
+      kind: 'guideline',
+      source_path: 'new.md',
+    });
+
+    const result = await analyzer.analyze([ctx]);
+    const payload = result.drafts[0].payload as Record<string, unknown>;
+    expect(payload.source_path).toBe('new.md');
+    expect(payload.source_refs_json).toBeNull();
+  });
+
+  it('clears legacy source_path on update_doc when source_refs are set without source_path (015-10)', async () => {
+    repo.insertDocument({
+      doc_id: 'legacy-then-refs',
+      title: 'T',
+      kind: 'guideline',
+      content: 'body',
+      content_hash: 'oldhash',
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: 'legacy.md',
+      source_refs_json: null,
+    });
+
+    const ctx = makeContext({
+      content: 'body2',
+      doc_id: 'legacy-then-refs',
+      title: 'T',
+      kind: 'guideline',
+      source_refs: [{ asset_path: 'a.md', anchor_type: 'file', anchor_value: '' }],
+    });
+
+    const result = await analyzer.analyze([ctx]);
+
+    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts[0].proposal_type).toBe('update_doc');
+    const payload = result.drafts[0].payload as Record<string, unknown>;
+    expect(payload.source_path).toBeNull();
+    expect(payload.ownership).toBe('file-anchored');
+    expect(typeof payload.source_refs_json).toBe('string');
+  });
+
   it('sets ownership file-anchored on update_doc when source_path is provided', async () => {
     repo.insertDocument({
       doc_id: 'anchor-later',

@@ -7,6 +7,11 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { normalizeSourcePath, resolveSourcePath } from '../paths.js';
 import {
+  normalizeStoredSourceRefsPayloadStrict,
+  parseSourceRefsJson,
+  primaryAssetPathForHashSync,
+} from '../source-refs.js';
+import {
   type CanonicalVersion,
   type CoChangePatternRow,
   type CompileLog,
@@ -44,12 +49,17 @@ function normalizeDocOwnership(raw: unknown): DocOwnership {
   return raw as DocOwnership;
 }
 
-/** ADR-010: file-anchored docs participate in sync_docs and require a concrete source_path. */
-function assertOwnershipSourcePathInvariant(ownership: DocOwnership, sourcePath: string | null | undefined): void {
-  if (ownership === 'file-anchored') {
-    if (sourcePath == null || String(sourcePath).trim() === '') {
-      throw new Error("Invalid document state: ownership 'file-anchored' requires a non-empty source_path");
-    }
+/** ADR-010 + ADR-015 §015-10: file-anchored docs need `source_path` and/or `source_refs_json`. */
+function assertOwnershipSourcePathInvariant(
+  ownership: DocOwnership,
+  sourcePath: string | null | undefined,
+  sourceRefsJson?: string | null,
+): void {
+  if (ownership !== 'file-anchored') return;
+  const hasPath = sourcePath != null && String(sourcePath).trim() !== '';
+  const hasRefs = parseSourceRefsJson(sourceRefsJson ?? null).length > 0;
+  if (!hasPath && !hasRefs) {
+    throw new Error("Invalid document state: ownership 'file-anchored' requires source_path or source_refs_json");
   }
 }
 
@@ -109,11 +119,12 @@ export class Repository {
   insertDocument(doc: Omit<Document, 'created_at' | 'updated_at'>): void {
     const ownership = normalizeDocOwnership(doc.ownership ?? 'standalone');
     const sourcePath = doc.source_path ?? null;
-    assertOwnershipSourcePathInvariant(ownership, sourcePath);
+    const sourceRefsJson = doc.source_refs_json ?? null;
+    assertOwnershipSourcePathInvariant(ownership, sourcePath, sourceRefsJson);
     this.db
       .prepare(`
-      INSERT INTO documents (doc_id, title, kind, content, content_hash, status, ownership, template_origin, source_path, source_synced_at, replaced_by_doc_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO documents (doc_id, title, kind, content, content_hash, status, ownership, template_origin, source_path, source_refs_json, source_synced_at, replaced_by_doc_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
       .run(
         doc.doc_id,
@@ -125,6 +136,7 @@ export class Repository {
         ownership,
         doc.template_origin ?? null,
         sourcePath,
+        sourceRefsJson,
         doc.source_synced_at ?? null,
         doc.replaced_by_doc_id ?? null,
       );
@@ -910,7 +922,7 @@ export class Repository {
             'Provide actual content via modifications when approving.',
         );
       }
-      this._applyUpdateDoc(payload as Parameters<Repository['_applyUpdateDoc']>[0]);
+      this._applyUpdateDoc(payload as Parameters<Repository['_applyUpdateDoc']>[0], projectRoot);
       if (Array.isArray(payload.tags) && payload.tags.length > 0 && payload.doc_id) {
         for (const tag of payload.tags as string[]) {
           this.upsertTagMapping({ tag, doc_id: payload.doc_id as string, confidence: 1.0, source: 'manual' });
@@ -1226,8 +1238,8 @@ export class Repository {
     modifications: Record<string, unknown>,
   ): void {
     const allowedFields: Record<string, string[]> = {
-      new_doc: ['title', 'content', 'kind', 'source_path', 'ownership'],
-      update_doc: ['title', 'content', 'source_path', 'ownership'],
+      new_doc: ['title', 'content', 'kind', 'source_path', 'source_refs_json', 'ownership'],
+      update_doc: ['title', 'content', 'source_path', 'source_refs_json', 'ownership'],
       add_edge: ['priority', 'source_value', 'target_doc_id'],
       retarget_edge: ['source_value', 'target_doc_id'],
       remove_edge: [],
@@ -1264,6 +1276,9 @@ export class Repository {
       const sp = payload.source_path;
       if (typeof sp === 'string' && sp.length > 0) {
         payload.source_path = norm(sp);
+      }
+      if ('source_refs_json' in payload && payload.source_refs_json !== undefined) {
+        payload.source_refs_json = normalizeStoredSourceRefsPayloadStrict(payload.source_refs_json, projectRoot);
       }
       return;
     }
@@ -1462,18 +1477,24 @@ export class Repository {
   /**
    * ADR-014: `source_synced_at` means on-disk source was verified (hash == approved content_hash).
    * Approve-time check avoids marking "verified" when the file changed during proposal pending.
+   * Uses {@link primaryAssetPathForHashSync} (015-10) so refs-only whole-file anchors align with
+   * `sync_docs` / source stale checks; no primary whole-file path → cannot mark verified.
    */
   private _sourceSyncedAtIfApproveMatchesDisk(
     ownership: DocOwnership,
-    sourcePath: string | null,
+    doc: Pick<Document, 'source_path' | 'source_refs_json'>,
     contentHash: string,
     projectRoot: string | undefined,
   ): string | null {
-    if (ownership !== 'file-anchored' || !sourcePath?.trim() || !projectRoot) {
+    if (ownership !== 'file-anchored' || !projectRoot) {
+      return null;
+    }
+    const effectivePath = primaryAssetPathForHashSync(doc);
+    if (!effectivePath?.trim()) {
       return null;
     }
     try {
-      const abs = resolveSourcePath(sourcePath, projectRoot);
+      const abs = resolveSourcePath(effectivePath, projectRoot);
       if (!existsSync(abs)) {
         return null;
       }
@@ -1487,16 +1508,19 @@ export class Repository {
 
   private _applyNewDoc(payload: Omit<Document, 'created_at' | 'updated_at' | 'status'>, projectRoot?: string): void {
     const sourcePath = payload.source_path ?? null;
+    const sourceRefsJson = payload.source_refs_json ?? null;
     let ownership: DocOwnership;
     if (payload.ownership !== undefined && payload.ownership !== null) {
       ownership = normalizeDocOwnership(payload.ownership);
     } else {
-      ownership = sourcePath ? 'file-anchored' : 'standalone';
+      const hasAnchoring =
+        !!(sourcePath && String(sourcePath).trim() !== '') || parseSourceRefsJson(sourceRefsJson).length > 0;
+      ownership = hasAnchoring ? 'file-anchored' : 'standalone';
     }
-    assertOwnershipSourcePathInvariant(ownership, sourcePath);
+    assertOwnershipSourcePathInvariant(ownership, sourcePath, sourceRefsJson);
     const sourceSyncedAt = this._sourceSyncedAtIfApproveMatchesDisk(
       ownership,
-      sourcePath,
+      { source_path: sourcePath, source_refs_json: sourceRefsJson },
       payload.content_hash,
       projectRoot,
     );
@@ -1505,30 +1529,37 @@ export class Repository {
       ownership,
       template_origin: payload.template_origin ?? null,
       source_path: sourcePath,
+      source_refs_json: sourceRefsJson,
       status: 'approved',
       source_synced_at: sourceSyncedAt,
     });
   }
 
-  private _applyUpdateDoc(payload: {
-    doc_id: string;
-    content: string;
-    content_hash: string;
-    title?: string;
-    source_path?: string | null;
-    ownership?: string;
-  }): void {
+  private _applyUpdateDoc(
+    payload: {
+      doc_id: string;
+      content: string;
+      content_hash: string;
+      title?: string;
+      source_path?: string | null;
+      source_refs_json?: string | null;
+      ownership?: string;
+    },
+    projectRoot?: string,
+  ): void {
     const existing = this.getDocumentById(payload.doc_id);
     if (!existing) {
       throw new Error(`Cannot update document '${payload.doc_id}': not found`);
     }
 
     const mergedSourcePath = payload.source_path !== undefined ? payload.source_path : existing.source_path;
+    const mergedSourceRefsJson =
+      payload.source_refs_json !== undefined ? payload.source_refs_json : existing.source_refs_json;
     const mergedOwnership =
       payload.ownership !== undefined
         ? normalizeDocOwnership(payload.ownership)
         : normalizeDocOwnership(existing.ownership);
-    assertOwnershipSourcePathInvariant(mergedOwnership, mergedSourcePath);
+    assertOwnershipSourcePathInvariant(mergedOwnership, mergedSourcePath, mergedSourceRefsJson);
 
     const sets: string[] = [
       'content = ?',
@@ -1546,14 +1577,34 @@ export class Repository {
       sets.push('source_path = ?');
       params.push(payload.source_path);
     }
+    if (payload.source_refs_json !== undefined) {
+      sets.push('source_refs_json = ?');
+      params.push(mergedSourceRefsJson);
+    }
     if (payload.ownership !== undefined) {
       sets.push('ownership = ?');
       params.push(mergedOwnership);
     }
-    // source_synced_at: only refresh via sync_docs hash match (ADR-014). Approving arbitrary
-    // update_doc (review_correction, etc.) must not mask staleness.
-    if (mergedOwnership !== 'file-anchored' || !mergedSourcePath || String(mergedSourcePath).trim() === '') {
+    // source_synced_at (ADR-014 + 015-10): when projectRoot is provided, recompute from the same
+    // primary path as whole-file hash sync; otherwise leave the column unchanged (offline approve).
+    const stillFileAnchored =
+      mergedOwnership === 'file-anchored' &&
+      ((mergedSourcePath != null && String(mergedSourcePath).trim() !== '') ||
+        parseSourceRefsJson(mergedSourceRefsJson ?? null).length > 0);
+    if (!stillFileAnchored) {
       sets.push('source_synced_at = NULL');
+    } else if (projectRoot !== undefined) {
+      const syncAt = this._sourceSyncedAtIfApproveMatchesDisk(
+        mergedOwnership,
+        {
+          source_path: mergedSourcePath ?? null,
+          source_refs_json: mergedSourceRefsJson ?? null,
+        },
+        payload.content_hash,
+        projectRoot,
+      );
+      sets.push('source_synced_at = ?');
+      params.push(syncAt);
     }
     params.push(payload.doc_id);
     this.db.prepare(`UPDATE documents SET ${sets.join(', ')} WHERE doc_id = ?`).run(...params);

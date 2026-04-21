@@ -1183,7 +1183,7 @@ describe('Repository', () => {
       });
 
       expect(() => repo.approveProposal('p-own-bad', { ownership: 'file-anchored' })).toThrow(
-        /requires a non-empty source_path/,
+        /requires source_path or source_refs_json/,
       );
     });
 
@@ -1231,7 +1231,7 @@ describe('Repository', () => {
         review_comment: null,
       });
 
-      expect(() => repo.approveProposal('p-new-anchor')).toThrow(/requires a non-empty source_path/);
+      expect(() => repo.approveProposal('p-new-anchor')).toThrow(/requires source_path or source_refs_json/);
     });
 
     it('rejects source_path outside project when projectRoot is provided (approve)', () => {
@@ -1359,7 +1359,37 @@ describe('Repository', () => {
       expect(repo.getDocumentById('noroot-doc')?.source_synced_at).toBeNull();
     });
 
-    it('update_doc approve does not overwrite source_synced_at for file-anchored docs (ADR-014)', () => {
+    it('new_doc approve sets source_synced_at for refs-only single-file anchor when disk matches (015-10)', () => {
+      const root = mkdtempSync(join(tmpdir(), 'aegis-refsonly-new-'));
+      try {
+        const rel = 'guide/only.md';
+        const body = 'canonical body';
+        mkdirSync(join(root, 'guide'), { recursive: true });
+        writeFileSync(join(root, rel), body, 'utf-8');
+        repo.insertProposal({
+          proposal_id: 'p-new-refsonly',
+          proposal_type: 'new_doc',
+          payload: JSON.stringify({
+            doc_id: 'refonly-doc',
+            title: 'R',
+            kind: 'guideline',
+            content: body,
+            content_hash: hash(body),
+            ownership: 'file-anchored',
+            source_path: null,
+            source_refs_json: JSON.stringify([{ asset_path: rel, anchor_type: 'file', anchor_value: '' }]),
+          }),
+          status: 'pending',
+          review_comment: null,
+        });
+        repo.approveProposal('p-new-refsonly', undefined, root);
+        expect(repo.getDocumentById('refonly-doc')?.source_synced_at).toBeTruthy();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('update_doc approve leaves source_synced_at unchanged when projectRoot omitted (ADR-014)', () => {
       repo.insertProposal({
         proposal_id: 'p-boot-fa',
         proposal_type: 'bootstrap',
@@ -1401,6 +1431,62 @@ describe('Repository', () => {
       });
       repo.approveProposal('p-upd-fa');
       expect(repo.getDocumentById('fa-upd')?.source_synced_at).toBe('2000-01-01T00:00:00.000Z');
+    });
+
+    it('update_doc approve recomputes source_synced_at when projectRoot verifies primary path hash', () => {
+      const root = mkdtempSync(join(tmpdir(), 'aegis-upd-sync-'));
+      try {
+        const rel = 'sync/here.md';
+        const newBody = 'verified at approve';
+        mkdirSync(join(root, 'sync'), { recursive: true });
+        writeFileSync(join(root, rel), newBody, 'utf-8');
+
+        repo.insertProposal({
+          proposal_id: 'p-boot-upd-sync',
+          proposal_type: 'bootstrap',
+          payload: JSON.stringify({
+            documents: [
+              {
+                doc_id: 'upd-sync-doc',
+                title: 'U',
+                kind: 'guideline',
+                content: 'old',
+                content_hash: hash('old'),
+                ownership: 'file-anchored',
+                source_path: rel,
+                template_origin: null,
+              },
+            ],
+            edges: [],
+            layer_rules: [],
+          }),
+          status: 'pending',
+          review_comment: null,
+        });
+        repo.approveProposal('p-boot-upd-sync');
+        db.prepare(`UPDATE documents SET source_synced_at = ? WHERE doc_id = ?`).run(
+          '2000-01-01T00:00:00.000Z',
+          'upd-sync-doc',
+        );
+
+        repo.insertProposal({
+          proposal_id: 'p-upd-sync',
+          proposal_type: 'update_doc',
+          payload: JSON.stringify({
+            doc_id: 'upd-sync-doc',
+            content: newBody,
+            content_hash: hash(newBody),
+          }),
+          status: 'pending',
+          review_comment: null,
+        });
+        repo.approveProposal('p-upd-sync', undefined, root);
+        const synced = repo.getDocumentById('upd-sync-doc')?.source_synced_at;
+        expect(synced).toBeTruthy();
+        expect(synced).not.toBe('2000-01-01T00:00:00.000Z');
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     });
 
     it('_applyModifications allows source_path for new_doc and update_doc', () => {

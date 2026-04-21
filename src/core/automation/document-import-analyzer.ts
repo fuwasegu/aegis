@@ -7,8 +7,9 @@
 
 import { createHash } from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
+import { serializeSourceRefs } from '../source-refs.js';
 import type { Repository } from '../store/repository.js';
-import type { AnalysisContext, AnalysisResult, DocumentKind, EdgeSpec, ProposalDraft } from '../types.js';
+import type { AnalysisContext, AnalysisResult, DocumentKind, EdgeSpec, ProposalDraft, SourceRef } from '../types.js';
 import type { ObservationAnalyzer } from './analyzer.js';
 
 const VALID_KINDS: DocumentKind[] = ['guideline', 'pattern', 'constraint', 'template', 'reference'];
@@ -22,6 +23,8 @@ export type DocumentImportObservationPayload = {
   edge_hints?: EdgeSpec[];
   tags?: string[];
   source_path?: string;
+  /** Normalized repo-relative refs (caller supplies projectRoot normalization). */
+  source_refs?: SourceRef[];
 };
 
 /**
@@ -40,6 +43,14 @@ export function buildDocumentImportDraftsFromPayload(
 
   const existingDoc = repo.getDocumentById(payload.doc_id);
 
+  const sourceRefsJson =
+    payload.source_refs && payload.source_refs.length > 0 ? serializeSourceRefs(payload.source_refs) : null;
+  /** Only explicit `source_path` (execute_import slice anchor, import_doc file_path, etc.). Never infer from `source_refs[0]` — that would wrongly file-anchor every split unit to the same path (015-10). */
+  const effectiveSourcePath =
+    typeof payload.source_path === 'string' && payload.source_path.trim() !== ''
+      ? payload.source_path.trim()
+      : undefined;
+
   if (existingDoc) {
     const updatePayload: Record<string, unknown> = {
       doc_id: payload.doc_id,
@@ -49,9 +60,20 @@ export function buildDocumentImportDraftsFromPayload(
     if (payload.title) {
       updatePayload.title = payload.title;
     }
-    if (payload.source_path) {
-      updatePayload.source_path = payload.source_path;
+    if (effectiveSourcePath) {
+      updatePayload.source_path = effectiveSourcePath;
       updatePayload.ownership = 'file-anchored';
+      if (!(payload.source_refs && payload.source_refs.length > 0)) {
+        updatePayload.source_refs_json = null;
+      }
+    }
+    if (sourceRefsJson) {
+      updatePayload.source_refs_json = sourceRefsJson;
+      updatePayload.ownership = 'file-anchored';
+      /** Refs-only update — clear legacy column so provenance stays a true distinct set (015-10). */
+      if (effectiveSourcePath === undefined) {
+        updatePayload.source_path = null;
+      }
     }
     if (payload.tags && payload.tags.length > 0) {
       updatePayload.tags = payload.tags;
@@ -72,8 +94,11 @@ export function buildDocumentImportDraftsFromPayload(
     if (payload.tags && payload.tags.length > 0) {
       newDocPayload.tags = payload.tags;
     }
-    if (payload.source_path) {
-      newDocPayload.source_path = payload.source_path;
+    if (effectiveSourcePath) {
+      newDocPayload.source_path = effectiveSourcePath;
+    }
+    if (sourceRefsJson) {
+      newDocPayload.source_refs_json = sourceRefsJson;
     }
     drafts.push({
       proposal_type: 'new_doc',

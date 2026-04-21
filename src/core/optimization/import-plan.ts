@@ -3,8 +3,9 @@
  */
 
 import { createHash } from 'node:crypto';
+import { validateSourceRef } from '../source-refs.js';
 import type { Repository } from '../store/repository.js';
-import type { DocumentKind, EdgeSpec } from '../types.js';
+import type { DocumentKind, EdgeSpec, SourceRef } from '../types.js';
 import { derivePathPattern } from './edge-candidate-builder.js';
 import { pathGlobSubsumes } from './edge-validation.js';
 
@@ -49,6 +50,10 @@ export interface ImportPlan {
    * Execute uses this (after `normalizeSourcePath`) as `document_import.source_path`; omit or null for pure `content` flows.
    */
   resolved_source_path: string | null;
+  /**
+   * ADR-015 Task 015-10: optional explicit N:M source references (normalized by caller on execute).
+   */
+  source_refs?: SourceRef[];
   suggested_units: SuggestedImportUnit[];
   overlap_warnings: OverlapWarning[];
   coverage_delta: CoverageDelta;
@@ -285,6 +290,8 @@ export interface AnalyzeImportPlanOptions {
   reserved_doc_ids?: Set<string>;
   /** Set only when content was read from `file_path` (repo-relative, already normalized by caller). */
   resolved_source_path?: string | null;
+  /** ADR-015 Task 015-10: passthrough for import_plan / execute_import_plan. */
+  source_refs?: SourceRef[];
 }
 
 function allocateUniqueDocId(repo: Repository, baseCandidate: string, reserved: Set<string>): string {
@@ -356,6 +363,7 @@ export function analyzeDocumentForImportPlan(
     algorithm_version: IMPORT_PLAN_ALGORITHM_VERSION,
     source_label: sourceLabel,
     resolved_source_path: options?.resolved_source_path ?? null,
+    ...(options?.source_refs && options.source_refs.length > 0 ? { source_refs: options.source_refs } : {}),
     suggested_units: units,
     overlap_warnings,
     coverage_delta: buildCoverage(
@@ -500,10 +508,23 @@ export function parseImportPlanJson(repo: Repository, raw: unknown): ImportPlan 
     }
   }
 
+  let source_refs: SourceRef[] | undefined;
+  if ('source_refs' in raw && raw.source_refs !== undefined && raw.source_refs !== null) {
+    if (!Array.isArray(raw.source_refs)) throw new Error('import_plan.source_refs must be an array');
+    source_refs = raw.source_refs.map((x, i) => {
+      try {
+        return validateSourceRef(x);
+      } catch (e) {
+        throw new Error(`import_plan.source_refs[${i}]: ${(e as Error).message}`);
+      }
+    });
+  }
+
   return {
     algorithm_version: IMPORT_PLAN_ALGORITHM_VERSION,
     source_label,
     resolved_source_path,
+    ...(source_refs && source_refs.length > 0 ? { source_refs } : {}),
     suggested_units,
     overlap_warnings,
     coverage_delta,
@@ -578,7 +599,12 @@ export function parseBatchImportPlanJson(repo: Repository, raw: unknown): BatchI
 
 export function analyzeImportBatch(
   repo: Repository,
-  inputs: Array<{ content: string; source_label: string | null; resolved_source_path?: string | null }>,
+  inputs: Array<{
+    content: string;
+    source_label: string | null;
+    resolved_source_path?: string | null;
+    source_refs?: SourceRef[];
+  }>,
 ): BatchImportPlan {
   const reserved = new Set<string>();
   const multi = inputs.length > 1;
@@ -587,6 +613,7 @@ export function analyzeImportBatch(
       batch_file_index: multi ? fileIdx : undefined,
       reserved_doc_ids: reserved,
       resolved_source_path: i.resolved_source_path ?? null,
+      ...(i.source_refs && i.source_refs.length > 0 ? { source_refs: i.source_refs } : {}),
     }),
   );
 
