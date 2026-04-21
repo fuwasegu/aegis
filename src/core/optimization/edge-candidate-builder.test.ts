@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createInMemoryDatabase } from '../store/database.js';
+import { Repository } from '../store/repository.js';
 import type { Observation } from '../types.js';
 import {
   buildCoverageOptimizationContext,
@@ -76,6 +78,32 @@ describe('edge-candidate-builder', () => {
   it('buildCoverageOptimizationContext attaches empty coChangePatterns without repo', () => {
     const ctx = buildCoverageOptimizationContext([], []);
     expect(ctx.coChangePatterns).toEqual([]);
+  });
+
+  it('buildCoverageOptimizationContext loads persisted co-change patterns when repo is passed', async () => {
+    const db = await createInMemoryDatabase();
+    const repo = new Repository(db);
+    repo.persistCoChangeCache(
+      [
+        {
+          code_pattern: 'src/**',
+          doc_pattern: 'docs/**',
+          co_change_count: 1,
+          total_code_changes: 3,
+          confidence: 1 / 3,
+        },
+      ],
+      new Map([['src/**', 3]]),
+      'deadbeef',
+      'fp1',
+    );
+    const ctx = buildCoverageOptimizationContext([], [], repo);
+    expect(ctx.coChangePatterns).toHaveLength(1);
+    expect(ctx.coChangePatterns[0]).toMatchObject({
+      code_pattern: 'src/**',
+      doc_pattern: 'docs/**',
+      co_change_count: 1,
+    });
   });
 
   it('buildMissClustersFromObservations splits multi-directory target_files into multiple clusters', () => {
