@@ -60,6 +60,7 @@ describe('DocRefactorAnalyzer', () => {
         base_doc_ids: JSON.stringify(['d1', 'd2', 'd3']),
         expanded_doc_ids: null,
         audit_meta: null,
+        agent_id: null,
       });
     }
 

@@ -25,8 +25,8 @@ Aegis は 2 つの MCP surface を使います — 両方が必要です:
 
 | Surface | 役割 | ツール数 |
 |---------|------|----------|
-| **agent** | コンテキスト取得・オブザベーション記録など（Canonical Knowledge は変更不可） | 5 ツール（compile, observe, audit, known_tags, detect） |
-| **admin** | 初期化・承認・トリアージ | 23 ツール（共通 5 + Admin 専用 18） |
+| **agent** | コンテキスト取得・オブザベーション記録など（Canonical Knowledge は変更不可） | 6 ツール（compile, observe, audit, known_tags, workspace_status, detect） |
+| **admin** | 初期化・承認・トリアージ | 24 ツール（共通 6 + Admin 専用 18） |
 
 > agent surface だけでは初期化もプロポーザル承認もできません。この分離により、AI エージェントが人間の承認なしにアーキテクチャルールを変更することを防ぎます。（[INV-6](docs/technical-guide.ja.md)）
 
@@ -241,7 +241,7 @@ HuggingFace URI を直接指定することも可能: `--model hf:user/repo:file
 
 ## リファレンス
 
-### MCP ツール — Agent Surface（5 ツール）
+### MCP ツール — Agent Surface（6 ツール）
 
 | ツール | 説明 |
 |--------|------|
@@ -249,9 +249,10 @@ HuggingFace URI を直接指定することも可能: `--model hf:user/repo:file
 | `aegis_observe` | オブザベーション記録（compile_miss, review_correction, pr_merged, manual_note, document_import, doc_gap_detected） |
 | `aegis_get_compile_audit` | 過去のコンパイルの監査ログを取得 |
 | `aegis_get_known_tags` | tag_mappings の意図タグ一覧（承認ドキュメントに紐づくもの）と `knowledge_version`、キャッシュ用 SHA-256 `tag_catalog_hash` |
+| `aegis_workspace_status` | 読み取り専用のワークスペーススナップショット（最近のコンパイル領域、未解決 compile_miss、保留プロポーザル数） |
 | `aegis_init_detect` | プロジェクト分析と初期化プレビュー生成 |
 
-### MCP ツール — Admin Surface（追加 18 ツール、計 23）
+### MCP ツール — Admin Surface（追加 18 ツール、計 24）
 
 | ツール | 説明 |
 |--------|------|

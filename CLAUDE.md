@@ -15,15 +15,16 @@ npm run start:admin    # start admin surface
 npm test               # run all tests
 ```
 
-## Agent Surface Tools (5 tools)
+## Agent Surface Tools (6 tools)
 
 - `aegis_compile_context` — Primary tool. Given target_files, returns deterministic context.
 - `aegis_observe` — Record observations (compile_miss, review_correction, pr_merged, manual_note, document_import, doc_gap_detected).
 - `aegis_get_compile_audit` — Retrieve audit log of a past compile invocation.
 - `aegis_get_known_tags` — List distinct intent tags (approved-resolvable) with `knowledge_version` and SHA-256 `tag_catalog_hash` for client caching.
+- `aegis_workspace_status` — Read-only workspace snapshot (recent compile regions, unresolved compile_miss backlog, pending proposal count).
 - `aegis_init_detect` — Analyze a project to generate initialization preview (read-only).
 
-## Admin Surface Tools (18 additional tools, 23 total)
+## Admin Surface Tools (18 additional tools, 24 total)
 
 - `aegis_init_confirm` — Confirm initialization using preview_hash from init_detect.
 - `aegis_list_proposals` / `aegis_get_proposal` — Review pending proposals.
@@ -92,8 +93,8 @@ templates/      — Reserved for custom user templates (--template-dir)
 
 ## Design Decisions
 
-- Agent surface registers 5 tools (compile_context, observe, get_compile_audit, get_known_tags, init_detect)
-- Admin surface registers 23 tools (the 5 agent tools + 18 admin-only)
+- Agent surface registers 6 tools (compile_context, observe, get_compile_audit, get_known_tags, workspace_status, init_detect)
+- Admin surface registers 24 tools (the 6 agent tools + 18 admin-only)
 - init_detect is on both surfaces (read-only). init_confirm is admin-only (mutates Canonical)
 - init_confirm must run in the admin process (previewCache is in-memory)
 - After init_confirm, adapters are auto-deployed (.cursor/rules/, CLAUDE.md) — non-fatal if deployment fails

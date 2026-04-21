@@ -25,8 +25,8 @@ Aegis uses two MCP surfaces — both are required:
 
 | Surface | Role | Tools |
 |---------|------|-------|
-| **agent** | Context compilation, observation recording, and related reads — no Canonical mutations | 5 tools (compile, observe, audit, known_tags, detect) |
-| **admin** | Initialization, approval, triage | 23 tools (5 shared + 18 admin-only) |
+| **agent** | Context compilation, observation recording, and related reads — no Canonical mutations | 6 tools (compile, observe, audit, known_tags, workspace_status, detect) |
+| **admin** | Initialization, approval, triage | 24 tools (6 shared + 18 admin-only) |
 
 > The agent surface alone cannot initialize a project or approve proposals. This separation ensures AI agents cannot modify architecture rules without human approval. ([INV-6](docs/technical-guide.md))
 
@@ -241,7 +241,7 @@ You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 
 ## Reference
 
-### MCP Tools — Agent Surface (5 tools)
+### MCP Tools — Agent Surface (6 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -249,9 +249,10 @@ You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 | `aegis_observe` | Record observations (compile_miss, review_correction, pr_merged, manual_note, document_import, doc_gap_detected) |
 | `aegis_get_compile_audit` | Retrieve audit log of a past compile |
 | `aegis_get_known_tags` | Distinct intent tags from tag_mappings (approved-linked) with `knowledge_version` and SHA-256 `tag_catalog_hash` for caching |
+| `aegis_workspace_status` | Read-only workspace snapshot: recent compile regions, unresolved compile_miss backlog, pending proposal count |
 | `aegis_init_detect` | Analyze a project to generate initialization preview |
 
-### MCP Tools — Admin Surface (additional 18 tools, 23 total)
+### MCP Tools — Admin Surface (additional 18 tools, 24 total)
 
 | Tool | Description |
 |------|-------------|

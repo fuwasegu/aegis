@@ -29,6 +29,13 @@ import type {
 import { BudgetExceededError, DEFAULT_MAX_INLINE_BYTES } from '../types.js';
 import { type AllocatedDoc, allocateDelivery, type DocCandidate } from './allocator.js';
 
+/** ADR-015 Task 015-11: optional `agent_id` for `compile_log` (self-reported; not in P-1 path). */
+export function normalizeCompileAgentId(agent_id?: string): string | null {
+  if (agent_id == null) return null;
+  const t = String(agent_id).trim();
+  return t.length === 0 ? null : t;
+}
+
 /**
  * Extract meaningful terms from a plan string for deterministic relevance scoring.
  * Captures PascalCase identifiers, Katakana words, Kanji compounds, and
@@ -605,6 +612,7 @@ export class ContextCompiler {
           base_doc_ids: JSON.stringify(baseCandidates.map((d) => d.doc_id)),
           expanded_doc_ids: expandedDocIds !== null ? JSON.stringify(expandedDocIds) : null,
           audit_meta: JSON.stringify(failAuditMeta),
+          agent_id: normalizeCompileAgentId(request.agent_id),
         });
 
         throw err;
@@ -670,6 +678,7 @@ export class ContextCompiler {
       base_doc_ids: JSON.stringify(baseResolved.map((d) => d.doc_id)),
       expanded_doc_ids: expandedDocIds !== null ? JSON.stringify(expandedDocIds) : null,
       audit_meta: JSON.stringify(auditMeta),
+      agent_id: normalizeCompileAgentId(request.agent_id),
     });
 
     return result;

@@ -755,10 +755,57 @@ export class Repository {
   insertCompileLog(log: Omit<CompileLog, 'created_at'>): void {
     this.db
       .prepare(`
-      INSERT INTO compile_log (compile_id, snapshot_id, request, base_doc_ids, expanded_doc_ids, audit_meta)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO compile_log (compile_id, snapshot_id, request, base_doc_ids, expanded_doc_ids, audit_meta, agent_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `)
-      .run(log.compile_id, log.snapshot_id, log.request, log.base_doc_ids, log.expanded_doc_ids, log.audit_meta);
+      .run(
+        log.compile_id,
+        log.snapshot_id,
+        log.request,
+        log.base_doc_ids,
+        log.expanded_doc_ids,
+        log.audit_meta,
+        log.agent_id,
+      );
+  }
+
+  /**
+   * Recent compile_log rows for WorkspaceStatus active_regions (ADR-015 Task 015-11).
+   * ISO `created_at` lexicographic order matches chronological order for Aegis timestamps.
+   */
+  listCompileLogsSince(cutoffIso: string): Array<{ created_at: string; agent_id: string | null; request: string }> {
+    return this.db
+      .prepare(
+        `
+      SELECT created_at, agent_id, request FROM compile_log
+      WHERE created_at >= ?
+      ORDER BY created_at ASC
+    `,
+      )
+      .all(cutoffIso) as Array<{ created_at: string; agent_id: string | null; request: string }>;
+  }
+
+  /**
+   * compile_miss observations that still need attention: no active pending/approved proposal.
+   * Rejected proposals leave `proposal_evidence` rows but reset `analyzed_at`; those observations must reappear here.
+   */
+  listCompileMissObservationsWithoutProposal(): Observation[] {
+    return this.db
+      .prepare(
+        `
+      SELECT o.* FROM observations o
+      WHERE o.event_type = 'compile_miss'
+        AND o.archived_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM proposal_evidence pe
+          INNER JOIN proposals p ON p.proposal_id = pe.proposal_id
+          WHERE pe.observation_id = o.observation_id
+            AND p.status IN ('pending', 'approved')
+        )
+      ORDER BY o.created_at ASC
+    `,
+      )
+      .all() as Observation[];
   }
 
   getCompileLog(compileId: string): CompileLog | undefined {

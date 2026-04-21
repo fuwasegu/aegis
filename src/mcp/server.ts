@@ -3,11 +3,11 @@
  * Tool registration only. All business logic delegated to AegisService.
  *
  * Surface separation (INV-6):
- * - Agent Surface: compile_context, observe, get_compile_audit, get_known_tags, init_detect (5 tools)
- * - Admin Surface: same 5 plus 18 admin-only (list/get proposals, approve/reject, bundle preflight/approve,
+ * - Agent Surface: compile_context, observe, get_compile_audit, get_known_tags, workspace_status, init_detect (6 tools)
+ * - Admin Surface: same 6 plus 18 admin-only (list/get proposals, approve/reject, bundle preflight/approve,
  *                  init_confirm, check_upgrade, apply_upgrade, archive_observations, get_stats, import_doc,
  *                  analyze_doc, analyze_import_batch, execute_import_plan, list/process_observations, sync_docs)
- *                  → 23 tools total on admin surface (5 shared + 18 admin-only)
+ *                  → 24 tools total on admin surface (6 shared + 18 admin-only)
  * - propose is NOT exposed (internal only)
  *
  * init_detect is on both surfaces (read-only preview).
@@ -103,6 +103,12 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
         .array(z.string())
         .optional()
         .describe('Explicit layer names (optional, inferred from path if omitted)'),
+      agent_id: z
+        .string()
+        .optional()
+        .describe(
+          'Optional client self-id for workspace visibility (stored in compile_log only; does not affect compiled output).',
+        ),
       command: z.string().optional().describe('Command name: scaffold, refactor, review, etc.'),
       plan: z.string().optional().describe('Natural-language plan text for expanded context (requires IntentTagger)'),
       intent_tags: z
@@ -124,6 +130,7 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
           {
             target_files: params.target_files,
             target_layers: params.target_layers,
+            agent_id: params.agent_id,
             command: params.command,
             plan: params.plan,
             intent_tags: params.intent_tags,
@@ -219,6 +226,26 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
     {},
     async () => {
       const result = service.getKnownTags(surface);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    'aegis_workspace_status',
+    'Read-only workspace snapshot: recent compile regions (from compile_log), unresolved compile_miss observations without proposals, and pending proposal count. Does not mutate Canonical Knowledge.',
+    {
+      window_hours: z
+        .number()
+        .int()
+        .min(1)
+        .max(168)
+        .optional()
+        .describe('Rolling window in hours for active_regions (default: 24; max: 168).'),
+    },
+    async (params) => {
+      const result = service.workspaceStatus(surface, {
+        window_hours: params.window_hours,
+      });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
   );

@@ -2292,6 +2292,7 @@ describe('ContextCompiler — v2 delivery', () => {
       base_doc_ids: '["d1"]',
       expanded_doc_ids: null,
       audit_meta: null,
+      agent_id: null,
     });
 
     const audit = compiler.getCompileAudit('legacy-compile');
