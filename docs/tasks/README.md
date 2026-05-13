@@ -64,6 +64,7 @@ Phase 3: Maintenance CLI (ADR-014) → Edge Mutation Primitives (ADR-015)
 Phase 4: Optimization 層 (ADR-015)
 Phase 5: Import 革新 + Staleness (ADR-015)
 Phase 6: マルチエージェント (ADR-015)
+Phase 7: Compile Unit Materialization + Drift Reconciliation (ADR-016)
 ```
 
 依存関係のクリティカルパス:
@@ -74,4 +75,6 @@ ADR-013 (migration) ──→ ADR-012 (audit_meta) ──→ ADR-012 (debug_info
 ADR-011 (intent_tags) ──→ ADR-011 (adapters)
 ADR-015 (doc_gap) ──→ ADR-015 (optimization/)
 ADR-014 (maintenance) ──→ ADR-015 (co-change cache)
+ADR-015 (import-plan/source_refs) ──→ ADR-016 (compile unit contract) ──→ ADR-016 (anchor-sync)
+                                                                    └──→ ADR-016 (reconcile-aware sync_docs)
 ```

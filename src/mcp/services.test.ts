@@ -1935,6 +1935,43 @@ describe('AegisService — import plan', () => {
     expect(docIds.size).toBeGreaterThan(1);
   });
 
+  it('executeImportPlan produces identical proposals regardless of advisory field values (016-01)', () => {
+    const md = '## Test\n\nSome `src/app/main.ts` content.\n';
+    const plan = service.analyzeDoc({ content: md, source_label: 'test.md' }, 'admin');
+
+    // Execute with original advisory fields
+    const result1 = service.executeImportPlan({ import_plan: plan, bundle_id: 'b-orig' }, 'admin');
+    const payload1 = JSON.parse(repo.getProposal(result1.proposal_ids[0])!.payload) as Record<string, unknown>;
+
+    // Approve the first bundle to avoid duplicate detection
+    service.approveProposalBundle('b-orig', 'admin');
+
+    // Mutate advisory fields to extreme values and re-execute
+    const mutated = JSON.parse(JSON.stringify(plan)) as Record<string, unknown>;
+    const units = mutated.suggested_units as Record<string, unknown>[];
+    // Change doc_id so it doesn't collide with the approved one
+    units[0].doc_id = 'test-mutated-0';
+    units[0].materialization_kind = 'whole-file';
+    units[0].reconcile_mode = 'hash-sync';
+    units[0].content_bytes = 999999;
+    units[0].diagnostics = [{ code: 'oversize_unit', message: 'fake' }];
+
+    const result2 = service.executeImportPlan({ import_plan: mutated, bundle_id: 'b-mutated' }, 'admin');
+    const payload2 = JSON.parse(repo.getProposal(result2.proposal_ids[0])!.payload) as Record<string, unknown>;
+
+    // Core payload fields used for Canonical mutation must be identical (except doc_id which we changed)
+    expect(payload2.content).toBe(payload1.content);
+    expect(payload2.content_hash).toBe(payload1.content_hash);
+    expect(payload2.kind).toBe(payload1.kind);
+    expect(payload2.edge_hints).toEqual(payload1.edge_hints);
+    expect(payload2.tags).toEqual(payload1.tags);
+    // Advisory fields must NOT appear in proposal payload
+    expect(payload2.materialization_kind).toBeUndefined();
+    expect(payload2.reconcile_mode).toBeUndefined();
+    expect(payload2.content_bytes).toBeUndefined();
+    expect((payload2 as Record<string, unknown>).diagnostics).toBeUndefined();
+  });
+
   it('blocks import plan tools on agent surface', () => {
     expect(() => service.analyzeDoc({ content: '## A\n\nb' }, 'agent')).toThrow(SurfaceViolationError);
     expect(() => service.analyzeImportBatch({ items: [{ content: '## A\n\nb' }] }, 'agent')).toThrow(

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createInMemoryDatabase } from '../store/database.js';
 import { Repository } from '../store/repository.js';
+import type { SourceRef } from '../types.js';
 import {
   analyzeDocumentForImportPlan,
   analyzeImportBatch,
@@ -173,5 +174,210 @@ describe('import-plan', () => {
       '## 取り込み\n\nこれは承認済みドキュメントです。アーキテクチャのルールを説明しています。同じ文章の続きです。\n';
     const plan = analyzeDocumentForImportPlan(repo, md, null);
     expect(plan.overlap_warnings.some((w) => w.existing_doc_id === 'approved-ja')).toBe(true);
+  });
+
+  /* ── ADR-016 Task 016-01: compile unit contract advisory fields ── */
+
+  describe('016-01: advisory fields', () => {
+    it('multi-section markdown produces markdown-section materialization_kind', async () => {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      const md = '## Auth\n\nAuth body.\n\n## DB\n\nDB body.\n';
+      const plan = analyzeDocumentForImportPlan(repo, md, 'docs/arch.md', {
+        resolved_source_path: 'docs/arch.md',
+      });
+      expect(plan.suggested_units.length).toBe(2);
+      for (const u of plan.suggested_units) {
+        expect(u.materialization_kind).toBe('markdown-section');
+        expect(u.reconcile_mode).toBe('anchor-sync');
+      }
+    });
+
+    it('single-section whole-file import produces whole-file materialization_kind', async () => {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      const md = '# Title\n\nEntire file content here.';
+      const plan = analyzeDocumentForImportPlan(repo, md, 'docs/single.md', {
+        resolved_source_path: 'docs/single.md',
+      });
+      expect(plan.suggested_units.length).toBe(1);
+      expect(plan.suggested_units[0].materialization_kind).toBe('whole-file');
+      expect(plan.suggested_units[0].reconcile_mode).toBe('hash-sync');
+    });
+
+    it('single source_ref with anchor_type lines produces line-range', async () => {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      const refs: SourceRef[] = [{ asset_path: 'src/foo.ts', anchor_type: 'lines', anchor_value: '10-20' }];
+      const md = '## Snippet\n\nSome code.\n';
+      const plan = analyzeDocumentForImportPlan(repo, md, null, { source_refs: refs });
+      expect(plan.suggested_units[0].materialization_kind).toBe('line-range');
+      // With source_refs but no resolved_source_path, reconcile_mode depends on materialization_kind
+      expect(plan.suggested_units[0].reconcile_mode).toBe('anchor-sync');
+    });
+
+    it('single section source_ref produces markdown-section / anchor-sync', async () => {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      const refs: SourceRef[] = [{ asset_path: 'docs/arch.md', anchor_type: 'section', anchor_value: '## Auth' }];
+      const md = '## Auth\n\nAuth flow description.\n';
+      const plan = analyzeDocumentForImportPlan(repo, md, null, { source_refs: refs });
+      expect(plan.suggested_units[0].materialization_kind).toBe('markdown-section');
+      expect(plan.suggested_units[0].reconcile_mode).toBe('anchor-sync');
+    });
+
+    it('no source path and no source_refs produces untracked reconcile_mode', async () => {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      const md = '## Notes\n\nSome notes.\n';
+      const plan = analyzeDocumentForImportPlan(repo, md, null);
+      expect(plan.suggested_units[0].reconcile_mode).toBe('untracked');
+    });
+
+    it('content_bytes is stable for UTF-8 including Japanese', async () => {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      const japaneseContent = '## 概要\n\n日本語テスト。';
+      const plan = analyzeDocumentForImportPlan(repo, japaneseContent, null);
+      const unit = plan.suggested_units[0];
+      expect(unit.content_bytes).toBe(Buffer.byteLength(unit.content_slice, 'utf8'));
+      // Japanese chars are 3 bytes each in UTF-8 — content_bytes > string length
+      expect(unit.content_bytes).toBeGreaterThan(unit.content_slice.length);
+    });
+
+    it('oversize_unit diagnostic fires when content exceeds 4096 bytes', async () => {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      const bigBody = 'x'.repeat(5000);
+      const md = `## Big\n\n${bigBody}\n`;
+      const plan = analyzeDocumentForImportPlan(repo, md, null);
+      const unit = plan.suggested_units[0];
+      expect(unit.content_bytes).toBeGreaterThan(4096);
+      expect(unit.diagnostics.some((d) => d.code === 'oversize_unit')).toBe(true);
+    });
+
+    it('weak_routing_signal diagnostic fires when no edge_hints and no tags', async () => {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      // Content with no path-like strings; title with no extractable tags (single char)
+      const md = '# X\n\n.\n';
+      const plan = analyzeDocumentForImportPlan(repo, md, null);
+      const unit = plan.suggested_units[0];
+      expect(unit.edge_hints.length).toBe(0);
+      // headingTags extracts tokens of length ≥2 from title; single char 'X' yields nothing
+      expect(unit.tags.length).toBe(0);
+      expect(unit.diagnostics.some((d) => d.code === 'weak_routing_signal')).toBe(true);
+    });
+
+    it('semantic_review_only diagnostic fires for composed units', async () => {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      // Single section with resolved_source_path but content doesn't match full file (trimmed differently)
+      // → composed → semantic-review
+      const md = '# Preamble\n\nPre.\n';
+      const plan = analyzeDocumentForImportPlan(repo, md, null, {
+        resolved_source_path: 'docs/x.md',
+        source_refs: [
+          { asset_path: 'docs/a.md', anchor_type: 'file', anchor_value: '' },
+          { asset_path: 'docs/b.md', anchor_type: 'file', anchor_value: '' },
+        ],
+      });
+      // Multiple source_refs but single section — composed, semantic-review
+      const unit = plan.suggested_units[0];
+      expect(unit.materialization_kind).toBe('composed');
+      expect(unit.reconcile_mode).toBe('semantic-review');
+      expect(unit.diagnostics.some((d) => d.code === 'semantic_review_only')).toBe(true);
+    });
+
+    it('batch analysis applies advisory fields to all units', async () => {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      const batch = analyzeImportBatch(repo, [
+        { content: '## A\n\nBody A.\n', source_label: 'a.md', resolved_source_path: 'a.md' },
+        { content: '## B\n\nBody B.\n', source_label: 'b.md' },
+      ]);
+      for (const plan of batch.plans) {
+        for (const unit of plan.suggested_units) {
+          expect(unit.content_bytes).toBeGreaterThan(0);
+          expect(unit.materialization_kind).toBeDefined();
+          expect(unit.reconcile_mode).toBeDefined();
+          expect(Array.isArray(unit.diagnostics)).toBe(true);
+        }
+      }
+    });
+
+    it('parseImportPlanJson round-trips advisory fields', async () => {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      const md = '## Auth\n\nAuth body.\n\n## DB\n\nDB body.\n';
+      const plan = analyzeDocumentForImportPlan(repo, md, 'docs/arch.md', {
+        resolved_source_path: 'docs/arch.md',
+      });
+      const roundTrip = parseImportPlanJson(repo, JSON.parse(JSON.stringify(plan)) as unknown);
+      for (let i = 0; i < plan.suggested_units.length; i++) {
+        expect(roundTrip.suggested_units[i].content_bytes).toBe(plan.suggested_units[i].content_bytes);
+        expect(roundTrip.suggested_units[i].materialization_kind).toBe(plan.suggested_units[i].materialization_kind);
+        expect(roundTrip.suggested_units[i].reconcile_mode).toBe(plan.suggested_units[i].reconcile_mode);
+        expect(roundTrip.suggested_units[i].diagnostics).toEqual(plan.suggested_units[i].diagnostics);
+      }
+    });
+
+    it('parseImportPlanJson tolerates missing advisory fields (forward compat)', async () => {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      // Minimal plan JSON without advisory fields
+      const raw = {
+        algorithm_version: IMPORT_PLAN_ALGORITHM_VERSION,
+        source_label: null,
+        resolved_source_path: null,
+        suggested_units: [
+          {
+            unit_index: 0,
+            doc_id: 'test-0',
+            title: 'Test',
+            kind: 'guideline',
+            content_slice: 'hello world',
+            edge_hints: [],
+            tags: [],
+            // No content_bytes, materialization_kind, reconcile_mode, diagnostics
+          },
+        ],
+        overlap_warnings: [],
+        coverage_delta: {
+          proposed_path_globs: [],
+          existing_pattern_matches: 0,
+          estimated_new_coverage_globs: 0,
+          summary: 'none',
+        },
+      };
+      const parsed = parseImportPlanJson(repo, raw);
+      const unit = parsed.suggested_units[0];
+      expect(unit.content_bytes).toBe(Buffer.byteLength('hello world', 'utf8'));
+      expect(unit.materialization_kind).toBe('composed');
+      expect(unit.reconcile_mode).toBe('untracked');
+      expect(unit.diagnostics).toEqual([]);
+    });
+
+    it('parseImportPlanJson accepts mutated advisory fields without error', async () => {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      const md = '## Test\n\nSome `src/app/main.ts` content.\n';
+      const plan = analyzeDocumentForImportPlan(repo, md, null);
+
+      // Mutate advisory fields to extreme values — execute should not care
+      const modifiedPlan = JSON.parse(JSON.stringify(plan)) as Record<string, unknown>;
+      const units = modifiedPlan.suggested_units as Record<string, unknown>[];
+      units[0].materialization_kind = 'whole-file';
+      units[0].reconcile_mode = 'hash-sync';
+      units[0].content_bytes = 999999;
+      units[0].diagnostics = [{ code: 'oversize_unit', message: 'fake' }];
+
+      // Parse should accept the modified advisory values
+      const parsed = parseImportPlanJson(repo, modifiedPlan);
+      expect(parsed.suggested_units[0].materialization_kind).toBe('whole-file');
+      expect(parsed.suggested_units[0].reconcile_mode).toBe('hash-sync');
+      // The key point: parseImportPlanJson doesn't reject modified advisory fields,
+      // and executeImportPlan uses only doc_id/title/kind/content_slice/edge_hints/tags
+    });
   });
 });
