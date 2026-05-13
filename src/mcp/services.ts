@@ -47,10 +47,13 @@ import {
 import { normalizeSourcePath, resolveSourcePath } from '../core/paths.js';
 import { ContextCompiler } from '../core/read/compiler.js';
 import { buildWorkspaceStatus } from '../core/read/workspace-status.js';
+import { materializeAnchoredContent } from '../core/source-materialization.js';
 import {
+  classifyReconcileMode,
   normalizeSourceRefs,
   parseSourceRefsJson,
   primaryAssetPathForHashSync,
+  type ReconcileMode,
   sourceRefCountFromDocument,
   validateSourceRef,
 } from '../core/source-refs.js';
@@ -1365,9 +1368,13 @@ export class AegisService {
   }
 
   /**
-   * Synchronize approved **file-anchored** documents with repo files (ADR-010).
-   * Detects stale documents via content_hash comparison and creates
-   * update_doc proposals with full evidence chain (P-3 compliant).
+   * ADR-014 / ADR-016: sync file-anchored documents with their source files.
+   *
+   * Routes each document through `classifyReconcileMode`:
+   * - `hash-sync`:       whole-file SHA-256 comparison (existing behavior)
+   * - `anchor-sync`:     re-materialize single anchor, compare content_hash, propose update_doc on drift
+   * - `semantic-review`:  no auto-update; backlog via semantic staleness scan
+   * - `untracked`:        skipped (non-file-anchored; filtered out by getFileAnchoredDocuments)
    *
    * `skipped_invalid_anchor`: missing/blank `source_path`, path outside `projectRoot`, or `resolveSourcePath` failure.
    *
@@ -1388,6 +1395,11 @@ export class AegisService {
     would_create_proposals?: string[];
     multi_source_doc_ids?: string[];
     multi_source_staleness_observations?: number;
+    hash_sync_checked: number;
+    anchor_sync_checked: number;
+    anchor_sync_proposals_created: string[];
+    anchor_sync_failures: Array<{ doc_id: string; kind: string }>;
+    semantic_review_doc_ids: string[];
   }> {
     this.assertAdmin('aegis_sync_docs', surface);
 
@@ -1396,9 +1408,6 @@ export class AegisService {
       const filterSet = new Set(params.doc_ids);
       docs = docs.filter((d) => filterSet.has(d.doc_id));
     }
-
-    const multiDocs = docs.filter((d) => sourceRefCountFromDocument(d) > 1);
-    const multiSourceDocIds = multiDocs.map((d) => d.doc_id);
 
     const up_to_date_ids: string[] = [];
     const not_found: string[] = [];
@@ -1409,25 +1418,149 @@ export class AegisService {
     const observationIds: string[] = [];
     const drafts: Array<{ draft: import('../core/types.js').ProposalDraft; obsId: string }> = [];
 
+    // Pre-fetch pending update_doc proposals to avoid repeated queries in the loop
+    const pendingUpdateDocIds = new Set(
+      this.repo.getPendingProposalsByType('update_doc').map((p) => {
+        const pl = JSON.parse(p.payload) as Record<string, unknown>;
+        return pl.doc_id as string;
+      }),
+    );
+
+    // Mode-specific accumulators
+    let hash_sync_checked = 0;
+    let anchor_sync_checked = 0;
+    const anchorSyncProposalDocIds = new Set<string>();
+    const anchor_sync_failures: Array<{ doc_id: string; kind: string }> = [];
+    const semanticReviewDocs: import('../core/types.js').Document[] = [];
+    const semanticReviewDocIds: string[] = [];
+    // True multi-source subset (2+ distinct assets) for backward-compatible multi_source_doc_ids
+    const multiSourceDocs: import('../core/types.js').Document[] = [];
+    const multiSourceDocIds: string[] = [];
+
     for (const doc of docs) {
-      if (sourceRefCountFromDocument(doc) > 1) {
+      const mode: ReconcileMode = classifyReconcileMode(doc);
+
+      if (mode === 'untracked') {
         continue;
       }
 
+      if (mode === 'semantic-review') {
+        semanticReviewDocs.push(doc);
+        semanticReviewDocIds.push(doc.doc_id);
+        if (sourceRefCountFromDocument(doc) > 1) {
+          multiSourceDocs.push(doc);
+          multiSourceDocIds.push(doc.doc_id);
+        }
+        continue;
+      }
+
+      if (mode === 'anchor-sync') {
+        anchor_sync_checked++;
+        const parsed = parseSourceRefsJson(doc.source_refs_json ?? null);
+        const sliceRef = parsed.find((r) => r.anchor_type === 'section' || r.anchor_type === 'lines');
+        if (!sliceRef) {
+          skipped_invalid_anchor.push(doc.doc_id);
+          continue;
+        }
+
+        const sourcePath = sliceRef.asset_path;
+        const matResult = materializeAnchoredContent({
+          projectRoot: this.projectRoot,
+          source_path: sourcePath,
+          source_ref: sliceRef,
+        });
+
+        if (!matResult.ok) {
+          const failureKindMap: Record<string, string> = {
+            missing_anchor: 'anchor_missing',
+            unsupported_shape: 'anchor_unsupported',
+            unreadable_source: 'anchor_source_unreadable',
+            invalid_range: 'anchor_invalid_range',
+            ambiguous_anchor: 'anchor_missing',
+          };
+          const kind = failureKindMap[matResult.kind] ?? matResult.kind;
+          anchor_sync_failures.push({ doc_id: doc.doc_id, kind });
+
+          if (!params.dryRun) {
+            const stalenessPayload: import('../core/types.js').StalenessDetectedPayload = {
+              doc_id: doc.doc_id,
+              level: 2,
+              kind,
+              detail: matResult.detail,
+              algorithm_version: SEMANTIC_STALENESS_ALGORITHM_VERSION,
+              paths: [sourcePath],
+            };
+            const payloadStr = JSON.stringify(stalenessPayload);
+            if (!this.repo.hasUnarchivedObservationWithExactPayload('staleness_detected', payloadStr)) {
+              const oid = uuidv4();
+              this.repo.insertObservation({
+                observation_id: oid,
+                event_type: 'staleness_detected',
+                payload: payloadStr,
+                related_compile_id: null,
+                related_snapshot_id: null,
+              });
+            }
+          }
+          continue;
+        }
+
+        if (matResult.content_hash === doc.content_hash) {
+          up_to_date_ids.push(doc.doc_id);
+          continue;
+        }
+
+        // Drift detected
+        if (pendingUpdateDocIds.has(doc.doc_id)) {
+          skipped_pending.push(doc.doc_id);
+          continue;
+        }
+
+        if (params.dryRun) {
+          would_create_proposals.push(doc.doc_id);
+          continue;
+        }
+
+        const effectiveSourcePath = doc.source_path ?? sliceRef.asset_path;
+        const obsId = uuidv4();
+        this.repo.insertObservation({
+          observation_id: obsId,
+          event_type: 'document_import',
+          payload: JSON.stringify({
+            doc_id: doc.doc_id,
+            title: doc.title,
+            kind: doc.kind,
+            content: matResult.content,
+            source_path: effectiveSourcePath,
+          }),
+          related_compile_id: null,
+          related_snapshot_id: null,
+        });
+        observationIds.push(obsId);
+        anchorSyncProposalDocIds.add(doc.doc_id);
+
+        drafts.push({
+          obsId,
+          draft: {
+            proposal_type: 'update_doc',
+            payload: {
+              doc_id: doc.doc_id,
+              content: matResult.content,
+              content_hash: matResult.content_hash,
+              source_path: effectiveSourcePath,
+              source_refs_json: doc.source_refs_json,
+              ownership: doc.ownership,
+            },
+            evidence_observation_ids: [obsId],
+          },
+        });
+        continue;
+      }
+
+      // mode === 'hash-sync'
+      hash_sync_checked++;
       const primaryPath = primaryAssetPathForHashSync(doc);
       if (primaryPath == null || primaryPath.trim() === '') {
-        const parsed = parseSourceRefsJson(doc.source_refs_json ?? null);
-        if (parsed.length === 1 && parsed[0]!.anchor_type !== 'file') {
-          continue;
-        }
-        if (
-          parsed.length > 1 &&
-          sourceRefCountFromDocument(doc) === 1 &&
-          new Set(parsed.map((r) => r.asset_path.trim())).size === 1 &&
-          parsed.every((r) => r.anchor_type !== 'file')
-        ) {
-          continue;
-        }
         skipped_invalid_anchor.push(doc.doc_id);
         continue;
       }
@@ -1451,12 +1584,7 @@ export class AegisService {
         continue;
       }
 
-      const pendingUpdateDocs = this.repo.getPendingProposalsByType('update_doc');
-      const hasPending = pendingUpdateDocs.some((p) => {
-        const pl = JSON.parse(p.payload) as Record<string, unknown>;
-        return pl.doc_id === doc.doc_id;
-      });
-      if (hasPending) {
+      if (pendingUpdateDocIds.has(doc.doc_id)) {
         skipped_pending.push(doc.doc_id);
         continue;
       }
@@ -1508,13 +1636,18 @@ export class AegisService {
         dry_run: true,
         would_create_proposals,
         multi_source_doc_ids: multiSourceDocIds,
+        hash_sync_checked,
+        anchor_sync_checked,
+        anchor_sync_proposals_created: [],
+        anchor_sync_failures,
+        semantic_review_doc_ids: semanticReviewDocIds,
       };
     }
 
     let multi_source_staleness_observations = 0;
-    if (multiDocs.length > 0) {
+    if (semanticReviewDocs.length > 0) {
       const semantic_scan = collectSemanticStalenessFindings({
-        docs: multiDocs,
+        docs: semanticReviewDocs,
         edges: this.repo.getApprovedEdges(),
         projectRoot: this.projectRoot,
         getBaseline: (id) => this.repo.getStalenessBaseline(id),
@@ -1523,6 +1656,7 @@ export class AegisService {
       for (const u of semantic_scan.baselineUpserts) {
         this.repo.upsertStalenessBaseline(u.doc_id, u.fingerprint_json);
       }
+      const multiSourceDocIdSet = new Set(multiSourceDocIds);
       const insertedObsIds: string[] = [];
       for (const f of semantic_scan.findings) {
         const payloadStr = JSON.stringify(f);
@@ -1536,7 +1670,10 @@ export class AegisService {
           related_snapshot_id: null,
         });
         insertedObsIds.push(oid);
-        multi_source_staleness_observations++;
+        // Only count true multi-source findings for backward-compatible counter
+        if (multiSourceDocIdSet.has(f.doc_id)) {
+          multi_source_staleness_observations++;
+        }
       }
       if (insertedObsIds.length > 0) {
         await this.processObservations('staleness_detected', surface);
@@ -1557,6 +1694,11 @@ export class AegisService {
         skipped_invalid_anchor,
         multi_source_doc_ids: multiSourceDocIds,
         multi_source_staleness_observations,
+        hash_sync_checked,
+        anchor_sync_checked,
+        anchor_sync_proposals_created: [],
+        anchor_sync_failures,
+        semantic_review_doc_ids: semanticReviewDocIds,
       };
     }
 
@@ -1580,6 +1722,21 @@ export class AegisService {
         }
       }
 
+      // Identify anchor-sync proposals from created proposals
+      // Map draft doc_id → obsId for cross-referencing with proposal evidence
+      const anchorSyncObsIds = new Set(
+        drafts
+          .filter((d) => anchorSyncProposalDocIds.has((d.draft.payload as Record<string, unknown>).doc_id as string))
+          .map((d) => d.obsId),
+      );
+      const anchor_sync_proposals_created: string[] = [];
+      for (const proposalId of result.created_proposal_ids) {
+        const evidence = this.repo.getProposalEvidence(proposalId);
+        if (evidence.some((e) => anchorSyncObsIds.has(e.observation_id))) {
+          anchor_sync_proposals_created.push(proposalId);
+        }
+      }
+
       return {
         checked: docs.length,
         up_to_date: up_to_date_ids.length,
@@ -1589,6 +1746,11 @@ export class AegisService {
         skipped_invalid_anchor,
         multi_source_doc_ids: multiSourceDocIds,
         multi_source_staleness_observations,
+        hash_sync_checked,
+        anchor_sync_checked,
+        anchor_sync_proposals_created,
+        anchor_sync_failures,
+        semantic_review_doc_ids: semanticReviewDocIds,
       };
     } catch (err) {
       this.repo.resetObservationsAnalyzed(observationIds);

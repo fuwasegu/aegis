@@ -5,6 +5,60 @@
 import { normalizeSourcePath } from './paths.js';
 import type { Document, SourceAnchorType, SourceRef } from './types.js';
 
+// ---------------------------------------------------------------------------
+// ReconcileMode — ADR-016 D-3
+// ---------------------------------------------------------------------------
+
+/** Drift reconciliation strategy, derived deterministically from document provenance. */
+export type ReconcileMode = 'untracked' | 'hash-sync' | 'anchor-sync' | 'semantic-review';
+
+/**
+ * Derive the reconcile mode for a document based on its provenance metadata.
+ *
+ * - `untracked`:        ownership is not `file-anchored`
+ * - `hash-sync`:        single distinct asset, whole-file hash possible (`primaryAssetPathForHashSync !== null`)
+ * - `anchor-sync`:      single distinct asset, exactly 1 supported slice anchor (section/lines), no file anchor
+ * - `semantic-review`:  everything else (multi-source, unsupported compositions, malformed refs)
+ */
+export function classifyReconcileMode(
+  doc: Pick<Document, 'ownership' | 'source_path' | 'source_refs_json'>,
+): ReconcileMode {
+  if (doc.ownership !== 'file-anchored') return 'untracked';
+
+  // hash-sync takes precedence when whole-file hash comparison is possible
+  if (primaryAssetPathForHashSync(doc) !== null) return 'hash-sync';
+
+  // Check for anchor-sync: single distinct asset with exactly 1 supported slice anchor
+  const refCount = sourceRefCountFromDocument(doc);
+  if (refCount !== 1) return 'semantic-review';
+
+  const parsed = parseSourceRefsJson(doc.source_refs_json ?? null);
+  if (parsed.length === 0) return 'semantic-review';
+
+  // Guard: if parseSourceRefsJson silently dropped invalid rows, the raw JSON
+  // contained entries we cannot validate → fall back to semantic-review.
+  const rawCount = rawSourceRefsCount(doc.source_refs_json ?? null);
+  if (rawCount !== parsed.length) return 'semantic-review';
+
+  // All refs point to a single asset (refCount === 1 guarantees this)
+  // Filter to slice anchors only (section/lines)
+  const sliceRefs = parsed.filter((r) => r.anchor_type === 'section' || r.anchor_type === 'lines');
+  if (sliceRefs.length === 1) return 'anchor-sync';
+
+  return 'semantic-review';
+}
+
+/** Count raw array elements in source_refs_json without validation (for drop detection). */
+function rawSourceRefsCount(json: string | null): number {
+  if (json == null || String(json).trim() === '') return 0;
+  try {
+    const raw = JSON.parse(json) as unknown;
+    return Array.isArray(raw) ? raw.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
 const ANCHOR_TYPES = new Set<SourceAnchorType>(['file', 'section', 'lines']);
 
 export function isSourceAnchorType(x: string): x is SourceAnchorType {

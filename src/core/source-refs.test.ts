@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  classifyReconcileMode,
   normalizeStoredSourceRefsPayloadStrict,
   parseSourceRefsJson,
   primaryAssetPathForHashSync,
@@ -141,5 +142,84 @@ describe('source-refs (015-10)', () => {
     expect(() => validateSourceRef({ asset_path: 'x', anchor_type: 'lines', anchor_value: '  ' })).toThrow(
       /anchor_value/,
     );
+  });
+});
+
+describe('classifyReconcileMode (ADR-016)', () => {
+  const doc = (overrides: Partial<Document>): Pick<Document, 'ownership' | 'source_path' | 'source_refs_json'> => ({
+    ownership: 'file-anchored',
+    source_path: null,
+    source_refs_json: null,
+    ...overrides,
+  });
+
+  it('returns untracked for standalone ownership', () => {
+    expect(classifyReconcileMode(doc({ ownership: 'standalone' }))).toBe('untracked');
+  });
+
+  it('returns untracked for derived ownership', () => {
+    expect(classifyReconcileMode(doc({ ownership: 'derived' }))).toBe('untracked');
+  });
+
+  it('returns hash-sync for single file anchor via source_path', () => {
+    expect(classifyReconcileMode(doc({ source_path: 'docs/a.md' }))).toBe('hash-sync');
+  });
+
+  it('returns hash-sync for single file anchor via source_refs_json', () => {
+    const refs = JSON.stringify([{ asset_path: 'docs/a.md', anchor_type: 'file', anchor_value: '' }]);
+    expect(classifyReconcileMode(doc({ source_refs_json: refs }))).toBe('hash-sync');
+  });
+
+  it('returns hash-sync for source_path + file anchor on same asset', () => {
+    const refs = JSON.stringify([{ asset_path: 'docs/a.md', anchor_type: 'file', anchor_value: '' }]);
+    expect(classifyReconcileMode(doc({ source_path: 'docs/a.md', source_refs_json: refs }))).toBe('hash-sync');
+  });
+
+  it('returns anchor-sync for single section anchor', () => {
+    const refs = JSON.stringify([{ asset_path: 'docs/a.md', anchor_type: 'section', anchor_value: '## Heading' }]);
+    expect(classifyReconcileMode(doc({ source_refs_json: refs }))).toBe('anchor-sync');
+  });
+
+  it('returns anchor-sync for single lines anchor', () => {
+    const refs = JSON.stringify([{ asset_path: 'docs/a.md', anchor_type: 'lines', anchor_value: '1-10' }]);
+    expect(classifyReconcileMode(doc({ source_refs_json: refs }))).toBe('anchor-sync');
+  });
+
+  it('returns semantic-review for multi-source docs (2 distinct assets)', () => {
+    const refs = JSON.stringify([
+      { asset_path: 'docs/a.md', anchor_type: 'file', anchor_value: '' },
+      { asset_path: 'docs/b.md', anchor_type: 'file', anchor_value: '' },
+    ]);
+    expect(classifyReconcileMode(doc({ source_refs_json: refs }))).toBe('semantic-review');
+  });
+
+  it('returns semantic-review for multiple slice anchors on same asset (no file anchor)', () => {
+    const refs = JSON.stringify([
+      { asset_path: 'docs/a.md', anchor_type: 'section', anchor_value: '## A' },
+      { asset_path: 'docs/a.md', anchor_type: 'section', anchor_value: '## B' },
+    ]);
+    expect(classifyReconcileMode(doc({ source_refs_json: refs }))).toBe('semantic-review');
+  });
+
+  it('returns hash-sync when file + section coexist on same asset with source_path', () => {
+    const refs = JSON.stringify([
+      { asset_path: 'docs/a.md', anchor_type: 'file', anchor_value: '' },
+      { asset_path: 'docs/a.md', anchor_type: 'section', anchor_value: '## X' },
+    ]);
+    expect(classifyReconcileMode(doc({ source_path: 'docs/a.md', source_refs_json: refs }))).toBe('hash-sync');
+  });
+
+  it('returns semantic-review for file-anchored doc with no refs and no source_path', () => {
+    expect(classifyReconcileMode(doc({}))).toBe('semantic-review');
+  });
+
+  it('returns semantic-review when source_refs_json contains invalid rows alongside valid section ref', () => {
+    // One valid section + one invalid row → parseSourceRefsJson drops the bogus row,
+    // but classifyReconcileMode detects the drop and falls back to semantic-review.
+    const refs = JSON.stringify([
+      { asset_path: 'docs/a.md', anchor_type: 'section', anchor_value: '## A' },
+      { asset_path: 'docs/b.md', anchor_type: 'bogus', anchor_value: 'x' },
+    ]);
+    expect(classifyReconcileMode(doc({ source_refs_json: refs }))).toBe('semantic-review');
   });
 });
