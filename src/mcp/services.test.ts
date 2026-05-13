@@ -2210,7 +2210,7 @@ describe('AegisService — syncDocs', () => {
     expect(result.proposals_created).toHaveLength(0);
   });
 
-  it('skips file-anchored docs with missing source_path without throwing', async () => {
+  it('routes file-anchored doc with missing source_path to semantic-review (ADR-016)', async () => {
     const contentHash = hash('body');
     repo.insertDocument({
       doc_id: 'corrupt-anchor',
@@ -2227,7 +2227,9 @@ describe('AegisService — syncDocs', () => {
     db.prepare('UPDATE documents SET source_path = NULL WHERE doc_id = ?').run('corrupt-anchor');
 
     const result = await service.syncDocs({}, 'admin');
-    expect(result.skipped_invalid_anchor).toContain('corrupt-anchor');
+    // ADR-016: doc with no provenance is semantic-review (no auto-update)
+    expect(result.semantic_review_doc_ids).toContain('corrupt-anchor');
+    expect(result.skipped_invalid_anchor).not.toContain('corrupt-anchor');
     expect(result.proposals_created).toHaveLength(0);
   });
 
@@ -2346,6 +2348,383 @@ describe('AegisService — syncDocs', () => {
     expect(result.would_create_proposals).toEqual(['dry-doc']);
     expect(result.proposals_created).toHaveLength(0);
     expect(repo.listProposals('pending', 100, 0).proposals).toHaveLength(0);
+  });
+
+  // ============================================================
+  // ADR-016: reconcile mode routing
+  // ============================================================
+
+  it('hash-sync doc increments hash_sync_checked', async () => {
+    writeFileSync(join(tmpDir, 'hs.md'), 'same');
+    insertApprovedDoc('hs-doc', 'same', 'hs.md');
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.hash_sync_checked).toBe(1);
+    expect(result.anchor_sync_checked).toBe(0);
+    expect(result.semantic_review_doc_ids).toEqual([]);
+    expect(result.up_to_date).toBe(1);
+  });
+
+  it('anchor-sync detects drift and creates update_doc proposal (section)', async () => {
+    const rel = 'anchored.md';
+    // Target is second section (not first, to avoid preamble absorption)
+    const originalSection = 'Original section body';
+    const fullFile = `## Intro\n\nintro text\n\n## Target\n\n${originalSection}\n\n## Other\n\nstuff`;
+    writeFileSync(join(tmpDir, rel), fullFile);
+
+    // Insert doc whose content matches the section extraction
+    repo.insertDocument({
+      doc_id: 'anchored-doc',
+      title: 'Anchored',
+      kind: 'guideline',
+      content: originalSection,
+      content_hash: hash(originalSection),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: rel, anchor_type: 'section', anchor_value: '## Target' }]),
+    });
+
+    // Modify the source file so the section drifts
+    const updatedSection = 'Updated section body';
+    const updatedFile = `## Intro\n\nintro text\n\n## Target\n\n${updatedSection}\n\n## Other\n\nstuff`;
+    writeFileSync(join(tmpDir, rel), updatedFile);
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.anchor_sync_checked).toBe(1);
+    expect(result.proposals_created).toHaveLength(1);
+    expect(result.anchor_sync_proposals_created).toHaveLength(1);
+
+    const proposal = repo.getProposal(result.proposals_created[0]);
+    expect(proposal!.proposal_type).toBe('update_doc');
+    const payload = JSON.parse(proposal!.payload);
+    expect(payload.doc_id).toBe('anchored-doc');
+    expect(payload.content).toBe(updatedSection);
+    expect(payload.source_refs_json).not.toBeNull();
+    expect(payload.ownership).toBe('file-anchored');
+  });
+
+  it('anchor-sync reports up_to_date when section has not changed', async () => {
+    const rel = 'stable.md';
+    const sectionBody = 'Stable content';
+    // Target is second section to avoid preamble absorption
+    const fullFile = `## First\n\nfirst body\n\n## Sec\n\n${sectionBody}\n\n## End\n\nfooter`;
+    writeFileSync(join(tmpDir, rel), fullFile);
+
+    repo.insertDocument({
+      doc_id: 'stable-anchor',
+      title: 'Stable',
+      kind: 'guideline',
+      content: sectionBody,
+      content_hash: hash(sectionBody),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: rel, anchor_type: 'section', anchor_value: '## Sec' }]),
+    });
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.anchor_sync_checked).toBe(1);
+    expect(result.up_to_date).toBe(1);
+    expect(result.proposals_created).toHaveLength(0);
+  });
+
+  it('anchor-sync missing heading creates staleness_detected observation (anchor_missing)', async () => {
+    const rel = 'missing-heading.md';
+    writeFileSync(join(tmpDir, rel), '# Top\n\n## Other\n\nno target heading');
+
+    repo.insertDocument({
+      doc_id: 'missing-heading-doc',
+      title: 'MH',
+      kind: 'guideline',
+      content: 'old content',
+      content_hash: hash('old content'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: rel, anchor_type: 'section', anchor_value: '## NonExistent' }]),
+    });
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.anchor_sync_checked).toBe(1);
+    expect(result.anchor_sync_failures).toHaveLength(1);
+    expect(result.anchor_sync_failures[0].doc_id).toBe('missing-heading-doc');
+    expect(result.anchor_sync_failures[0].kind).toBe('anchor_missing');
+    expect(result.proposals_created).toHaveLength(0);
+
+    // Verify staleness_detected observation was created
+    const obs = repo.listObservations({ event_type: 'staleness_detected' });
+    expect(obs.observations.length).toBeGreaterThanOrEqual(1);
+    const payload = JSON.parse(obs.observations[0].payload);
+    expect(payload.doc_id).toBe('missing-heading-doc');
+    expect(payload.level).toBe(2);
+    expect(payload.kind).toBe('anchor_missing');
+  });
+
+  it('anchor-sync invalid line range creates staleness_detected (anchor_invalid_range)', async () => {
+    const rel = 'short.md';
+    writeFileSync(join(tmpDir, rel), 'line1\nline2');
+
+    repo.insertDocument({
+      doc_id: 'bad-range-doc',
+      title: 'BR',
+      kind: 'guideline',
+      content: 'old',
+      content_hash: hash('old'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: rel, anchor_type: 'lines', anchor_value: '1-999' }]),
+    });
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.anchor_sync_failures).toHaveLength(1);
+    expect(result.anchor_sync_failures[0].kind).toBe('anchor_invalid_range');
+  });
+
+  it('anchor-sync unreadable source creates staleness_detected (anchor_source_unreadable)', async () => {
+    // Reference a file that does not exist
+    repo.insertDocument({
+      doc_id: 'unreadable-doc',
+      title: 'UR',
+      kind: 'guideline',
+      content: 'old',
+      content_hash: hash('old'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([
+        { asset_path: 'nonexistent-dir/gone.md', anchor_type: 'section', anchor_value: '## Sec' },
+      ]),
+    });
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.anchor_sync_failures).toHaveLength(1);
+    expect(result.anchor_sync_failures[0].doc_id).toBe('unreadable-doc');
+    expect(result.anchor_sync_failures[0].kind).toBe('anchor_source_unreadable');
+
+    const obs = repo.listObservations({ event_type: 'staleness_detected' });
+    expect(obs.observations.length).toBeGreaterThanOrEqual(1);
+    const payload = JSON.parse(obs.observations[0].payload);
+    expect(payload.kind).toBe('anchor_source_unreadable');
+  });
+
+  it('anchor-sync detects drift with line-range anchor', async () => {
+    const rel = 'lines.md';
+    const originalLines = 'line1\nline2\nline3';
+    writeFileSync(join(tmpDir, rel), originalLines);
+
+    // Extract lines 1-2
+    const extractedContent = 'line1\nline2';
+    repo.insertDocument({
+      doc_id: 'lines-doc',
+      title: 'Lines',
+      kind: 'guideline',
+      content: extractedContent,
+      content_hash: hash(extractedContent),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: rel, anchor_type: 'lines', anchor_value: '1-2' }]),
+    });
+
+    // Change lines 1-2
+    writeFileSync(join(tmpDir, rel), 'changed1\nchanged2\nline3');
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.anchor_sync_checked).toBe(1);
+    expect(result.proposals_created).toHaveLength(1);
+
+    const proposal = repo.getProposal(result.proposals_created[0]);
+    const payload = JSON.parse(proposal!.payload);
+    expect(payload.content).toBe('changed1\nchanged2');
+  });
+
+  it('semantic-review doc goes to semantic_review_doc_ids, not auto-updated', async () => {
+    const rel1 = 'multi-a.md';
+    const rel2 = 'multi-b.md';
+    writeFileSync(join(tmpDir, rel1), 'content a');
+    writeFileSync(join(tmpDir, rel2), 'content b');
+
+    repo.insertDocument({
+      doc_id: 'multi-doc',
+      title: 'Multi',
+      kind: 'guideline',
+      content: 'combined',
+      content_hash: hash('combined'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: rel1,
+      source_refs_json: JSON.stringify([
+        { asset_path: rel1, anchor_type: 'file', anchor_value: '' },
+        { asset_path: rel2, anchor_type: 'file', anchor_value: '' },
+      ]),
+    });
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.semantic_review_doc_ids).toContain('multi-doc');
+    // multi_source_doc_ids only includes true multi-source (2+ distinct assets)
+    expect(result.multi_source_doc_ids).toContain('multi-doc');
+    expect(result.hash_sync_checked).toBe(0);
+    expect(result.anchor_sync_checked).toBe(0);
+  });
+
+  it('multi_source_doc_ids excludes non-multi-source semantic-review docs', async () => {
+    // A file-anchored doc with corrupted provenance (NULL source_path after insert)
+    // routes to semantic-review but is NOT multi-source (0 distinct assets)
+    repo.insertDocument({
+      doc_id: 'no-prov-doc',
+      title: 'NoProv',
+      kind: 'guideline',
+      content: 'body',
+      content_hash: hash('body'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: 'placeholder.md',
+      source_refs_json: null,
+    });
+    db.prepare('UPDATE documents SET source_path = NULL WHERE doc_id = ?').run('no-prov-doc');
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.semantic_review_doc_ids).toContain('no-prov-doc');
+    expect(result.multi_source_doc_ids).not.toContain('no-prov-doc');
+  });
+
+  it('anchor-sync skips doc with pending update_doc proposal', async () => {
+    const rel = 'pending-anchor.md';
+    const sectionBody = 'body';
+    writeFileSync(join(tmpDir, rel), `## Sec\n\n${sectionBody}\n`);
+
+    repo.insertDocument({
+      doc_id: 'pending-anchor-doc',
+      title: 'PA',
+      kind: 'guideline',
+      content: 'old',
+      content_hash: hash('old'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: rel, anchor_type: 'section', anchor_value: '## Sec' }]),
+    });
+
+    // Insert a pending update_doc proposal for this doc
+    repo.insertProposal({
+      proposal_id: 'existing-prop',
+      proposal_type: 'update_doc',
+      payload: JSON.stringify({ doc_id: 'pending-anchor-doc', content: 'pending' }),
+      status: 'pending',
+      review_comment: null,
+    });
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.skipped_pending).toContain('pending-anchor-doc');
+    expect(result.proposals_created).toHaveLength(0);
+  });
+
+  it('anchor-sync dryRun reports would_create_proposals without creating', async () => {
+    const rel = 'dry-anchor.md';
+    const sectionBody = 'original';
+    writeFileSync(join(tmpDir, rel), `## Sec\n\n${sectionBody}\n\n## End\n\nfoo`);
+
+    repo.insertDocument({
+      doc_id: 'dry-anchor-doc',
+      title: 'DA',
+      kind: 'guideline',
+      content: sectionBody,
+      content_hash: hash(sectionBody),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: rel, anchor_type: 'section', anchor_value: '## Sec' }]),
+    });
+
+    // Drift the section
+    writeFileSync(join(tmpDir, rel), `## Sec\n\nupdated\n\n## End\n\nfoo`);
+
+    const result = await service.syncDocs({ dryRun: true }, 'admin');
+    expect(result.dry_run).toBe(true);
+    expect(result.would_create_proposals).toContain('dry-anchor-doc');
+    expect(result.proposals_created).toHaveLength(0);
+    expect(result.anchor_sync_checked).toBe(1);
+  });
+
+  it('anchor-sync failure in dryRun still reports anchor_sync_failures', async () => {
+    const rel = 'dry-fail.md';
+    writeFileSync(join(tmpDir, rel), '## Other\n\nbody');
+
+    repo.insertDocument({
+      doc_id: 'dry-fail-doc',
+      title: 'DF',
+      kind: 'guideline',
+      content: 'old',
+      content_hash: hash('old'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: rel, anchor_type: 'section', anchor_value: '## Missing' }]),
+    });
+
+    const result = await service.syncDocs({ dryRun: true }, 'admin');
+    expect(result.anchor_sync_failures).toHaveLength(1);
+    expect(result.anchor_sync_failures[0].kind).toBe('anchor_missing');
+    // dryRun should NOT create staleness_detected observations
+    const obs = repo.listObservations({ event_type: 'staleness_detected' });
+    expect(obs.observations).toHaveLength(0);
+  });
+
+  it('hash-sync regression: existing behavior unchanged', async () => {
+    writeFileSync(join(tmpDir, 'reg.md'), 'original');
+    insertApprovedDoc('reg-doc', 'original', 'reg.md');
+    writeFileSync(join(tmpDir, 'reg.md'), 'changed');
+
+    const result = await service.syncDocs({}, 'admin');
+    expect(result.hash_sync_checked).toBe(1);
+    expect(result.proposals_created).toHaveLength(1);
+    const payload = JSON.parse(repo.getProposal(result.proposals_created[0])!.payload);
+    expect(payload.content).toBe('changed');
+    // anchor-sync fields should be zero/empty
+    expect(result.anchor_sync_checked).toBe(0);
+    expect(result.anchor_sync_proposals_created).toHaveLength(0);
+    expect(result.anchor_sync_failures).toHaveLength(0);
+  });
+
+  it('pending update_doc blocks anchor-sync double proposal', async () => {
+    const rel = 'no-dup.md';
+    const body = 'body text';
+    writeFileSync(join(tmpDir, rel), `## Sec\n\n${body}\n`);
+
+    repo.insertDocument({
+      doc_id: 'no-dup-doc',
+      title: 'ND',
+      kind: 'guideline',
+      content: 'old',
+      content_hash: hash('old'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: rel, anchor_type: 'section', anchor_value: '## Sec' }]),
+    });
+
+    // First sync creates proposal
+    const r1 = await service.syncDocs({}, 'admin');
+    expect(r1.proposals_created).toHaveLength(1);
+
+    // Second sync should skip (pending proposal exists)
+    const r2 = await service.syncDocs({}, 'admin');
+    expect(r2.skipped_pending).toContain('no-dup-doc');
+    expect(r2.proposals_created).toHaveLength(0);
   });
 });
 
