@@ -13,6 +13,19 @@ export const IMPORT_PLAN_ALGORITHM_VERSION = 'import-plan/1';
 
 const DOC_ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
+/* ── ADR-016 Task 016-01: compile unit advisory types ── */
+
+export type ReconcileMode = 'untracked' | 'hash-sync' | 'anchor-sync' | 'semantic-review';
+
+export type MaterializationKind = 'whole-file' | 'markdown-section' | 'line-range' | 'composed';
+
+export type ImportUnitDiagnosticCode = 'oversize_unit' | 'weak_routing_signal' | 'semantic_review_only';
+
+export interface ImportUnitDiagnostic {
+  code: ImportUnitDiagnosticCode;
+  message: string;
+}
+
 export interface SuggestedImportUnit {
   /** Stable within the parent ImportPlan (0-based). */
   unit_index: number;
@@ -20,8 +33,16 @@ export interface SuggestedImportUnit {
   title: string;
   kind: DocumentKind;
   content_slice: string;
+  /** ADR-016: UTF-8 byte length of content_slice. */
+  content_bytes: number;
   edge_hints: EdgeSpec[];
   tags: string[];
+  /** ADR-016: how this unit would be materialized from source. Advisory only. */
+  materialization_kind: MaterializationKind;
+  /** ADR-016: how drift reconciliation would work. Advisory only. */
+  reconcile_mode: ReconcileMode;
+  /** ADR-016: advisory diagnostics about unit quality / sync concerns. */
+  diagnostics: ImportUnitDiagnostic[];
 }
 
 export interface OverlapWarning {
@@ -244,6 +265,118 @@ function headingTags(title: string): string[] {
   return [...seen].sort().slice(0, 8);
 }
 
+/* ── ADR-016: derivation helpers for advisory fields ── */
+
+const OVERSIZE_THRESHOLD = 4096;
+
+function deriveContentBytes(slice: string): number {
+  return Buffer.byteLength(slice, 'utf8');
+}
+
+/**
+ * Determine how a unit would be materialized from source.
+ *
+ * @param sectionCount  Total number of `## ` sections in the source document
+ * @param unitIndex     0-based index of this unit within the plan
+ * @param sourceRefs    Optional explicit source_refs from the caller
+ * @param resolvedSourcePath  Repo-relative path when content was read from file
+ * @param fullContent   Full normalized input content
+ * @param contentSlice  This unit's content slice
+ */
+function deriveMaterializationKind(
+  sectionCount: number,
+  _unitIndex: number,
+  sourceRefs: SourceRef[] | undefined,
+  resolvedSourcePath: string | null,
+  fullContent: string,
+  contentSlice: string,
+): MaterializationKind {
+  // Multi-source (multiple distinct asset paths) → composed (cannot deterministically sync)
+  if (sourceRefs && sourceRefs.length > 0) {
+    const distinctPaths = new Set(sourceRefs.map((r) => r.asset_path));
+    if (distinctPaths.size > 1) {
+      return 'composed';
+    }
+    // Single source_ref with supported anchor → deterministic materialization
+    if (sourceRefs.length === 1) {
+      if (sourceRefs[0].anchor_type === 'lines') return 'line-range';
+      if (sourceRefs[0].anchor_type === 'section') return 'markdown-section';
+    }
+  }
+
+  // If multi-section split, each unit is a markdown-section
+  if (sectionCount > 1) {
+    return 'markdown-section';
+  }
+
+  // Single section: if source file exists and content matches full file, it's whole-file
+  if (resolvedSourcePath != null && sectionCount === 1) {
+    const normalizedFull = fullContent.replace(/\r\n/g, '\n').trim();
+    const normalizedSlice = contentSlice.trim();
+    if (normalizedFull === normalizedSlice) {
+      return 'whole-file';
+    }
+  }
+
+  // Fallback
+  return 'composed';
+}
+
+/**
+ * Determine how drift reconciliation would work for a unit.
+ */
+function deriveReconcileMode(
+  materializationKind: MaterializationKind,
+  resolvedSourcePath: string | null,
+  sourceRefs: SourceRef[] | undefined,
+): ReconcileMode {
+  // No source path → untracked
+  if (resolvedSourcePath == null && (!sourceRefs || sourceRefs.length === 0)) {
+    return 'untracked';
+  }
+
+  // whole-file → hash-sync
+  if (materializationKind === 'whole-file') {
+    return 'hash-sync';
+  }
+
+  // markdown-section or line-range with a single supported anchor → anchor-sync
+  if (materializationKind === 'markdown-section' || materializationKind === 'line-range') {
+    return 'anchor-sync';
+  }
+
+  // composed or multi-source → semantic-review
+  return 'semantic-review';
+}
+
+function deriveDiagnostics(
+  contentBytes: number,
+  reconcileMode: ReconcileMode,
+  edgeHints: EdgeSpec[],
+  tags: string[],
+): ImportUnitDiagnostic[] {
+  const diags: ImportUnitDiagnostic[] = [];
+  if (contentBytes > OVERSIZE_THRESHOLD) {
+    diags.push({
+      code: 'oversize_unit',
+      message: `Unit is ${contentBytes} bytes (threshold: ${OVERSIZE_THRESHOLD}). Consider splitting for better auto-inline.`,
+    });
+  }
+  if (edgeHints.length === 0 && tags.length === 0) {
+    diags.push({
+      code: 'weak_routing_signal',
+      message: 'No edge hints or tags — this unit may not appear in compile results without manual edge configuration.',
+    });
+  }
+  if (reconcileMode === 'semantic-review') {
+    diags.push({
+      code: 'semantic_review_only',
+      message: 'Drift reconciliation requires manual review — no deterministic sync path available.',
+    });
+  }
+  return diags;
+}
+
 function edgeHintsForBody(body: string): EdgeSpec[] {
   const globs = globsFromBody(body);
   const hints: EdgeSpec[] = [];
@@ -324,6 +457,9 @@ export function analyzeDocumentForImportPlan(
   const batchIdx = options?.batch_file_index;
   const multiSource = batchIdx !== undefined && batchIdx >= 0;
 
+  const resolvedPath = options?.resolved_source_path ?? null;
+  const sourceRefs = options?.source_refs;
+
   sections.forEach((sec, idx) => {
     let base = slugDocId(sec.title, idx);
     if (multiSource) {
@@ -333,6 +469,17 @@ export function analyzeDocumentForImportPlan(
     const kind = inferDefaultKind(sec.title, sec.body);
     const tags = headingTags(sec.title);
     const edge_hints = edgeHintsForBody(sec.body);
+    const content_bytes = deriveContentBytes(sec.body);
+    const materialization_kind = deriveMaterializationKind(
+      sections.length,
+      idx,
+      sourceRefs,
+      resolvedPath,
+      normalizedInput,
+      sec.body,
+    );
+    const reconcile_mode = deriveReconcileMode(materialization_kind, resolvedPath, sourceRefs);
+    const diagnostics = deriveDiagnostics(content_bytes, reconcile_mode, edge_hints, tags);
 
     units.push({
       unit_index: idx,
@@ -340,8 +487,12 @@ export function analyzeDocumentForImportPlan(
       title: sec.title.slice(0, 200),
       kind,
       content_slice: sec.body,
+      content_bytes,
       edge_hints,
       tags,
+      materialization_kind,
+      reconcile_mode,
+      diagnostics,
     });
 
     const tokens = tokenize(sec.body);
@@ -441,14 +592,45 @@ export function parseImportPlanJson(repo: Repository, raw: unknown): ImportPlan 
         })
       : [];
     const tags = Array.isArray(tags_raw) && tags_raw.every((t) => typeof t === 'string') ? (tags_raw as string[]) : [];
+
+    // ADR-016: advisory fields — tolerate presence or absence (forward-compatible)
+    const VALID_MAT_KINDS: MaterializationKind[] = ['whole-file', 'markdown-section', 'line-range', 'composed'];
+    const VALID_REC_MODES: ReconcileMode[] = ['untracked', 'hash-sync', 'anchor-sync', 'semantic-review'];
+
+    const parsedContentBytes =
+      typeof ur.content_bytes === 'number' && ur.content_bytes >= 0
+        ? ur.content_bytes
+        : deriveContentBytes(content_slice);
+    const parsedMatKind =
+      typeof ur.materialization_kind === 'string' &&
+      VALID_MAT_KINDS.includes(ur.materialization_kind as MaterializationKind)
+        ? (ur.materialization_kind as MaterializationKind)
+        : ('composed' as MaterializationKind);
+    const parsedRecMode =
+      typeof ur.reconcile_mode === 'string' && VALID_REC_MODES.includes(ur.reconcile_mode as ReconcileMode)
+        ? (ur.reconcile_mode as ReconcileMode)
+        : ('untracked' as ReconcileMode);
+    const parsedDiagnostics: ImportUnitDiagnostic[] = [];
+    if (Array.isArray(ur.diagnostics)) {
+      for (const d of ur.diagnostics) {
+        if (isRecord(d) && typeof d.code === 'string' && typeof d.message === 'string') {
+          parsedDiagnostics.push({ code: d.code as ImportUnitDiagnosticCode, message: d.message });
+        }
+      }
+    }
+
     return {
       unit_index: typeof ur.unit_index === 'number' && Number.isInteger(ur.unit_index) ? ur.unit_index : idx,
       doc_id,
       title,
       kind: kind as DocumentKind,
       content_slice,
+      content_bytes: parsedContentBytes,
       edge_hints,
       tags,
+      materialization_kind: parsedMatKind,
+      reconcile_mode: parsedRecMode,
+      diagnostics: parsedDiagnostics,
     };
   });
 
