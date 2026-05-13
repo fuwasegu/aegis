@@ -249,7 +249,7 @@ HuggingFace URI を直接指定することも可能: `--model hf:user/repo:file
 | `aegis_observe` | オブザベーション記録（compile_miss, review_correction, pr_merged, manual_note, document_import, doc_gap_detected） |
 | `aegis_get_compile_audit` | 過去のコンパイルの監査ログを取得 |
 | `aegis_get_known_tags` | tag_mappings の意図タグ一覧（承認ドキュメントに紐づくもの）と `knowledge_version`、キャッシュ用 SHA-256 `tag_catalog_hash` |
-| `aegis_workspace_status` | 読み取り専用のワークスペーススナップショット（最近のコンパイル領域、未解決 compile_miss、保留プロポーザル数） |
+| `aegis_workspace_status` | 読み取り専用のワークスペーススナップショット（最近のコンパイル領域、未解決 compile_miss、保留プロポーザル数、reconcile バックログ（hash-sync/anchor-sync/semantic-review）） |
 | `aegis_init_detect` | プロジェクト分析と初期化プレビュー生成 |
 
 ### MCP ツール — Admin Surface（追加 18 ツール、計 24）
@@ -268,12 +268,12 @@ HuggingFace URI を直接指定することも可能: `--model hf:user/repo:file
 | `aegis_archive_observations` | 古いオブザベーションをアーカイブ |
 | `aegis_get_stats` | ナレッジ集計とヘルスシグナル |
 | `aegis_list_observations` | オブザベーション一覧（outcome フィルタ: proposed / skipped / pending） |
-| `aegis_import_doc` | ドキュメントを Canonical Knowledge にインポート（`content` または `file_path` 指定） |
+| `aegis_import_doc` | ドキュメントを Canonical Knowledge にインポート（`content` または `file_path` 指定）。大きなコンテンツ・複数セクション・semantic-review モードに対する advisory warning を返却 |
 | `aegis_analyze_doc` | ADR-015: `content` または `file_path` を ImportPlan に分析（読み取り専用） |
 | `aegis_analyze_import_batch` | ADR-015: 一括取り込み分析（ドキュメント横断の重複検知） |
 | `aegis_execute_import_plan` | ADR-015: ImportPlan を `bundle_id` 共有のプロポーザルに具体化 |
 | `aegis_process_observations` | 未分析のオブザベーションに対して分析パイプラインを実行 |
-| `aegis_sync_docs` | ファイルアンカー済みドキュメントをソースファイルと同期 |
+| `aegis_sync_docs` | ファイルアンカー済みドキュメントをソースファイルと同期（reconcile-mode-aware: hash-sync, anchor-sync, semantic-review） |
 
 ### CLI サブコマンド
 

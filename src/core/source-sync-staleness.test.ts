@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isFileAnchoredSourceStale,
   listStaleFileAnchoredDocIds,
+  reconcileModeAwareNotices,
   SOURCE_SYNC_STALE_WARNING_DAYS,
   sourceSyncStalenessWarningsForDocuments,
 } from './source-sync-staleness.js';
@@ -149,5 +150,141 @@ describe('source-sync-staleness (ADR-014)', () => {
     expect(w).toHaveLength(2);
     expect(w[0]).toContain("'a'");
     expect(w[1]).toContain("'b'");
+  });
+});
+
+describe('reconcileModeAwareNotices (ADR-016 Task 016-04)', () => {
+  const now = new Date('2026-06-01T12:00:00.000Z').getTime();
+
+  it('produces hash-sync notice for stale single-file doc', () => {
+    const d = doc({
+      doc_id: 'hs',
+      title: 'HashSync',
+      ownership: 'file-anchored',
+      source_path: 'a.md',
+      source_synced_at: null,
+    });
+    const notices = reconcileModeAwareNotices([d], 90, now);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('hash-sync');
+    expect(notices[0]).toContain("'hs'");
+  });
+
+  it('produces anchor-sync notice for stale anchor doc', () => {
+    const d = doc({
+      doc_id: 'as',
+      title: 'AnchorSync',
+      ownership: 'file-anchored',
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: 'a.md', anchor_type: 'section', anchor_value: '## X' }]),
+      source_synced_at: null,
+    });
+    const notices = reconcileModeAwareNotices([d], 90, now);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('anchor-sync');
+    expect(notices[0]).toContain("'as'");
+  });
+
+  it('produces summary notice for semantic-review docs', () => {
+    const docs = [
+      doc({
+        doc_id: 'sr1',
+        title: 'SR1',
+        ownership: 'file-anchored',
+        source_path: null,
+        source_refs_json: JSON.stringify([
+          { asset_path: 'a.md', anchor_type: 'file', anchor_value: '' },
+          { asset_path: 'b.md', anchor_type: 'file', anchor_value: '' },
+        ]),
+      }),
+      doc({
+        doc_id: 'sr2',
+        title: 'SR2',
+        ownership: 'file-anchored',
+        source_path: null,
+        source_refs_json: JSON.stringify([
+          { asset_path: 'c.md', anchor_type: 'file', anchor_value: '' },
+          { asset_path: 'd.md', anchor_type: 'file', anchor_value: '' },
+        ]),
+      }),
+    ];
+    const notices = reconcileModeAwareNotices(docs, 90, now);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('2 document(s) in semantic-review');
+  });
+
+  it('skips standalone docs', () => {
+    const d = doc({
+      doc_id: 'sa',
+      title: 'Standalone',
+      ownership: 'standalone',
+      source_path: 'x.md',
+      source_synced_at: null,
+    });
+    expect(reconcileModeAwareNotices([d], 90, now)).toHaveLength(0);
+  });
+
+  it('skips non-stale hash-sync docs', () => {
+    const d = doc({
+      doc_id: 'ok',
+      title: 'OK',
+      ownership: 'file-anchored',
+      source_path: 'x.md',
+      source_synced_at: '2026-05-01T12:00:00.000Z',
+    });
+    expect(reconcileModeAwareNotices([d], 90, now)).toHaveLength(0);
+  });
+
+  it('produces notices sorted by doc_id within each mode', () => {
+    const docs = [
+      doc({
+        doc_id: 'z-hash',
+        title: 'Z',
+        ownership: 'file-anchored',
+        source_path: 'z.md',
+        source_synced_at: null,
+      }),
+      doc({
+        doc_id: 'a-hash',
+        title: 'A',
+        ownership: 'file-anchored',
+        source_path: 'a.md',
+        source_synced_at: null,
+      }),
+    ];
+    const notices = reconcileModeAwareNotices(docs, 90, now);
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toContain("'a-hash'");
+    expect(notices[1]).toContain("'z-hash'");
+  });
+
+  it('produces anchor failure notice for fresh anchor-sync doc with backlog', () => {
+    const d = doc({
+      doc_id: 'af',
+      title: 'AnchorFail',
+      ownership: 'file-anchored',
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: 'a.md', anchor_type: 'section', anchor_value: '## X' }]),
+      source_synced_at: '2026-05-30T12:00:00.000Z', // fresh — not stale by age
+    });
+    const anchorFailureDocIds = new Set(['af']);
+    const notices = reconcileModeAwareNotices([d], 90, now, anchorFailureDocIds);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('Anchor failure');
+    expect(notices[0]).toContain("'af'");
+  });
+
+  it('does not produce anchor failure notice when doc_id not in failure set', () => {
+    const d = doc({
+      doc_id: 'clean',
+      title: 'Clean',
+      ownership: 'file-anchored',
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: 'a.md', anchor_type: 'section', anchor_value: '## X' }]),
+      source_synced_at: '2026-05-30T12:00:00.000Z',
+    });
+    const anchorFailureDocIds = new Set(['other-doc']);
+    const notices = reconcileModeAwareNotices([d], 90, now, anchorFailureDocIds);
+    expect(notices).toHaveLength(0);
   });
 });

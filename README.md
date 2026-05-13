@@ -249,7 +249,7 @@ You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 | `aegis_observe` | Record observations (compile_miss, review_correction, pr_merged, manual_note, document_import, doc_gap_detected) |
 | `aegis_get_compile_audit` | Retrieve audit log of a past compile |
 | `aegis_get_known_tags` | Distinct intent tags from tag_mappings (approved-linked) with `knowledge_version` and SHA-256 `tag_catalog_hash` for caching |
-| `aegis_workspace_status` | Read-only workspace snapshot: recent compile regions, unresolved compile_miss backlog, pending proposal count |
+| `aegis_workspace_status` | Read-only workspace snapshot: recent compile regions, unresolved compile_miss backlog, pending proposal count, reconcile backlog (hash-sync/anchor-sync/semantic-review) |
 | `aegis_init_detect` | Analyze a project to generate initialization preview |
 
 ### MCP Tools — Admin Surface (additional 18 tools, 24 total)
@@ -268,12 +268,12 @@ You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 | `aegis_archive_observations` | Archive old observations |
 | `aegis_get_stats` | Aggregate knowledge counts and health signals |
 | `aegis_list_observations` | List observations with outcome-based filtering (proposed / skipped / pending) |
-| `aegis_import_doc` | Import a document into Canonical Knowledge (from `content` or `file_path`) |
+| `aegis_import_doc` | Import a document into Canonical Knowledge (from `content` or `file_path`). Returns advisory warnings for large content, multiple sections, or semantic-review reconcile mode |
 | `aegis_analyze_doc` | ADR-015: analyze content or `file_path` into an ImportPlan (read-only) |
 | `aegis_analyze_import_batch` | ADR-015: batch import analysis with cross-doc overlap |
 | `aegis_execute_import_plan` | ADR-015: create `document_import` proposals sharing a `bundle_id` |
 | `aegis_process_observations` | Trigger observation analysis pipeline for pending observations |
-| `aegis_sync_docs` | Synchronize file-anchored documents with their source files |
+| `aegis_sync_docs` | Synchronize file-anchored documents with their source files (reconcile-mode-aware: hash-sync, anchor-sync, semantic-review) |
 
 ### CLI Subcommands
 

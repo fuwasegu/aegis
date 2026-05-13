@@ -3,6 +3,12 @@
  */
 
 import { derivePathPattern } from '../optimization/edge-candidate-builder.js';
+import { classifyReconcileMode } from '../source-refs.js';
+import {
+  isFileAnchoredSourceStale,
+  isSourceSyncedAtStale,
+  SOURCE_SYNC_STALE_WARNING_DAYS,
+} from '../source-sync-staleness.js';
 import type { Repository } from '../store/repository.js';
 import type { CompileRequest, WorkspaceStatus } from '../types.js';
 
@@ -107,11 +113,43 @@ export function buildWorkspaceStatus(repo: Repository, opts?: BuildWorkspaceStat
     return JSON.stringify(a).localeCompare(JSON.stringify(b));
   });
 
+  // ADR-016 Task 016-04: reconcile-mode backlog counts
+  const fileAnchoredDocs = repo.getFileAnchoredDocuments();
+  const anchorFailureDocIds = new Set(repo.listAnchorFailureDocIds());
+  const nowMs = Date.now();
+  let hash_sync_stale = 0;
+  let anchor_sync_stale = 0;
+  let semantic_review_pending = 0;
+
+  for (const doc of fileAnchoredDocs) {
+    const mode = classifyReconcileMode(doc);
+    switch (mode) {
+      case 'hash-sync':
+        if (isFileAnchoredSourceStale(doc, SOURCE_SYNC_STALE_WARNING_DAYS, nowMs)) {
+          hash_sync_stale++;
+        }
+        break;
+      case 'anchor-sync':
+        if (anchorFailureDocIds.has(doc.doc_id) || isSourceSyncedAtStale(doc, SOURCE_SYNC_STALE_WARNING_DAYS, nowMs)) {
+          anchor_sync_stale++;
+        }
+        break;
+      case 'semantic-review':
+        semantic_review_pending++;
+        break;
+    }
+  }
+
   return {
     window_hours,
     since,
     active_regions,
     unresolved_misses,
     pending_proposal_count: repo.countPendingProposals(),
+    reconcile_backlog: {
+      hash_sync_stale,
+      anchor_sync_stale,
+      semantic_review_pending,
+    },
   };
 }

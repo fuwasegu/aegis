@@ -57,7 +57,12 @@ import {
   sourceRefCountFromDocument,
   validateSourceRef,
 } from '../core/source-refs.js';
-import { listStaleFileAnchoredDocIds, SOURCE_SYNC_STALE_WARNING_DAYS } from '../core/source-sync-staleness.js';
+import {
+  isFileAnchoredSourceStale,
+  isSourceSyncedAtStale,
+  listStaleFileAnchoredDocIds,
+  SOURCE_SYNC_STALE_WARNING_DAYS,
+} from '../core/source-sync-staleness.js';
 import type { Repository } from '../core/store/repository.js';
 import type { IntentTagger } from '../core/tagging/tagger.js';
 import type {
@@ -123,6 +128,10 @@ export interface MaintenanceRunResult {
   staleness_report: {
     threshold_days: number;
     stale_file_anchored_doc_ids: string[];
+    /** ADR-016 Task 016-04: mode-aware staleness breakdown. */
+    hash_sync: { checked: number; stale_doc_ids: string[] };
+    anchor_sync: { checked: number; stale_doc_ids: string[] };
+    semantic_review: { doc_ids: string[] };
     /** ADR-015 Task 015-07: deterministic semantic staleness (Levels 1–3). */
     semantic?: {
       algorithm_version: string;
@@ -762,13 +771,48 @@ export class AegisService {
       }
     }
 
+    // ADR-016 Task 016-04: mode-aware staleness breakdown
+    const fileAnchoredDocs = this.repo.getFileAnchoredDocuments();
+    const anchorFailureDocIds = new Set(this.repo.listAnchorFailureDocIds());
+    const hashSyncStaleIds: string[] = [];
+    const anchorSyncStaleIds: string[] = [];
+    const semanticReviewIds: string[] = [];
+    let hashSyncChecked = 0;
+    let anchorSyncChecked = 0;
+
+    for (const doc of fileAnchoredDocs) {
+      const mode = classifyReconcileMode(doc);
+      switch (mode) {
+        case 'hash-sync':
+          hashSyncChecked++;
+          if (isFileAnchoredSourceStale(doc, SOURCE_SYNC_STALE_WARNING_DAYS, nowMs)) {
+            hashSyncStaleIds.push(doc.doc_id);
+          }
+          break;
+        case 'anchor-sync':
+          anchorSyncChecked++;
+          if (
+            anchorFailureDocIds.has(doc.doc_id) ||
+            isSourceSyncedAtStale(doc, SOURCE_SYNC_STALE_WARNING_DAYS, nowMs)
+          ) {
+            anchorSyncStaleIds.push(doc.doc_id);
+          }
+          break;
+        case 'semantic-review':
+          semanticReviewIds.push(doc.doc_id);
+          break;
+      }
+    }
+    hashSyncStaleIds.sort();
+    anchorSyncStaleIds.sort();
+    semanticReviewIds.sort();
+
     const staleness_report = {
       threshold_days: SOURCE_SYNC_STALE_WARNING_DAYS,
-      stale_file_anchored_doc_ids: listStaleFileAnchoredDocIds(
-        this.repo.getFileAnchoredDocuments(),
-        SOURCE_SYNC_STALE_WARNING_DAYS,
-        nowMs,
-      ),
+      stale_file_anchored_doc_ids: listStaleFileAnchoredDocIds(fileAnchoredDocs, SOURCE_SYNC_STALE_WARNING_DAYS, nowMs),
+      hash_sync: { checked: hashSyncChecked, stale_doc_ids: hashSyncStaleIds },
+      anchor_sync: { checked: anchorSyncChecked, stale_doc_ids: anchorSyncStaleIds },
+      semantic_review: { doc_ids: semanticReviewIds },
       semantic: {
         algorithm_version: SEMANTIC_STALENESS_ALGORITHM_VERSION,
         findings: semantic_scan.findings,
@@ -1035,6 +1079,37 @@ export class AegisService {
       warnings.push(
         'Imported document has no edge_hints or tags — it will be isolated in the DAG until edges are added.',
       );
+    }
+
+    // ADR-016 Task 016-04: advisory warnings for direct import
+    const contentStr = (payload.content as string) ?? '';
+    const contentBytes = Buffer.byteLength(contentStr, 'utf-8');
+    if (contentBytes > 4096) {
+      warnings.push(
+        `Content is ${contentBytes} bytes (> 4096). Consider using aegis_analyze_doc / aegis_analyze_import_batch for structured import with section splitting.`,
+      );
+    }
+    const sectionCount = (contentStr.match(/^## /gm) ?? []).length;
+    if (sectionCount >= 2) {
+      warnings.push(
+        `Content contains ${sectionCount} sections (## headings). Consider using aegis_analyze_doc to split into focused delivery units.`,
+      );
+    }
+    // Check derived reconcile_mode based on the import parameters
+    const effectiveSourcePath = (payload.source_path as string | null) ?? null;
+    const effectiveSourceRefsJson = params.source_refs?.length ? JSON.stringify(params.source_refs) : null;
+    // Only check reconcile_mode if the doc has source tracking info
+    if (effectiveSourcePath || effectiveSourceRefsJson) {
+      const derivedDoc = {
+        ownership: 'file-anchored' as const,
+        source_path: effectiveSourcePath,
+        source_refs_json: effectiveSourceRefsJson,
+      };
+      if (classifyReconcileMode(derivedDoc) === 'semantic-review') {
+        warnings.push(
+          'This document would be classified as semantic-review (no automatic drift sync). Consider using aegis_analyze_doc / aegis_analyze_import_batch for more granular source refs.',
+        );
+      }
     }
 
     return {
@@ -1430,6 +1505,7 @@ export class AegisService {
     let hash_sync_checked = 0;
     let anchor_sync_checked = 0;
     const anchorSyncProposalDocIds = new Set<string>();
+    const anchorSyncSuccessDocIds: string[] = []; // docs where anchor re-materialized successfully
     const anchor_sync_failures: Array<{ doc_id: string; kind: string }> = [];
     const semanticReviewDocs: import('../core/types.js').Document[] = [];
     const semanticReviewDocIds: string[] = [];
@@ -1507,10 +1583,13 @@ export class AegisService {
 
         if (matResult.content_hash === doc.content_hash) {
           up_to_date_ids.push(doc.doc_id);
+          anchorSyncSuccessDocIds.push(doc.doc_id);
           continue;
         }
 
-        // Drift detected
+        // Drift detected — anchor re-materialized successfully, but content differs
+        anchorSyncSuccessDocIds.push(doc.doc_id);
+
         if (pendingUpdateDocIds.has(doc.doc_id)) {
           skipped_pending.push(doc.doc_id);
           continue;
@@ -1521,36 +1600,43 @@ export class AegisService {
           continue;
         }
 
-        const effectiveSourcePath = doc.source_path ?? sliceRef.asset_path;
+        // Preserve original source_path: do NOT synthesize one from sliceRef.asset_path
+        // for slice-only docs, as that would flip reconcile mode to hash-sync after approve.
         const obsId = uuidv4();
+        const obsPayload: Record<string, unknown> = {
+          doc_id: doc.doc_id,
+          title: doc.title,
+          kind: doc.kind,
+          content: matResult.content,
+        };
+        if (doc.source_path != null) {
+          obsPayload.source_path = doc.source_path;
+        }
         this.repo.insertObservation({
           observation_id: obsId,
           event_type: 'document_import',
-          payload: JSON.stringify({
-            doc_id: doc.doc_id,
-            title: doc.title,
-            kind: doc.kind,
-            content: matResult.content,
-            source_path: effectiveSourcePath,
-          }),
+          payload: JSON.stringify(obsPayload),
           related_compile_id: null,
           related_snapshot_id: null,
         });
         observationIds.push(obsId);
         anchorSyncProposalDocIds.add(doc.doc_id);
 
+        const draftPayload: Record<string, unknown> = {
+          doc_id: doc.doc_id,
+          content: matResult.content,
+          content_hash: matResult.content_hash,
+          source_refs_json: doc.source_refs_json,
+          ownership: doc.ownership,
+        };
+        if (doc.source_path != null) {
+          draftPayload.source_path = doc.source_path;
+        }
         drafts.push({
           obsId,
           draft: {
             proposal_type: 'update_doc',
-            payload: {
-              doc_id: doc.doc_id,
-              content: matResult.content,
-              content_hash: matResult.content_hash,
-              source_path: effectiveSourcePath,
-              source_refs_json: doc.source_refs_json,
-              ownership: doc.ownership,
-            },
+            payload: draftPayload,
             evidence_observation_ids: [obsId],
           },
         });
@@ -1682,6 +1768,11 @@ export class AegisService {
 
     if (up_to_date_ids.length > 0) {
       this.repo.touchDocumentsSourceSyncedAt(up_to_date_ids);
+    }
+
+    // ADR-016 Task 016-04: archive stale anchor-failure observations after successful re-materialization
+    if (anchorSyncSuccessDocIds.length > 0) {
+      this.repo.archiveAnchorFailureObservationsForDocs(anchorSyncSuccessDocIds);
     }
 
     if (drafts.length === 0) {
