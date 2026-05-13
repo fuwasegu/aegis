@@ -11,7 +11,7 @@
 import { performance } from 'node:perf_hooks';
 import picomatch from 'picomatch';
 import { v4 as uuidv4 } from 'uuid';
-import { SOURCE_SYNC_STALE_WARNING_DAYS, sourceSyncStalenessWarningsForDocuments } from '../source-sync-staleness.js';
+import { reconcileModeAwareNotices, SOURCE_SYNC_STALE_WARNING_DAYS } from '../source-sync-staleness.js';
 import type { Repository } from '../store/repository.js';
 import type { IntentTagger } from '../tagging/tagger.js';
 import type {
@@ -549,12 +549,14 @@ export class ContextCompiler {
         stalenessDocMap.set(d.doc_id, d);
       }
     }
-    // ADR-014: operational staleness — P-1 covers `warnings`; time-dependent hints go in `notices` (technical-guide §P-1).
+    // ADR-016: reconcile-mode-aware staleness notices (P-1: time-dependent hints go in `notices`).
+    const anchorFailureDocIds = new Set(this.repo.listAnchorFailureDocIds());
     notices.push(
-      ...sourceSyncStalenessWarningsForDocuments(
+      ...reconcileModeAwareNotices(
         [...stalenessDocMap.values()],
         SOURCE_SYNC_STALE_WARNING_DAYS,
         Date.now(),
+        anchorFailureDocIds,
       ),
     );
 

@@ -313,6 +313,12 @@ export interface WorkspaceStatus {
   active_regions: Array<{ path_pattern: string; last_compiled: string; agent_id?: string }>;
   unresolved_misses: Array<{ target_files: string[]; missing_doc?: string; count: number }>;
   pending_proposal_count: number;
+  /** ADR-016 Task 016-04: reconcile-mode-aware backlog counts. */
+  reconcile_backlog: {
+    hash_sync_stale: number;
+    anchor_sync_stale: number;
+    semantic_review_pending: number;
+  };
 }
 
 export type DeliveryType = 'inline' | 'deferred' | 'omitted';

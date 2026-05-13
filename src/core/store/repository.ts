@@ -808,6 +808,54 @@ export class Repository {
       .all() as Observation[];
   }
 
+  /**
+   * ADR-016 Task 016-04: doc_ids with unresolved anchor-failure staleness_detected observations.
+   * Returns distinct doc_ids where kind starts with 'anchor_' and no pending/approved proposal exists.
+   */
+  listAnchorFailureDocIds(): string[] {
+    const rows = this.db
+      .prepare(
+        `
+      SELECT DISTINCT json_extract(o.payload, '$.doc_id') AS doc_id
+      FROM observations o
+      WHERE o.event_type = 'staleness_detected'
+        AND o.archived_at IS NULL
+        AND json_extract(o.payload, '$.kind') LIKE 'anchor_%'
+        AND NOT EXISTS (
+          SELECT 1 FROM proposal_evidence pe
+          INNER JOIN proposals p ON p.proposal_id = pe.proposal_id
+          WHERE pe.observation_id = o.observation_id
+            AND p.status IN ('pending', 'approved')
+        )
+      ORDER BY doc_id ASC
+    `,
+      )
+      .all() as Array<{ doc_id: string }>;
+    return rows.map((r) => r.doc_id).filter((id) => typeof id === 'string' && id.length > 0);
+  }
+
+  /**
+   * ADR-016 Task 016-04: archive anchor-failure observations for doc_ids that have been
+   * successfully re-synced, preventing stale backlog false positives.
+   */
+  archiveAnchorFailureObservationsForDocs(docIds: string[]): number {
+    if (docIds.length === 0) return 0;
+    const placeholders = docIds.map(() => '?').join(',');
+    const result = this.db
+      .prepare(
+        `
+      UPDATE observations
+      SET archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE event_type = 'staleness_detected'
+        AND archived_at IS NULL
+        AND json_extract(payload, '$.kind') LIKE 'anchor_%'
+        AND json_extract(payload, '$.doc_id') IN (${placeholders})
+    `,
+      )
+      .run(...docIds);
+    return result.changes;
+  }
+
   getCompileLog(compileId: string): CompileLog | undefined {
     return this.db.prepare('SELECT * FROM compile_log WHERE compile_id = ?').get(compileId) as CompileLog | undefined;
   }

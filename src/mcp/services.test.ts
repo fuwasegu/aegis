@@ -1710,6 +1710,112 @@ describe('AegisService — importDoc file_path', () => {
 });
 
 // ============================================================
+// importDoc advisory warnings (ADR-016 Task 016-04)
+// ============================================================
+
+describe('AegisService — importDoc advisory warnings', () => {
+  let db: AegisDatabase;
+  let repo: Repository;
+  let service: AegisService;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+    service = new AegisService(repo, TEMPLATES_ROOT, null, [], false, '/tmp/fake-root');
+  });
+
+  it('warns when content exceeds 4096 bytes', async () => {
+    const largeContent = 'x'.repeat(5000);
+    const result = await service.importDoc(
+      {
+        content: largeContent,
+        doc_id: 'large-doc',
+        title: 'Large',
+        kind: 'guideline',
+        edge_hints: [{ source_type: 'path', source_value: 'x/**', edge_type: 'path_requires' }],
+      },
+      'admin',
+    );
+    expect(result.warnings.some((w) => w.includes('5000 bytes') && w.includes('> 4096'))).toBe(true);
+    // Should still create proposals
+    expect(result.proposal_ids.length).toBeGreaterThan(0);
+  });
+
+  it('warns when content has 2+ ## sections', async () => {
+    const multiSection = '# Title\n\n## Section 1\nBody\n\n## Section 2\nBody';
+    const result = await service.importDoc(
+      {
+        content: multiSection,
+        doc_id: 'multi-sec',
+        title: 'Multi',
+        kind: 'guideline',
+        edge_hints: [{ source_type: 'path', source_value: 'x/**', edge_type: 'path_requires' }],
+      },
+      'admin',
+    );
+    expect(result.warnings.some((w) => w.includes('2 sections'))).toBe(true);
+  });
+
+  it('warns when derived reconcile_mode is semantic-review', async () => {
+    const result = await service.importDoc(
+      {
+        content: 'content',
+        doc_id: 'sem-doc',
+        title: 'Sem',
+        kind: 'guideline',
+        edge_hints: [{ source_type: 'path', source_value: 'x/**', edge_type: 'path_requires' }],
+        source_refs: [
+          { asset_path: 'a.md', anchor_type: 'file', anchor_value: '' },
+          { asset_path: 'b.md', anchor_type: 'file', anchor_value: '' },
+        ],
+      },
+      'admin',
+    );
+    expect(result.warnings.some((w) => w.includes('semantic-review'))).toBe(true);
+  });
+
+  it('does not warn for small content with single section and hash-sync mode', async () => {
+    const result = await service.importDoc(
+      {
+        content: 'Small content',
+        doc_id: 'small-doc',
+        title: 'Small',
+        kind: 'guideline',
+        edge_hints: [{ source_type: 'path', source_value: 'x/**', edge_type: 'path_requires' }],
+        source_path: 'docs/small.md',
+      },
+      'admin',
+    );
+    // Only the "no edge_hints or tags" warning should NOT appear (we provided edge_hints)
+    // No size, section, or semantic-review warnings expected
+    expect(
+      result.warnings.filter((w) => w.includes('4096') || w.includes('sections') || w.includes('semantic-review')),
+    ).toHaveLength(0);
+  });
+
+  it('warnings do not block proposal creation', async () => {
+    const largeMultiSection = '## Sec1\n' + 'x'.repeat(5000) + '\n## Sec2\nBody';
+    const result = await service.importDoc(
+      {
+        content: largeMultiSection,
+        doc_id: 'warn-doc',
+        title: 'WarnDoc',
+        kind: 'guideline',
+        source_refs: [
+          { asset_path: 'a.md', anchor_type: 'file', anchor_value: '' },
+          { asset_path: 'b.md', anchor_type: 'file', anchor_value: '' },
+        ],
+      },
+      'admin',
+    );
+    // All three advisory warnings + the no-edges warning
+    expect(result.warnings.length).toBeGreaterThanOrEqual(3);
+    // Proposals still created
+    expect(result.proposal_ids.length).toBeGreaterThan(0);
+  });
+});
+
+// ============================================================
 // import plan (ADR-015)
 // ============================================================
 
@@ -2725,6 +2831,90 @@ describe('AegisService — syncDocs', () => {
     const r2 = await service.syncDocs({}, 'admin');
     expect(r2.skipped_pending).toContain('no-dup-doc');
     expect(r2.proposals_created).toHaveLength(0);
+  });
+
+  it('anchor-sync update preserves slice provenance after approve (016-04)', async () => {
+    const rel = 'slice-prov.md';
+    const sectionBody = 'original section';
+    writeFileSync(join(tmpDir, rel), `## Target\n\n${sectionBody}\n\n## Other\n\nfoo`);
+
+    // Slice-only doc: no source_path, only source_refs_json with section anchor
+    repo.insertDocument({
+      doc_id: 'slice-doc',
+      title: 'Slice',
+      kind: 'guideline',
+      content: sectionBody,
+      content_hash: hash(sectionBody),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: rel, anchor_type: 'section', anchor_value: '## Target' }]),
+    });
+
+    // Drift the section
+    const newSectionBody = 'updated section';
+    writeFileSync(join(tmpDir, rel), `## Target\n\n${newSectionBody}\n\n## Other\n\nfoo`);
+
+    // First sync: detects drift
+    const r1 = await service.syncDocs({}, 'admin');
+    expect(r1.anchor_sync_proposals_created).toHaveLength(1);
+
+    // Approve the proposal
+    service.approveProposal(r1.anchor_sync_proposals_created[0], undefined, 'admin');
+
+    // After approve, doc should still be anchor-sync (not hash-sync)
+    const updatedDoc = repo.getDocumentById('slice-doc')!;
+    expect(updatedDoc.source_path).toBeNull();
+    expect(updatedDoc.source_refs_json).not.toBeNull();
+
+    // classifyReconcileMode should still return anchor-sync
+    const { classifyReconcileMode } = await import('../core/source-refs.js');
+    expect(classifyReconcileMode(updatedDoc)).toBe('anchor-sync');
+
+    // Second sync: should NOT create full-file proposal
+    const r2 = await service.syncDocs({}, 'admin');
+    expect(r2.anchor_sync_checked).toBe(1);
+    expect(r2.up_to_date).toBe(1);
+    expect(r2.proposals_created).toHaveLength(0);
+  });
+
+  it('anchor-sync success archives prior anchor-failure observations (016-04)', async () => {
+    const rel = 'lifecycle.md';
+    // Initially missing the heading → anchor failure
+    writeFileSync(join(tmpDir, rel), '## Other\n\nbody');
+
+    repo.insertDocument({
+      doc_id: 'lc-doc',
+      title: 'Lifecycle',
+      kind: 'guideline',
+      content: 'old',
+      content_hash: hash('old'),
+      status: 'approved',
+      ownership: 'file-anchored',
+      template_origin: null,
+      source_path: null,
+      source_refs_json: JSON.stringify([{ asset_path: rel, anchor_type: 'section', anchor_value: '## Target' }]),
+    });
+
+    // First sync: anchor failure
+    const r1 = await service.syncDocs({}, 'admin');
+    expect(r1.anchor_sync_failures).toHaveLength(1);
+    expect(r1.anchor_sync_failures[0].doc_id).toBe('lc-doc');
+
+    // Verify failure observation exists and is unresolved
+    expect(repo.listAnchorFailureDocIds()).toContain('lc-doc');
+
+    // Fix the source file so the heading now exists
+    writeFileSync(join(tmpDir, rel), '## Target\n\nfixed content\n\n## Other\n\nbody');
+
+    // Second sync: anchor-sync succeeds (drift detected → proposal)
+    const r2 = await service.syncDocs({}, 'admin');
+    expect(r2.anchor_sync_failures).toHaveLength(0);
+    expect(r2.proposals_created.length).toBeGreaterThan(0);
+
+    // Prior anchor failure observation should now be archived
+    expect(repo.listAnchorFailureDocIds()).not.toContain('lc-doc');
   });
 });
 

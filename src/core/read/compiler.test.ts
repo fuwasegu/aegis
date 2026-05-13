@@ -160,7 +160,7 @@ describe('ContextCompiler', () => {
 
     const result = await compiler.compile({ target_files: ['src/foo.ts'] });
 
-    expect(result.notices.some((w) => w.includes('Stale file-anchored'))).toBe(true);
+    expect(result.notices.some((w) => w.includes('Stale hash-sync'))).toBe(true);
     expect(result.notices.some((w) => w.includes('stale-src'))).toBe(true);
   });
 
