@@ -499,6 +499,22 @@ async function handleDoctor(): Promise<void> {
       console.log(`    - ${s.tag} -> ${s.doc_id}`);
     }
   }
+
+  // ADR-017: project-share status
+  if (stats.project_share) {
+    const ps = stats.project_share;
+    console.log(`  project_share: ${ps.state}`);
+    if (ps.state !== 'not_configured') {
+      console.log(`    ${ps.message}`);
+      if (ps.state === 'bundle_newer' || ps.state === 'local_ahead' || ps.state === 'diverged') {
+        issues.push(`project-share ${ps.state}`);
+      }
+      if (ps.state === 'unreadable_bundle') {
+        issues.push('project-share bundle unreadable');
+      }
+    }
+  }
+
   if (issues.length) {
     console.log(`\nStatus: attention — ${issues.join('; ')}`);
     process.exit(1);

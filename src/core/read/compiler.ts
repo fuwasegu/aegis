@@ -208,6 +208,7 @@ export class ContextCompiler {
     private repo: Repository,
     private tagger: IntentTagger | null = null,
     private adapterOutdated = false,
+    private shareNoticeProvider: (() => string | null) | null = null,
   ) {}
 
   private fillExpandedFromTagNames(
@@ -422,6 +423,12 @@ export class ContextCompiler {
     const notices: string[] = [];
     if (this.adapterOutdated) {
       notices.push('Aegis adapter templates may be outdated. Run `npx @fuwasegu/aegis deploy-adapters` to update.');
+    }
+    if (this.shareNoticeProvider) {
+      const notice = this.shareNoticeProvider();
+      if (notice) {
+        notices.push(notice);
+      }
     }
 
     const pendingProposalCount = this.repo.countPendingProposals();

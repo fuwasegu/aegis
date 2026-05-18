@@ -441,6 +441,8 @@ export interface AegisStats {
     orphaned_tag_mappings: number;
     orphaned_tag_mapping_samples: Array<{ tag: string; doc_id: string }>;
   };
+  /** ADR-017 Task 017-03: project-share status (null when bundleDir is not configured). */
+  project_share?: import('./project-share/status.js').ProjectShareStatus;
 }
 
 /**
