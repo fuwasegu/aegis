@@ -207,6 +207,64 @@ aegis_list_proposals({ status: "pending" })
 aegis_approve_proposal({ proposal_id: "<id>" })
 ```
 
+## Project Sharing (Team Workflow)
+
+Aegis supports sharing approved Canonical Knowledge across team members via Git-committed bundle artifacts. This eliminates the need for each developer to build the knowledge base from scratch.
+
+### How it works
+
+| Directory | Purpose | Git-tracked? |
+|-----------|---------|:------------:|
+| `.aegis/` | Local runtime database (observations, proposals, compile log) | No |
+| `aegis-share/` | Shared snapshot of approved Canonical Knowledge | **Yes** |
+
+### Authoring workspace (knowledge maintainer)
+
+After approving proposals, export the current Canonical state:
+
+```bash
+npx @fuwasegu/aegis share-export                # writes aegis-share/manifest.json + canonical.json
+npx @fuwasegu/aegis share-export --out /path    # custom output directory
+```
+
+Then commit and push `aegis-share/`.
+
+### Replica workspace (team members)
+
+After pulling changes that include an updated `aegis-share/`:
+
+```bash
+npx @fuwasegu/aegis share-hydrate               # rebuild .aegis/aegis.db from aegis-share/
+npx @fuwasegu/aegis share-hydrate --replace     # overwrite existing initialized DB
+npx @fuwasegu/aegis share-hydrate --bundle-dir /path  # custom bundle directory
+```
+
+> **Warning:** `share-hydrate` performs a whole-DB replacement. Local operational state (observations, proposals, compile log) is **not preserved**. This is by design — replica workspaces are consumers of shared knowledge, not authors.
+
+### Share status monitoring
+
+Aegis automatically detects drift between your local DB and the shared bundle:
+
+- **`npx @fuwasegu/aegis doctor`** — shows share state (`in_sync`, `bundle_newer`, `local_ahead`, `diverged`, `unreadable_bundle`); exits 1 for actionable states
+- **`npx @fuwasegu/aegis stats`** — includes `project_share` in JSON output with full status details
+- **`aegis_compile_context` notices** — agents receive actionable hints (e.g. "Run `share-hydrate` to update") when the bundle is out of sync
+
+The `not_configured` state (no `aegis-share/` directory) is silent — no noise until sharing is set up.
+
+### Typical team workflow
+
+```
+                    Authoring Workspace                    Replica Workspace
+                    ───────────────────                    ─────────────────
+  approve proposals ──► share-export ──► git push ──► git pull ──► share-hydrate
+                                  aegis-share/ committed
+```
+
+1. **Author** works on the knowledge base (import docs, approve proposals, sync)
+2. **Author** runs `share-export` and commits `aegis-share/`
+3. **Team** runs `git pull` then `share-hydrate --replace`
+4. `compile_context` on the replica now returns the same guidelines as the author
+
 ## SLM for Expanded Context — Opt-in
 
 Aegis includes a built-in llama.cpp engine for optional SLM-based intent tagging. SLM is **disabled by default** — the deterministic DAG-based context works perfectly without it.
@@ -280,12 +338,23 @@ You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 | Subcommand | Description |
 |------------|-------------|
 | `deploy-adapters` | Deploy IDE adapter configurations (Cursor rules, CLAUDE.md, AGENTS.md) and Agent Skills |
+| `maintenance` | Run observation processing, doc sync, archive, and upgrade check |
+| `stats` | JSON output of knowledge counts, usage, health, and project share status |
+| `doctor` | Human-readable health check (exits 1 if issues found) |
+| `share-export` | Export approved Canonical Knowledge to `aegis-share/` |
+| `share-hydrate` | Rebuild local DB from shared bundle (whole-DB replacement) |
 
 ```bash
 npx @fuwasegu/aegis deploy-adapters                         # Deploy all adapters
 npx @fuwasegu/aegis deploy-adapters --targets cursor,codex  # Deploy specific adapters
 npx @fuwasegu/aegis deploy-adapters --project-root /path    # Specify project root
 npx @fuwasegu/aegis deploy-adapters --db /path/to/aegis.db  # Use custom DB path
+npx @fuwasegu/aegis maintenance                             # Process observations, sync, archive
+npx @fuwasegu/aegis maintenance --dry-run                   # Report only (no writes)
+npx @fuwasegu/aegis stats                                   # JSON health and usage data
+npx @fuwasegu/aegis doctor                                  # Health check summary
+npx @fuwasegu/aegis share-export                            # Export to aegis-share/
+npx @fuwasegu/aegis share-hydrate --replace                 # Rebuild DB from bundle
 npx @fuwasegu/aegis --list-models                           # List available SLM models
 ```
 

@@ -207,6 +207,64 @@ aegis_list_proposals({ status: "pending" })
 aegis_approve_proposal({ proposal_id: "<id>" })
 ```
 
+## プロジェクト共有（チームワークフロー）
+
+Aegis は、承認済み Canonical Knowledge を Git コミットされるバンドル成果物を介してチームメンバー間で共有できます。各開発者がゼロからナレッジベースを構築する必要がなくなります。
+
+### 仕組み
+
+| ディレクトリ | 用途 | Git 管理? |
+|-------------|------|:---------:|
+| `.aegis/` | ローカルランタイムDB（オブザベーション、プロポーザル、コンパイルログ） | いいえ |
+| `aegis-share/` | 承認済み Canonical Knowledge の共有スナップショット | **はい** |
+
+### オーサリングワークスペース（ナレッジ管理者）
+
+プロポーザル承認後、現在の Canonical 状態をエクスポート:
+
+```bash
+npx @fuwasegu/aegis share-export                # aegis-share/manifest.json + canonical.json を書き出し
+npx @fuwasegu/aegis share-export --out /path    # カスタム出力ディレクトリ
+```
+
+その後、`aegis-share/` をコミット＆プッシュします。
+
+### レプリカワークスペース（チームメンバー）
+
+更新された `aegis-share/` を含む変更を pull した後:
+
+```bash
+npx @fuwasegu/aegis share-hydrate               # aegis-share/ から .aegis/aegis.db を再構築
+npx @fuwasegu/aegis share-hydrate --replace     # 既存の初期化済み DB を上書き
+npx @fuwasegu/aegis share-hydrate --bundle-dir /path  # カスタムバンドルディレクトリ
+```
+
+> **注意:** `share-hydrate` は DB 全体を置換します。ローカルの運用状態（オブザベーション、プロポーザル、コンパイルログ）は**保持されません**。これは設計上の意図です — レプリカワークスペースは共有知識の利用者であり、作成者ではありません。
+
+### 共有ステータスの監視
+
+Aegis はローカル DB と共有バンドル間のドリフトを自動検出します:
+
+- **`npx @fuwasegu/aegis doctor`** — 共有状態を表示（`in_sync`, `bundle_newer`, `local_ahead`, `diverged`, `unreadable_bundle`）。対処が必要な状態では exit 1
+- **`npx @fuwasegu/aegis stats`** — JSON 出力に `project_share` フィールドとして詳細ステータスを含む
+- **`aegis_compile_context` の notices** — バンドルが同期していない場合、エージェントに対処のヒントを提示（例: 「`share-hydrate` を実行して更新してください」）
+
+`not_configured` 状態（`aegis-share/` ディレクトリなし）は通知なし — 共有が設定されるまでノイズを出しません。
+
+### 一般的なチームワークフロー
+
+```
+                 オーサリングワークスペース              レプリカワークスペース
+                 ─────────────────────              ────────────────────
+  プロポーザル承認 ──► share-export ──► git push ──► git pull ──► share-hydrate
+                               aegis-share/ をコミット
+```
+
+1. **管理者** がナレッジベースを更新（ドキュメントインポート、プロポーザル承認、同期）
+2. **管理者** が `share-export` を実行し `aegis-share/` をコミット
+3. **チーム** が `git pull` → `share-hydrate --replace` を実行
+4. レプリカの `compile_context` が管理者と同じガイドラインを返すようになる
+
 ## SLM 拡張コンテキスト — オプトイン
 
 Aegis は llama.cpp エンジンを内蔵しており、オプションで SLM ベースの Intent Tagging を利用できます。SLM は**デフォルトで無効**です。決定的 DAG ベースのコンテキストは SLM なしでも完全に動作します。
@@ -280,12 +338,23 @@ HuggingFace URI を直接指定することも可能: `--model hf:user/repo:file
 | サブコマンド | 説明 |
 |------------|------|
 | `deploy-adapters` | IDE アダプタ設定（Cursor ルール、CLAUDE.md、AGENTS.md）と Agent Skills をデプロイ |
+| `maintenance` | オブザベーション処理、ドキュメント同期、アーカイブ、アップグレードチェックを実行 |
+| `stats` | ナレッジ集計、利用状況、ヘルス、プロジェクト共有ステータスの JSON 出力 |
+| `doctor` | ヘルスチェックの人間可読サマリー（問題があれば exit 1） |
+| `share-export` | 承認済み Canonical Knowledge を `aegis-share/` にエクスポート |
+| `share-hydrate` | 共有バンドルからローカル DB を再構築（DB 全体置換） |
 
 ```bash
 npx @fuwasegu/aegis deploy-adapters                         # 全アダプタをデプロイ
 npx @fuwasegu/aegis deploy-adapters --targets cursor,codex  # 対象を指定
 npx @fuwasegu/aegis deploy-adapters --project-root /path    # プロジェクトルートを指定
 npx @fuwasegu/aegis deploy-adapters --db /path/to/aegis.db  # カスタム DB パスを指定
+npx @fuwasegu/aegis maintenance                             # オブザベーション処理、同期、アーカイブ
+npx @fuwasegu/aegis maintenance --dry-run                   # レポートのみ（書き込みなし）
+npx @fuwasegu/aegis stats                                   # JSON ヘルス・利用状況データ
+npx @fuwasegu/aegis doctor                                  # ヘルスチェックサマリー
+npx @fuwasegu/aegis share-export                            # aegis-share/ にエクスポート
+npx @fuwasegu/aegis share-hydrate --replace                 # バンドルから DB を再構築
 npx @fuwasegu/aegis --list-models                           # 利用可能な SLM モデル一覧
 ```
 
