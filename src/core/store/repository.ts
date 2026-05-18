@@ -84,6 +84,10 @@ export class Repository {
     this.db.transaction(fn)();
   }
 
+  runInTransactionReturn<T>(fn: () => T): T {
+    return this.db.transaction(fn)() as T;
+  }
+
   // ============================================================
   // Knowledge Meta
   // ============================================================
@@ -1850,6 +1854,21 @@ export class Repository {
 
   deleteTagMappings(tag: string): void {
     this.db.prepare('DELETE FROM tag_mappings WHERE tag = ?').run(tag);
+  }
+
+  /**
+   * All tag mappings that resolve to an **approved** document.
+   * Sorted by tag ASC, doc_id ASC for deterministic ordering (ADR-017 D-4).
+   */
+  getApprovedTagMappings(): TagMapping[] {
+    return this.db
+      .prepare(`
+      SELECT tm.*
+      FROM tag_mappings tm
+      JOIN documents d ON d.doc_id = tm.doc_id AND d.status = 'approved'
+      ORDER BY tm.tag ASC, tm.doc_id ASC
+    `)
+      .all() as TagMapping[];
   }
 
   /**

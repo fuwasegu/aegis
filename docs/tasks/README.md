@@ -65,6 +65,7 @@ Phase 4: Optimization 層 (ADR-015)
 Phase 5: Import 革新 + Staleness (ADR-015)
 Phase 6: マルチエージェント (ADR-015)
 Phase 7: Compile Unit Materialization + Drift Reconciliation (ADR-016)
+Phase 8: Project-Shared Canonical Distribution (ADR-017)
 ```
 
 依存関係のクリティカルパス:
@@ -77,4 +78,7 @@ ADR-015 (doc_gap) ──→ ADR-015 (optimization/)
 ADR-014 (maintenance) ──→ ADR-015 (co-change cache)
 ADR-015 (import-plan/source_refs) ──→ ADR-016 (compile unit contract) ──→ ADR-016 (anchor-sync)
                                                                     └──→ ADR-016 (reconcile-aware sync_docs)
+ADR-007 (CLI workspace ops) ──→ ADR-017 (share-export/share-hydrate)
+ADR-016 (drift reconciliation) ──→ ADR-017 (authoring export workflow)
+ADR-017 (share-export) ──→ ADR-017 (share-hydrate) ──→ ADR-017 (share status / docs)
 ```

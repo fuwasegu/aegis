@@ -20,6 +20,8 @@
  *   npx aegis maintenance --dry-run                # Report only (no writes)
  *   npx aegis stats                              # JSON: knowledge / usage / health (read-only; no DB writes)
  *   npx aegis doctor                             # Health summary; read-only; exits 1 if issues
+ *   npx aegis share-export                       # Export approved Canonical to aegis-share/
+ *   npx aegis share-export --out /path/to/dir    # Custom output directory
  *   npx aegis --list-models                      # List available SLM models
  *
  * SLM is disabled by default (ADR-004). Enable with --slm for expanded context.
@@ -35,6 +37,7 @@ import { fileURLToPath } from 'node:url';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { shareExport } from './core/project-share/index.js';
 import { createDatabase } from './core/store/database.js';
 import { runInitialBaselineSourcePathMigration } from './core/store/migrations/index.js';
 import { Repository } from './core/store/repository.js';
@@ -499,6 +502,68 @@ async function handleDoctor(): Promise<void> {
   console.log('\nStatus: OK');
 }
 
+interface ShareExportCli {
+  projectRoot: string;
+  customDbPath: string | undefined;
+  outDir: string | undefined;
+}
+
+function parseShareExportCli(argv: string[]): ShareExportCli {
+  let projectRoot = process.cwd();
+  let customDbPath: string | undefined;
+  let outDir: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case '--project-root':
+        projectRoot = resolve(argv[++i]);
+        break;
+      case '--db':
+        customDbPath = argv[++i];
+        break;
+      case '--out':
+        outDir = resolve(argv[++i]);
+        break;
+    }
+  }
+  return { projectRoot, customDbPath, outDir };
+}
+
+async function handleShareExport(): Promise<void> {
+  const opts = parseShareExportCli(process.argv.slice(3));
+  const dbPath = opts.customDbPath ?? join(opts.projectRoot, DEFAULT_DB_PATH);
+  if (!existsSync(dbPath)) {
+    console.error(`[aegis] Database not found at ${dbPath}`);
+    console.error('[aegis] Run aegis init first, or specify --project-root / --db.');
+    process.exit(1);
+  }
+  const db = await createDatabase(dbPath);
+  const repo = new Repository(db);
+  const outDir = opts.outDir ?? join(opts.projectRoot, 'aegis-share');
+
+  try {
+    const result = shareExport(repo, outDir);
+    console.log('\nAegis share-export\n');
+    console.log(`  output:            ${outDir}`);
+    console.log(`  snapshot_id:       ${result.snapshot_id}`);
+    console.log(`  knowledge_version: ${result.knowledge_version}`);
+    console.log(`  bundle_sha256:     ${result.bundle_sha256}`);
+    console.log(`  documents:         ${result.counts.documents}`);
+    console.log(`  edges:             ${result.counts.edges}`);
+    console.log(`  layer_rules:       ${result.counts.layer_rules}`);
+    console.log(`  tag_mappings:      ${result.counts.tag_mappings}`);
+    if (result.warnings.length) {
+      console.log('\nWarnings:');
+      for (const w of result.warnings) {
+        console.log(`  ⚠ ${w}`);
+      }
+    }
+    console.log('\nDone.');
+  } catch (err) {
+    console.error(`[aegis] share-export failed: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 async function main() {
   const subcommand = process.argv[2];
 
@@ -519,6 +584,11 @@ async function main() {
 
   if (subcommand === 'doctor') {
     await handleDoctor();
+    return;
+  }
+
+  if (subcommand === 'share-export') {
+    await handleShareExport();
     return;
   }
 
