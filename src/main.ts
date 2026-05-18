@@ -22,6 +22,9 @@
  *   npx aegis doctor                             # Health summary; read-only; exits 1 if issues
  *   npx aegis share-export                       # Export approved Canonical to aegis-share/
  *   npx aegis share-export --out /path/to/dir    # Custom output directory
+ *   npx aegis share-hydrate                      # Rebuild replica DB from aegis-share/
+ *   npx aegis share-hydrate --replace            # Overwrite existing initialized DB
+ *   npx aegis share-hydrate --bundle-dir /path   # Custom bundle directory
  *   npx aegis --list-models                      # List available SLM models
  *
  * SLM is disabled by default (ADR-004). Enable with --slm for expanded context.
@@ -37,6 +40,7 @@ import { fileURLToPath } from 'node:url';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { shareHydrate } from './core/project-share/hydrate.js';
 import { shareExport } from './core/project-share/index.js';
 import { createDatabase } from './core/store/database.js';
 import { runInitialBaselineSourcePathMigration } from './core/store/migrations/index.js';
@@ -564,6 +568,65 @@ async function handleShareExport(): Promise<void> {
   }
 }
 
+interface ShareHydrateCli {
+  projectRoot: string;
+  customDbPath: string | undefined;
+  bundleDir: string | undefined;
+  replace: boolean;
+}
+
+function parseShareHydrateCli(argv: string[]): ShareHydrateCli {
+  let projectRoot = process.cwd();
+  let customDbPath: string | undefined;
+  let bundleDir: string | undefined;
+  let replace = false;
+  for (let i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case '--project-root':
+        projectRoot = resolve(argv[++i]);
+        break;
+      case '--db':
+        customDbPath = argv[++i];
+        break;
+      case '--bundle-dir':
+        bundleDir = resolve(argv[++i]);
+        break;
+      case '--replace':
+        replace = true;
+        break;
+    }
+  }
+  return { projectRoot, customDbPath, bundleDir, replace };
+}
+
+async function handleShareHydrate(): Promise<void> {
+  const opts = parseShareHydrateCli(process.argv.slice(3));
+  const dbPath = opts.customDbPath ?? join(opts.projectRoot, DEFAULT_DB_PATH);
+  const bundleDirPath = opts.bundleDir ?? join(opts.projectRoot, 'aegis-share');
+
+  try {
+    const result = await shareHydrate({
+      bundleDir: bundleDirPath,
+      targetDbPath: dbPath,
+      replace: opts.replace,
+    });
+    console.log('\nAegis share-hydrate\n');
+    console.log(`  target_db:         ${dbPath}`);
+    console.log(`  bundle_dir:        ${bundleDirPath}`);
+    console.log(`  snapshot_id:       ${result.snapshot_id}`);
+    console.log(`  knowledge_version: ${result.knowledge_version}`);
+    console.log(`  documents:         ${result.counts.documents}`);
+    console.log(`  edges:             ${result.counts.edges}`);
+    console.log(`  layer_rules:       ${result.counts.layer_rules}`);
+    console.log(`  tag_mappings:      ${result.counts.tag_mappings}`);
+    console.log('\nWARNING: Local operational state (observations, proposals, compile_log) was NOT preserved.');
+    console.log('Done.');
+  } catch (err) {
+    console.error(`[aegis] share-hydrate failed: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 async function main() {
   const subcommand = process.argv[2];
 
@@ -589,6 +652,11 @@ async function main() {
 
   if (subcommand === 'share-export') {
     await handleShareExport();
+    return;
+  }
+
+  if (subcommand === 'share-hydrate') {
+    await handleShareHydrate();
     return;
   }
 

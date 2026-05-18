@@ -1,4 +1,6 @@
 export { shareExport } from './export.js';
+export type { ShareHydrateOptions, ShareHydrateResult } from './hydrate.js';
+export { shareHydrate } from './hydrate.js';
 export type {
   BundleDocument,
   BundleEdge,

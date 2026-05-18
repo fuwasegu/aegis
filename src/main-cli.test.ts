@@ -197,3 +197,119 @@ describe('CLI — share-export (dist/main.js)', () => {
     expect(r.stderr).toContain('Database not found');
   });
 });
+
+describe('CLI — share-hydrate (dist/main.js)', () => {
+  let dir: string;
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Bootstrap an initialized DB, export a bundle, and return the bundle dir. */
+  async function prepareBundle(projectRoot: string): Promise<string> {
+    mkdirSync(join(projectRoot, '.aegis'), { recursive: true });
+    const dbPath = join(projectRoot, '.aegis', 'aegis.db');
+    const d = await createDatabase(dbPath);
+    const repo = new Repository(d);
+    repo.insertProposal({
+      proposal_id: 'boot',
+      proposal_type: 'bootstrap',
+      payload: JSON.stringify({
+        documents: [{ doc_id: 'doc-1', title: 'D1', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+        edges: [
+          {
+            edge_id: 'e1',
+            source_type: 'path',
+            source_value: 'src/**',
+            target_doc_id: 'doc-1',
+            edge_type: 'path_requires',
+            priority: 1,
+            specificity: 0,
+          },
+        ],
+        layer_rules: [],
+      }),
+      status: 'pending',
+      review_comment: null,
+    });
+    repo.approveProposal('boot');
+    d.close();
+
+    // Export bundle
+    const r = spawnSync(execPath, [MAIN_JS, 'share-export', '--project-root', projectRoot], {
+      encoding: 'utf-8',
+    });
+    expect(r.status, `share-export stderr: ${r.stderr}`).toBe(0);
+    return join(projectRoot, 'aegis-share');
+  }
+
+  it('hydrates into default .aegis/aegis.db on fresh project (no pre-existing .aegis/)', async () => {
+    // Prepare source project with bundle
+    const srcDir = mkdtempSync(join(tmpdir(), 'aegis-cli-hydrate-src-'));
+    const bundleDir = await prepareBundle(srcDir);
+
+    // Target project has NO .aegis/ directory — simulates fresh clone
+    dir = mkdtempSync(join(tmpdir(), 'aegis-cli-hydrate-fresh-'));
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-hydrate', '--project-root', dir, '--bundle-dir', bundleDir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toContain('share-hydrate');
+    expect(r.stdout).toContain('Done.');
+    expect(existsSync(join(dir, '.aegis', 'aegis.db'))).toBe(true);
+
+    rmSync(srcDir, { recursive: true, force: true });
+  }, 30_000);
+
+  it('fails without --replace when target DB exists', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'aegis-cli-hydrate-noreplace-'));
+    const bundleDir = await prepareBundle(dir);
+
+    // DB already exists from prepareBundle — hydrate without --replace should fail
+    const r = spawnSync(execPath, [MAIN_JS, 'share-hydrate', '--project-root', dir, '--bundle-dir', bundleDir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toContain('--replace');
+  }, 30_000);
+
+  it('succeeds with --replace when target DB exists', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'aegis-cli-hydrate-replace-'));
+    const bundleDir = await prepareBundle(dir);
+
+    const r = spawnSync(
+      execPath,
+      [MAIN_JS, 'share-hydrate', '--project-root', dir, '--bundle-dir', bundleDir, '--replace'],
+      { encoding: 'utf-8' },
+    );
+    expect(r.status, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toContain('share-hydrate');
+  }, 30_000);
+
+  it('exits 1 when bundle dir has no manifest', () => {
+    dir = mkdtempSync(join(tmpdir(), 'aegis-cli-hydrate-nomanifest-'));
+    const emptyBundleDir = join(dir, 'empty-bundle');
+    mkdirSync(emptyBundleDir, { recursive: true });
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-hydrate', '--project-root', dir, '--bundle-dir', emptyBundleDir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toContain('Manifest not found');
+  });
+
+  it('prints operational state warning', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'aegis-cli-hydrate-warn-'));
+    const srcDir = mkdtempSync(join(tmpdir(), 'aegis-cli-hydrate-warn-src-'));
+    const bundleDir = await prepareBundle(srcDir);
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-hydrate', '--project-root', dir, '--bundle-dir', bundleDir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toContain('operational state');
+
+    rmSync(srcDir, { recursive: true, force: true });
+  }, 30_000);
+});
