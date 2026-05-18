@@ -8,6 +8,7 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { deployClaudeAdapter } from '../adapters/claude/generate.js';
 import { deployCodexAdapter } from '../adapters/codex/generate.js';
@@ -45,6 +46,7 @@ import {
   SEMANTIC_STALENESS_ALGORITHM_VERSION,
 } from '../core/optimization/staleness.js';
 import { normalizeSourcePath, resolveSourcePath } from '../core/paths.js';
+import { deriveShareState } from '../core/project-share/status.js';
 import { ContextCompiler } from '../core/read/compiler.js';
 import { buildWorkspaceStatus } from '../core/read/workspace-status.js';
 import { materializeAnchoredContent } from '../core/source-materialization.js';
@@ -250,7 +252,7 @@ export class AegisService {
     adapterOutdated = false,
     private projectRoot: string = process.cwd(),
   ) {
-    this.compiler = new ContextCompiler(repo, tagger, adapterOutdated);
+    this.compiler = new ContextCompiler(repo, tagger, adapterOutdated, () => this.computeShareNotice());
     this.analyzerRegistry = new Map<ObservationEventType, ObservationAnalyzer>([
       ['compile_miss', new CompileMissAnalyzer(repo)],
       ['review_correction', new ReviewCorrectionAnalyzer(repo)],
@@ -909,6 +911,13 @@ export class AegisService {
       nowMs,
     );
 
+    const snapshot = this.repo.getCurrentSnapshot();
+    const bundleDir = join(this.projectRoot, 'aegis-share');
+    const shareStatus = deriveShareState(
+      snapshot ? { snapshot_id: snapshot.snapshot_id, knowledge_version: snapshot.knowledge_version } : undefined,
+      bundleDir,
+    );
+
     return {
       knowledge: {
         approved_docs: this.repo.countApprovedDocuments(),
@@ -931,6 +940,7 @@ export class AegisService {
         orphaned_tag_mappings: this.repo.countOrphanedTagMappings(),
         orphaned_tag_mapping_samples: this.repo.listOrphanedTagMappingSamples(20),
       },
+      project_share: shareStatus,
     };
   }
 
@@ -1955,6 +1965,24 @@ export class AegisService {
   // ============================================================
   // Private
   // ============================================================
+
+  private computeShareNotice(): string | null {
+    const snapshot = this.repo.getCurrentSnapshot();
+    const bundleDir = join(this.projectRoot, 'aegis-share');
+    const status = deriveShareState(
+      snapshot ? { snapshot_id: snapshot.snapshot_id, knowledge_version: snapshot.knowledge_version } : undefined,
+      bundleDir,
+    );
+    switch (status.state) {
+      case 'bundle_newer':
+      case 'local_ahead':
+      case 'diverged':
+      case 'unreadable_bundle':
+        return `[project-share] ${status.message}`;
+      default:
+        return null;
+    }
+  }
 
   private assertAdmin(tool: string, surface: Surface): void {
     if (surface !== 'admin') {

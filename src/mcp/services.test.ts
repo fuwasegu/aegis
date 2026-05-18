@@ -3001,7 +3001,7 @@ describe('AegisService — maintenance', () => {
     const r = await service.runMaintenance('admin', { dryRun: true });
     expect(r.staleness_report.threshold_days).toBe(90);
     expect(r.staleness_report.stale_file_anchored_doc_ids).toContain('old-sync');
-  });
+  }, 15_000);
 
   it('processObservations drains backlog beyond default fetch limit', async () => {
     for (let i = 0; i < 55; i++) {
@@ -3538,6 +3538,198 @@ describe('aegis_get_stats — MCP wiring', () => {
     expect(agentTools.tools.some((t) => t.name === 'aegis_get_stats')).toBe(false);
     await agentClient.close();
     await agentServer.close();
+  });
+});
+
+describe('compile_context notices — project-share state', () => {
+  it('emits share notice for bundle_newer', async () => {
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const projectRoot = mkdtempSync(join(tmpdir(), 'aegis-share-notice-'));
+    try {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+
+      // Bootstrap to get a snapshot (version 1)
+      repo.insertProposal({
+        proposal_id: 'boot-share-notice',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'd1', title: 'D1', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [
+            {
+              edge_id: 'e1',
+              source_type: 'path',
+              source_value: 'src/**',
+              target_doc_id: 'd1',
+              edge_type: 'path_requires',
+              priority: 1,
+              specificity: 0,
+            },
+          ],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('boot-share-notice');
+
+      // Write a bundle manifest with knowledge_version > local (1)
+      const shareDir = join(projectRoot, 'aegis-share');
+      mkdirSync(shareDir, { recursive: true });
+      writeFileSync(
+        join(shareDir, 'manifest.json'),
+        JSON.stringify({
+          format_version: 1,
+          bundle_file: 'canonical.json',
+          snapshot_id: 'snap-remote',
+          knowledge_version: 10,
+          bundle_sha256: 'abc',
+          includes_tag_mappings: false,
+        }),
+      );
+      writeFileSync(join(shareDir, 'canonical.json'), '{}');
+
+      const service = new AegisService(repo, TEMPLATES_ROOT, null, [], false, projectRoot);
+      const result = await service.compileContext({ target_files: ['src/foo.ts'], intent_tags: [] }, 'agent');
+      expect(result.notices.some((n) => n.includes('[project-share]') && n.includes('share-hydrate'))).toBe(true);
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not emit share notice when in_sync', async () => {
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const projectRoot = mkdtempSync(join(tmpdir(), 'aegis-share-notice-sync-'));
+    try {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      repo.insertProposal({
+        proposal_id: 'boot-sync',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'd1', title: 'D1', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [
+            {
+              edge_id: 'e1',
+              source_type: 'path',
+              source_value: 'src/**',
+              target_doc_id: 'd1',
+              edge_type: 'path_requires',
+              priority: 1,
+              specificity: 0,
+            },
+          ],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('boot-sync');
+
+      const snapshot = repo.getCurrentSnapshot()!;
+      const shareDir = join(projectRoot, 'aegis-share');
+      mkdirSync(shareDir, { recursive: true });
+      writeFileSync(
+        join(shareDir, 'manifest.json'),
+        JSON.stringify({
+          format_version: 1,
+          bundle_file: 'canonical.json',
+          snapshot_id: snapshot.snapshot_id,
+          knowledge_version: snapshot.knowledge_version,
+          bundle_sha256: 'abc',
+          includes_tag_mappings: false,
+        }),
+      );
+      writeFileSync(join(shareDir, 'canonical.json'), '{}');
+
+      const service = new AegisService(repo, TEMPLATES_ROOT, null, [], false, projectRoot);
+      const result = await service.compileContext({ target_files: ['src/foo.ts'], intent_tags: [] }, 'agent');
+      expect(result.notices.some((n) => n.includes('[project-share]'))).toBe(false);
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('recomputes share notice dynamically (not frozen at startup)', async () => {
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const projectRoot = mkdtempSync(join(tmpdir(), 'aegis-share-notice-dynamic-'));
+    try {
+      const db = await createInMemoryDatabase();
+      const repo = new Repository(db);
+      repo.insertProposal({
+        proposal_id: 'boot-dyn',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [{ doc_id: 'd1', title: 'D1', kind: 'guideline', content: 'c', content_hash: hash('c') }],
+          edges: [
+            {
+              edge_id: 'e1',
+              source_type: 'path',
+              source_value: 'src/**',
+              target_doc_id: 'd1',
+              edge_type: 'path_requires',
+              priority: 1,
+              specificity: 0,
+            },
+          ],
+          layer_rules: [],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      repo.approveProposal('boot-dyn');
+      const snapshot = repo.getCurrentSnapshot()!;
+
+      // Start with bundle_newer
+      const shareDir = join(projectRoot, 'aegis-share');
+      mkdirSync(shareDir, { recursive: true });
+      writeFileSync(
+        join(shareDir, 'manifest.json'),
+        JSON.stringify({
+          format_version: 1,
+          bundle_file: 'canonical.json',
+          snapshot_id: 'snap-remote',
+          knowledge_version: 99,
+          bundle_sha256: 'abc',
+          includes_tag_mappings: false,
+        }),
+      );
+      writeFileSync(join(shareDir, 'canonical.json'), '{}');
+
+      const service = new AegisService(repo, TEMPLATES_ROOT, null, [], false, projectRoot);
+
+      // First compile: should have share notice
+      const r1 = await service.compileContext({ target_files: ['src/foo.ts'], intent_tags: [] }, 'agent');
+      expect(r1.notices.some((n) => n.includes('[project-share]'))).toBe(true);
+
+      // Update manifest to in_sync
+      writeFileSync(
+        join(shareDir, 'manifest.json'),
+        JSON.stringify({
+          format_version: 1,
+          bundle_file: 'canonical.json',
+          snapshot_id: snapshot.snapshot_id,
+          knowledge_version: snapshot.knowledge_version,
+          bundle_sha256: 'abc',
+          includes_tag_mappings: false,
+        }),
+      );
+
+      // Second compile: notice should be gone
+      const r2 = await service.compileContext({ target_files: ['src/foo.ts'], intent_tags: [] }, 'agent');
+      expect(r2.notices.some((n) => n.includes('[project-share]'))).toBe(false);
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 });
 

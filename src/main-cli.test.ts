@@ -36,7 +36,7 @@ describe('CLI — stats / doctor (dist/main.js)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('stats prints JSON with knowledge and health', () => {
+  it('stats prints JSON with knowledge and health and project_share', () => {
     const r = spawnSync(execPath, [MAIN_JS, 'stats', '--project-root', dir], {
       encoding: 'utf-8',
     });
@@ -47,6 +47,9 @@ describe('CLI — stats / doctor (dist/main.js)', () => {
     expect(body.knowledge).toBeDefined();
     expect(body.usage).toBeDefined();
     expect(body.health).toBeDefined();
+    expect(body.project_share).toBeDefined();
+    const ps = body.project_share as { state: string };
+    expect(ps.state).toBe('not_configured');
   }, 15_000);
 
   it('doctor exits 0 when no health issues', () => {
@@ -89,6 +92,46 @@ describe('CLI — doctor exit 1 on health issues', () => {
     expect(r.stdout).toContain('Status: attention');
     expect(r.stdout).toContain('unanalyzed observation');
   });
+});
+
+describe('CLI — doctor project-share surfacing', () => {
+  let dir: string;
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('doctor exits 1 when bundle is newer than local', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'aegis-cli-doctor-share-'));
+    mkdirSync(join(dir, '.aegis'), { recursive: true });
+    const dbPath = join(dir, '.aegis', 'aegis.db');
+    const db = await createDatabase(dbPath);
+    db.close();
+
+    // Write a manifest with knowledge_version > 0 (local is 0 / uninitialized)
+    const shareDir = join(dir, 'aegis-share');
+    mkdirSync(shareDir, { recursive: true });
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(
+      join(shareDir, 'manifest.json'),
+      JSON.stringify({
+        format_version: 1,
+        bundle_file: 'canonical.json',
+        snapshot_id: 'snap-remote',
+        knowledge_version: 5,
+        bundle_sha256: 'abc',
+        includes_tag_mappings: false,
+      }),
+    );
+    writeFileSync(join(shareDir, 'canonical.json'), '{}');
+
+    const r = spawnSync(execPath, [MAIN_JS, 'doctor', '--project-root', dir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stdout).toContain('project_share: bundle_newer');
+    expect(r.stdout).toContain('project-share bundle_newer');
+  }, 15_000);
 });
 
 describe('CLI — share-export (dist/main.js)', () => {
