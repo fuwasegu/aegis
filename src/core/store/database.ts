@@ -229,10 +229,22 @@ export class AegisDatabase {
   }
 
   exec(sql: string): void {
-    this._reloadIfStale();
-    this.sqlDb.run(sql);
-    this.dirty = true;
-    this._maybePersist();
+    if (this.inTransaction) {
+      this.sqlDb.run(sql);
+      this.dirty = true;
+      return;
+    }
+    this._acquireFileLock();
+    try {
+      if (this._isFileStale()) {
+        this._forceReload();
+      }
+      this.sqlDb.run(sql);
+      this.dirty = true;
+      this._maybePersist();
+    } finally {
+      this._releaseFileLock();
+    }
   }
 
   pragma(pragmaStr: string): unknown[] {
