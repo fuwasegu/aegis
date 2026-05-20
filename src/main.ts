@@ -27,6 +27,8 @@
  *   npx aegis share-hydrate --bundle-dir /path   # Custom bundle directory
  *   npx aegis share-lint                         # Lint aegis-share/source/
  *   npx aegis share-lint --source-dir /path      # Custom source directory
+ *   npx aegis share-format                       # Format aegis-share/source/ in-place
+ *   npx aegis share-format --source-dir /path    # Custom source directory
  *   npx aegis --list-models                      # List available SLM models
  *
  * SLM is disabled by default (ADR-004). Enable with --slm for expanded context.
@@ -43,7 +45,7 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { shareHydrate } from './core/project-share/hydrate.js';
-import { shareExport, shareLint } from './core/project-share/index.js';
+import { shareExport, shareFormat, shareLint } from './core/project-share/index.js';
 import { createDatabase } from './core/store/database.js';
 import { runInitialBaselineSourcePathMigration } from './core/store/migrations/index.js';
 import { Repository } from './core/store/repository.js';
@@ -703,6 +705,29 @@ function handleShareLint(): void {
   }
 }
 
+function handleShareFormat(): void {
+  const opts = parseShareLintCli(process.argv.slice(3));
+  const sourceDirPath = opts.sourceDir ?? join(opts.projectRoot, 'aegis-share', 'source');
+
+  try {
+    const result = shareFormat(sourceDirPath);
+    console.log('\nAegis share-format\n');
+    console.log(`  source:          ${sourceDirPath}`);
+    console.log(`  files_changed:   ${result.files_changed}`);
+    console.log(`  files_unchanged: ${result.files_unchanged}`);
+    if (result.warnings.length) {
+      console.log('\nWarnings:');
+      for (const w of result.warnings) {
+        console.log(`  ⚠ ${w}`);
+      }
+    }
+    console.log('\nDone.');
+  } catch (err) {
+    console.error(`[aegis] share-format failed: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 async function main() {
   const subcommand = process.argv[2];
 
@@ -738,6 +763,11 @@ async function main() {
 
   if (subcommand === 'share-lint') {
     handleShareLint();
+    return;
+  }
+
+  if (subcommand === 'share-format') {
+    handleShareFormat();
     return;
   }
 

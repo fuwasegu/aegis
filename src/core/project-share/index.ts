@@ -1,4 +1,6 @@
 export { shareExport } from './export.js';
+export type { ShareFormatResult } from './format.js';
+export { shareFormat } from './format.js';
 export type { ShareHydrateOptions, ShareHydrateResult } from './hydrate.js';
 export { shareHydrate } from './hydrate.js';
 export type { ShareLintResult } from './lint.js';

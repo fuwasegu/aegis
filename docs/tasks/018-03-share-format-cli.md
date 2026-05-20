@@ -1,14 +1,14 @@
 ---
 id: "018-03"
 title: "share-format CLI"
-status: "open"
+status: "done"
 adr: "ADR-018"
 phase: 9
 priority: "P1"
 depends_on: ["018-01"]
 created: "2026-05-19"
-closed: ""
-closed_reason: ""
+closed: "2026-05-20"
+closed_reason: "implemented"
 ---
 
 ## 概要
