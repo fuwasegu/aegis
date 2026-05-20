@@ -103,7 +103,7 @@ bash .cursor/skills/do-task/scripts/codex-critical-review.sh docs/tasks/014-01-e
 
 レビュー受領 → 修正 → **同じ手順で再レビュー** → 問題なければ Step5 へ．
 
-## Step5 フォーマット
+## Step5 フォーマット（lint）
 
 biome を使ってフォーマットチェックする．
 
@@ -113,7 +113,17 @@ npm run lint:fix
 
 自動で修正できないエラーは，手動で修正する．
 
-## Step5 PR を作る準備
+## Step5.5 タスクを閉じる
+
+対象タスクファイル (`docs/tasks/<id>-*.md`) の frontmatter を更新する．
+
+- `status` を `"done"` に変更
+- `closed` に当日の日付 (`YYYY-MM-DD`) を記入
+- `closed_reason` に `"implemented"` を記入
+
+この変更も差分に含めて stage すること．
+
+## Step6 PR を作る準備
 
 コミットには署名が必要なので，必ず人間のオペレータが行う，
 あなたが行うのはその準備まで．

@@ -507,3 +507,78 @@ describe('CLI — share-lint (dist/main.js)', () => {
     expect(r.stderr).toContain('2 error(s) found');
   });
 });
+
+describe('CLI — share-format (dist/main.js)', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'aegis-cli-format-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeDoc(docId: string, frontmatter: Record<string, string | null>, body: string): void {
+    mkdirSync(join(dir, 'documents'), { recursive: true });
+    const fm = Object.entries(frontmatter)
+      .map(([k, v]) => `${k}: ${v === null ? 'null' : v}`)
+      .join('\n');
+    writeFileSync(join(dir, 'documents', `${docId}.md`), `---\n${fm}\n---\n${body}`);
+  }
+
+  it('exits 0 and formats source tree', () => {
+    // Write with scrambled key order
+    writeDoc('guide', { ownership: 'standalone', title: 'Guide', kind: 'guideline', doc_id: 'guide' }, 'Content.\n');
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-format', '--source-dir', dir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toContain('share-format');
+    expect(r.stdout).toContain('files_changed');
+    expect(r.stdout).toContain('Done.');
+
+    // Verify file was reformatted
+    const content = readFileSync(join(dir, 'documents', 'guide.md'), 'utf-8');
+    const lines = content.split('\n');
+    expect(lines[1]).toMatch(/^doc_id:/);
+    expect(lines[2]).toMatch(/^title:/);
+  });
+
+  it('second run reports 0 files changed', () => {
+    writeDoc('guide', { ownership: 'standalone', title: 'Guide', kind: 'guideline', doc_id: 'guide' }, 'Content.\n');
+
+    // First run
+    spawnSync(execPath, [MAIN_JS, 'share-format', '--source-dir', dir], { encoding: 'utf-8' });
+
+    // Second run
+    const r = spawnSync(execPath, [MAIN_JS, 'share-format', '--source-dir', dir], { encoding: 'utf-8' });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('files_changed:   0');
+  });
+
+  it('uses default source dir with --project-root', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'aegis-cli-format-proj-'));
+    const sourceSubDir = join(projectDir, 'aegis-share', 'source');
+    mkdirSync(join(sourceSubDir, 'documents'), { recursive: true });
+    const fm = 'doc_id: hello\ntitle: Hello\nkind: guideline\nownership: standalone';
+    writeFileSync(join(sourceSubDir, 'documents', 'hello.md'), `---\n${fm}\n---\nBody.\n`);
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-format', '--project-root', projectDir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toContain('Done.');
+
+    rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  it('exits 1 for non-existent source directory', () => {
+    const r = spawnSync(execPath, [MAIN_JS, 'share-format', '--source-dir', '/tmp/nonexistent-xxx'], {
+      encoding: 'utf-8',
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('share-format failed');
+  });
+});
