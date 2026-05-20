@@ -5,7 +5,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execPath } from 'node:process';
@@ -355,4 +355,155 @@ describe('CLI — share-hydrate (dist/main.js)', () => {
 
     rmSync(srcDir, { recursive: true, force: true });
   }, 30_000);
+});
+
+describe('CLI — share-lint (dist/main.js)', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'aegis-cli-lint-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeDoc(docId: string, frontmatter: Record<string, string | null>, body: string): void {
+    mkdirSync(join(dir, 'documents'), { recursive: true });
+    const fm = Object.entries(frontmatter)
+      .map(([k, v]) => `${k}: ${v === null ? 'null' : v}`)
+      .join('\n');
+    writeFileSync(join(dir, 'documents', `${docId}.md`), `---\n${fm}\n---\n${body}`);
+  }
+
+  function writeEdgeFile(filename: string, edges: unknown[]): void {
+    mkdirSync(join(dir, 'edges'), { recursive: true });
+    writeFileSync(join(dir, 'edges', filename), JSON.stringify(edges, null, 2));
+  }
+
+  function writeTagMappings(mappings: unknown[]): void {
+    writeFileSync(join(dir, 'tag-mappings.json'), JSON.stringify(mappings, null, 2));
+  }
+
+  it('exits 0 for valid source tree', () => {
+    writeDoc(
+      'guide',
+      {
+        doc_id: 'guide',
+        title: 'Guide',
+        kind: 'guideline',
+        ownership: 'standalone',
+      },
+      'Content',
+    );
+    writeEdgeFile('path-requires.json', [
+      { edge_id: 'e1', source_value: 'src/**', target_doc_id: 'guide', priority: 1, specificity: 1 },
+    ]);
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-lint', '--source-dir', dir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toContain('All checks passed');
+    expect(r.stdout).toContain('documents:');
+  });
+
+  it('exits 1 for dangling edge reference', () => {
+    writeDoc(
+      'doc-a',
+      {
+        doc_id: 'doc-a',
+        title: 'A',
+        kind: 'guideline',
+        ownership: 'standalone',
+      },
+      'A',
+    );
+    writeEdgeFile('path-requires.json', [
+      { edge_id: 'e1', source_value: 'src/**', target_doc_id: 'nonexistent', priority: 1, specificity: 1 },
+    ]);
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-lint', '--source-dir', dir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('non-existent document');
+    expect(r.stderr).toContain('nonexistent');
+  });
+
+  it('exits 1 for dangling tag_mapping reference', () => {
+    writeTagMappings([{ tag: 'test', doc_id: 'missing', confidence: 0.9, source: 'manual' }]);
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-lint', '--source-dir', dir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('non-existent document');
+    expect(r.stderr).toContain('missing');
+  });
+
+  it('exits 1 for malformed JSON', () => {
+    mkdirSync(join(dir, 'edges'), { recursive: true });
+    writeFileSync(join(dir, 'edges', 'path-requires.json'), '{ broken }');
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-lint', '--source-dir', dir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('error(s) found');
+  });
+
+  it('uses default source dir (aegis-share/source/) with --project-root', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'aegis-cli-lint-proj-'));
+    const sourceSubDir = join(projectDir, 'aegis-share', 'source');
+    mkdirSync(join(sourceSubDir, 'documents'), { recursive: true });
+    const fm = 'doc_id: hello\ntitle: Hello\nkind: guideline\nownership: standalone';
+    writeFileSync(join(sourceSubDir, 'documents', 'hello.md'), `---\n${fm}\n---\nHello body`);
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-lint', '--project-root', projectDir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toContain('All checks passed');
+
+    rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  it('exits 1 for duplicate doc_id across files', () => {
+    writeDoc(
+      'real',
+      {
+        doc_id: 'real',
+        title: 'Real',
+        kind: 'guideline',
+        ownership: 'standalone',
+      },
+      'First',
+    );
+    // alias.md with same doc_id → duplicate
+    writeFileSync(
+      join(dir, 'documents', 'alias.md'),
+      '---\ndoc_id: real\ntitle: Alias\nkind: guideline\nownership: standalone\n---\nSecond',
+    );
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-lint', '--source-dir', dir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('duplicate doc_id');
+    expect(r.stderr).toContain('real');
+  });
+
+  it('reports error count in summary', () => {
+    writeEdgeFile('path-requires.json', [
+      { edge_id: 'e1', source_value: 'a/**', target_doc_id: 'ghost-a', priority: 1, specificity: 1 },
+      { edge_id: 'e2', source_value: 'b/**', target_doc_id: 'ghost-b', priority: 1, specificity: 1 },
+    ]);
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-lint', '--source-dir', dir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('2 error(s) found');
+  });
 });

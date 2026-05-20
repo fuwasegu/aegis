@@ -1,14 +1,14 @@
 ---
 id: "018-02"
 title: "share-lint CLI"
-status: "open"
+status: "closed"
 adr: "ADR-018"
 phase: 9
 priority: "P0"
 depends_on: ["018-01"]
 created: "2026-05-19"
-closed: ""
-closed_reason: ""
+closed: "2026-05-20"
+closed_reason: "implemented"
 ---
 
 ## 概要

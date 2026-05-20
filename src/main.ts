@@ -25,6 +25,8 @@
  *   npx aegis share-hydrate                      # Rebuild replica DB from aegis-share/
  *   npx aegis share-hydrate --replace            # Overwrite existing initialized DB
  *   npx aegis share-hydrate --bundle-dir /path   # Custom bundle directory
+ *   npx aegis share-lint                         # Lint aegis-share/source/
+ *   npx aegis share-lint --source-dir /path      # Custom source directory
  *   npx aegis --list-models                      # List available SLM models
  *
  * SLM is disabled by default (ADR-004). Enable with --slm for expanded context.
@@ -41,7 +43,7 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { shareHydrate } from './core/project-share/hydrate.js';
-import { shareExport } from './core/project-share/index.js';
+import { shareExport, shareLint } from './core/project-share/index.js';
 import { createDatabase } from './core/store/database.js';
 import { runInitialBaselineSourcePathMigration } from './core/store/migrations/index.js';
 import { Repository } from './core/store/repository.js';
@@ -643,6 +645,64 @@ async function handleShareHydrate(): Promise<void> {
   }
 }
 
+interface ShareLintCli {
+  projectRoot: string;
+  sourceDir: string | undefined;
+}
+
+function parseShareLintCli(argv: string[]): ShareLintCli {
+  let projectRoot = process.cwd();
+  let sourceDir: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case '--project-root': {
+        const val = argv[++i];
+        if (!val) {
+          console.error('[aegis] --project-root requires a value');
+          process.exit(1);
+        }
+        projectRoot = resolve(val);
+        break;
+      }
+      case '--source-dir': {
+        const val = argv[++i];
+        if (!val) {
+          console.error('[aegis] --source-dir requires a value');
+          process.exit(1);
+        }
+        sourceDir = resolve(val);
+        break;
+      }
+    }
+  }
+  return { projectRoot, sourceDir };
+}
+
+function handleShareLint(): void {
+  const opts = parseShareLintCli(process.argv.slice(3));
+  const sourceDirPath = opts.sourceDir ?? join(opts.projectRoot, 'aegis-share', 'source');
+
+  const result = shareLint(sourceDirPath);
+
+  if (result.ok) {
+    console.log('\nAegis share-lint\n');
+    console.log(`  source:       ${sourceDirPath}`);
+    console.log(`  documents:    ${result.counts.documents}`);
+    console.log(`  edges:        ${result.counts.edges}`);
+    console.log(`  layer_rules:  ${result.counts.layer_rules}`);
+    console.log(`  tag_mappings: ${result.counts.tag_mappings}`);
+    console.log('\nAll checks passed.');
+  } else {
+    console.error('\nAegis share-lint — errors found\n');
+    console.error(`  source: ${sourceDirPath}\n`);
+    for (const err of result.errors) {
+      console.error(`  ✗ ${err.file}  [${err.location}]  ${err.message}`);
+    }
+    console.error(`\n  ${result.errors.length} error(s) found.`);
+    process.exit(1);
+  }
+}
+
 async function main() {
   const subcommand = process.argv[2];
 
@@ -673,6 +733,11 @@ async function main() {
 
   if (subcommand === 'share-hydrate') {
     await handleShareHydrate();
+    return;
+  }
+
+  if (subcommand === 'share-lint') {
+    handleShareLint();
     return;
   }
 
