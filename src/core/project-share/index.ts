@@ -1,6 +1,8 @@
 export { shareExport } from './export.js';
 export type { ShareHydrateOptions, ShareHydrateResult } from './hydrate.js';
 export { shareHydrate } from './hydrate.js';
+export type { ShareLintResult } from './lint.js';
+export { lintParseResult, shareLint } from './lint.js';
 export { parseSharedSource } from './source-parser.js';
 export type {
   SharedSourceParseResult,
