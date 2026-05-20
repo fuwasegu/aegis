@@ -1,6 +1,21 @@
 export { shareExport } from './export.js';
 export type { ShareHydrateOptions, ShareHydrateResult } from './hydrate.js';
 export { shareHydrate } from './hydrate.js';
+export { parseSharedSource } from './source-parser.js';
+export type {
+  SharedSourceParseResult,
+  SourceDocument,
+  SourceEdge,
+  SourceLayerRule,
+  SourceParseError,
+  SourceTagMapping,
+} from './source-types.js';
+export {
+  EDGE_FILE_EDGE_TYPE,
+  EDGE_FILE_SOURCE_TYPE,
+  RECOGNIZED_EDGE_FILES,
+  RECOGNIZED_TOP_LEVEL,
+} from './source-types.js';
 export type { LocalSnapshotInfo, ProjectShareState, ProjectShareStatus } from './status.js';
 export { deriveShareState } from './status.js';
 export type {
