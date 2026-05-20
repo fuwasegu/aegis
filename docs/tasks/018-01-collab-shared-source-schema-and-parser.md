@@ -1,13 +1,13 @@
 ---
 id: "018-01"
 title: "collaborative shared source schema + parser"
-status: "in-progress"
+status: "done"
 adr: "ADR-018"
 phase: 9
 priority: "P0"
 depends_on: ["017-01", "017-02", "017-03", "017-04"]
 created: "2026-05-19"
-closed: ""
+closed: "2026-05-20"
 closed_reason: ""
 ---
 
@@ -19,14 +19,14 @@ Phase 1 では Markdown + frontmatter と JSON 群を deterministic に読み込
 
 ## 受け入れ条件
 
-- [ ] `aegis-share/source/` の directory contract が型として定義されること
-- [ ] `documents/<doc_id>.md` の frontmatter + body を parse できること
-- [ ] `edges/path-requires.json` / `layer-requires.json` / `command-requires.json` / `doc-depends-on.json` を parse できること
-- [ ] `layer-rules.json` と `tag-mappings.json` を parse できること
-- [ ] `content_hash` は source file からは受け取らず、materialize 側で再計算する前提が parser contract に明示されること
-- [ ] parse error が file path / logical location 付きで返ること
-- [ ] 余計な source type / unknown file layout を reject できること
-- [ ] テスト追加
+- [x] `aegis-share/source/` の directory contract が型として定義されること
+- [x] `documents/<doc_id>.md` の frontmatter + body を parse できること
+- [x] `edges/path-requires.json` / `layer-requires.json` / `command-requires.json` / `doc-depends-on.json` を parse できること
+- [x] `layer-rules.json` と `tag-mappings.json` を parse できること
+- [x] `content_hash` は source file からは受け取らず、materialize 側で再計算する前提が parser contract に明示されること
+- [x] parse error が file path / logical location 付きで返ること
+- [x] 余計な source type / unknown file layout を reject できること
+- [x] テスト追加
 
 ## 設計詳細
 
