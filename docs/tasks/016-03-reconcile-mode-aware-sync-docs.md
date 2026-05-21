@@ -1,14 +1,14 @@
 ---
 id: "016-03"
 title: "sync_docs を reconcile-mode-aware に拡張"
-status: "open"
+status: "done"
 adr: "ADR-016"
 phase: 7
 priority: "P0"
 depends_on: ["016-01", "016-02", "014-01", "014-02"]
 created: "2026-05-11"
-closed: ""
-closed_reason: ""
+closed: "2026-05-21"
+closed_reason: "implemented"
 ---
 
 ## 概要

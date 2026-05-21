@@ -1,14 +1,14 @@
 ---
 id: "018-06"
 title: "collaborative project-share の README / setup guidance"
-status: "open"
+status: "done"
 adr: "ADR-018"
 phase: 9
 priority: "P2"
 depends_on: ["018-02", "018-03", "018-04", "018-05"]
 created: "2026-05-19"
-closed: ""
-closed_reason: ""
+closed: "2026-05-21"
+closed_reason: "implemented"
 ---
 
 ## 概要
