@@ -1,14 +1,14 @@
 ---
 id: "018-04"
 title: "share-materialize CLI"
-status: "open"
+status: "done"
 adr: "ADR-018"
 phase: 9
 priority: "P0"
 depends_on: ["018-01", "018-02", "018-03"]
 created: "2026-05-19"
-closed: ""
-closed_reason: ""
+closed: "2026-05-20"
+closed_reason: "implemented"
 ---
 
 ## 概要

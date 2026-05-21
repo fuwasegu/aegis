@@ -81,7 +81,8 @@ CREATE TABLE IF NOT EXISTS proposals (
     proposal_id     TEXT PRIMARY KEY,
     proposal_type   TEXT NOT NULL
                     CHECK (proposal_type IN ('add_edge', 'update_doc', 'new_doc',
-                                             'deprecate', 'bootstrap', 'retarget_edge', 'remove_edge')),
+                                             'deprecate', 'bootstrap', 'retarget_edge', 'remove_edge',
+                                             'materialize')),
     payload         TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'pending'
                     CHECK (status IN ('pending', 'approved', 'rejected', 'withdrawn')),

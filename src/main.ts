@@ -29,6 +29,9 @@
  *   npx aegis share-lint --source-dir /path      # Custom source directory
  *   npx aegis share-format                       # Format aegis-share/source/ in-place
  *   npx aegis share-format --source-dir /path    # Custom source directory
+ *   npx aegis share-materialize                  # Materialize aegis-share/source/ into DB
+ *   npx aegis share-materialize --dry-run        # Show diff summary without applying
+ *   npx aegis share-materialize --source-dir /p  # Custom source directory
  *   npx aegis --list-models                      # List available SLM models
  *
  * SLM is disabled by default (ADR-004). Enable with --slm for expanded context.
@@ -45,7 +48,7 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { shareHydrate } from './core/project-share/hydrate.js';
-import { shareExport, shareFormat, shareLint } from './core/project-share/index.js';
+import { shareExport, shareFormat, shareLint, shareMaterialize } from './core/project-share/index.js';
 import { createDatabase } from './core/store/database.js';
 import { runInitialBaselineSourcePathMigration } from './core/store/migrations/index.js';
 import { Repository } from './core/store/repository.js';
@@ -728,6 +731,99 @@ function handleShareFormat(): void {
   }
 }
 
+interface ShareMaterializeCli {
+  projectRoot: string;
+  customDbPath: string | undefined;
+  sourceDir: string | undefined;
+  dryRun: boolean;
+}
+
+function parseShareMaterializeCli(argv: string[]): ShareMaterializeCli {
+  let projectRoot = process.cwd();
+  let customDbPath: string | undefined;
+  let sourceDir: string | undefined;
+  let dryRun = false;
+  for (let i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case '--project-root': {
+        const val = argv[++i];
+        if (!val) {
+          console.error('[aegis] --project-root requires a value');
+          process.exit(1);
+        }
+        projectRoot = resolve(val);
+        break;
+      }
+      case '--db':
+        customDbPath = argv[++i];
+        break;
+      case '--source-dir': {
+        const val = argv[++i];
+        if (!val) {
+          console.error('[aegis] --source-dir requires a value');
+          process.exit(1);
+        }
+        sourceDir = resolve(val);
+        break;
+      }
+      case '--dry-run':
+        dryRun = true;
+        break;
+    }
+  }
+  return { projectRoot, customDbPath, sourceDir, dryRun };
+}
+
+async function handleShareMaterialize(): Promise<void> {
+  const opts = parseShareMaterializeCli(process.argv.slice(3));
+  const dbPath = opts.customDbPath ?? join(opts.projectRoot, DEFAULT_DB_PATH);
+  const sourceDirPath = opts.sourceDir ?? join(opts.projectRoot, 'aegis-share', 'source');
+
+  if (!existsSync(dbPath)) {
+    console.error(`[aegis] Database not found at ${dbPath}`);
+    console.error('[aegis] Run aegis init first, or specify --project-root / --db.');
+    process.exit(1);
+  }
+
+  const db = await createDatabase(dbPath);
+  const repo = new Repository(db);
+
+  try {
+    const result = shareMaterialize({
+      sourceDir: sourceDirPath,
+      repo,
+      dryRun: opts.dryRun,
+      projectRoot: opts.projectRoot,
+    });
+
+    const prefix = result.dry_run ? 'Aegis share-materialize (dry-run)' : 'Aegis share-materialize';
+    console.log(`\n${prefix}\n`);
+    console.log(`  source:            ${sourceDirPath}`);
+    console.log(`  knowledge_version: ${result.knowledge_version}`);
+    if (result.snapshot_id) {
+      console.log(`  snapshot_id:       ${result.snapshot_id}`);
+    }
+
+    const c = result.changes;
+    console.log('\n  Changes:');
+    console.log(`    documents:   +${c.documents.added}  ~${c.documents.updated}  -${c.documents.removed}`);
+    console.log(`    edges:       +${c.edges.added}  ~${c.edges.updated}  -${c.edges.removed}`);
+    console.log(`    layer_rules: +${c.layer_rules.added}  ~${c.layer_rules.updated}  -${c.layer_rules.removed}`);
+    console.log(`    tag_mappings: +${c.tag_mappings.added}  -${c.tag_mappings.removed}`);
+
+    if (result.warnings.length) {
+      console.log('\nWarnings:');
+      for (const w of result.warnings) {
+        console.log(`  ⚠ ${w}`);
+      }
+    }
+    console.log('\nDone.');
+  } catch (err) {
+    console.error(`[aegis] share-materialize failed: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 async function main() {
   const subcommand = process.argv[2];
 
@@ -768,6 +864,11 @@ async function main() {
 
   if (subcommand === 'share-format') {
     handleShareFormat();
+    return;
+  }
+
+  if (subcommand === 'share-materialize') {
+    await handleShareMaterialize();
     return;
   }
 

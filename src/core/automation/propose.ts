@@ -32,6 +32,7 @@ const SEMANTIC_KEY_EXTRACTORS: Record<ProposalType, (p: Record<string, unknown>)
   update_doc: (p) => `${p.doc_id}`,
   deprecate: (p) => `${p.entity_type}:${p.entity_id}`,
   bootstrap: () => 'bootstrap',
+  materialize: () => 'materialize',
 };
 
 function extractSemanticKey(proposalType: ProposalType, payload: Record<string, unknown>): string {

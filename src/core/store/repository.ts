@@ -3,7 +3,7 @@
  * Enforces INV-1 through INV-6 from プロジェクト計画v2.md §6.1
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { normalizeSourcePath, resolveSourcePath } from '../paths.js';
 import {
@@ -24,6 +24,7 @@ import {
   type InitManifest,
   type KnowledgeMeta,
   type LayerRule,
+  type MaterializeChangeCounts,
   type Observation,
   PENDING_CONTENT_PLACEHOLDER,
   type Proposal,
@@ -102,6 +103,250 @@ export class Repository {
       .prepare('UPDATE knowledge_meta SET current_version = current_version + 1, last_updated_at = ? WHERE id = 1')
       .run(now);
     return this.getKnowledgeMeta().current_version;
+  }
+
+  /**
+   * Manually bump knowledge_version and create a snapshot.
+   * Used by source-native materialize when only non-proposal entities (layer_rules, tag_mappings) changed.
+   */
+  bumpVersionAndSnapshot(): { knowledge_version: number; snapshot_id: string } {
+    const newVersion = this.incrementVersion();
+    const snapshot = this.createSnapshot();
+    return { knowledge_version: newVersion, snapshot_id: snapshot.snapshot_id };
+  }
+
+  /**
+   * ADR-018: Diff + apply in a single transaction.
+   * Reads current DB state, computes diff against source, records one materialize
+   * proposal, then routes the apply through the standard approve path so
+   * version bump + snapshot semantics stay aligned.
+   *
+   * source_path / source_refs_json are normalized before diff comparison so that
+   * repeated runs converge (no spurious diffs from absolute vs relative paths).
+   */
+  applyMaterialize(
+    source: {
+      documents: Array<{
+        doc_id: string;
+        title: string;
+        kind: string;
+        content: string;
+        content_hash: string;
+        ownership: string;
+        source_path: string | null;
+        source_refs_json: string | null;
+        template_origin: string | null;
+      }>;
+      edges: Array<{
+        edge_id: string;
+        source_type: EdgeSourceType;
+        source_value: string;
+        target_doc_id: string;
+        edge_type: EdgeType;
+        priority: number;
+        specificity: number;
+      }>;
+      layer_rules: Array<{
+        rule_id: string;
+        path_pattern: string;
+        layer_name: string;
+        priority: number;
+        specificity: number;
+      }>;
+      tag_mappings: Array<{ tag: string; doc_id: string; confidence: number; source: 'slm' | 'manual' }>;
+    },
+    dryRun: boolean,
+    projectRoot?: string,
+  ): { knowledge_version: number; snapshot_id: string | null; changes: MaterializeChangeCounts; no_changes: boolean } {
+    return this.db.transaction(() => {
+      // -- Guard: reject if pending proposals exist --
+      const pendingCount = this.countPendingProposals();
+      if (pendingCount > 0) {
+        throw new Error(
+          `Cannot materialize: ${pendingCount} pending proposal(s) exist. ` +
+            'Approve or reject them first to avoid conflicts between DB-native and source-native lanes.',
+        );
+      }
+
+      // -- Normalize source_path / source_refs_json before diff --
+      if (projectRoot) {
+        for (const doc of source.documents) {
+          const payload: Record<string, unknown> = {
+            source_path: doc.source_path,
+            source_refs_json: doc.source_refs_json,
+          };
+          this._normalizeStoredSourcePathsForApprove(payload, 'new_doc', projectRoot);
+          doc.source_path = (payload.source_path as string | null) ?? null;
+          doc.source_refs_json = (payload.source_refs_json as string | null) ?? null;
+        }
+      }
+
+      // -- Read current DB state (inside transaction for consistency) --
+      const dbDocs = this.getApprovedDocuments();
+      const dbEdges = this.getApprovedEdges();
+      const dbRules = this.getApprovedLayerRules();
+      const dbTagMappings = this.getApprovedTagMappings();
+
+      // -- Diff documents --
+      // Check both approved and deprecated docs to handle re-activation
+      const dbDocMap = new Map(dbDocs.map((d) => [d.doc_id, d]));
+      const srcDocSet = new Set<string>();
+      const docsAdd: typeof source.documents = [];
+      const docsUpdate: typeof source.documents = [];
+      for (const src of source.documents) {
+        srcDocSet.add(src.doc_id);
+        const existing = dbDocMap.get(src.doc_id);
+        if (!existing) {
+          // Check if a deprecated/non-approved row exists (re-activation case)
+          const anyRow = this.getDocumentById(src.doc_id);
+          if (anyRow) {
+            // Re-activate: treat as update (will set status back to approved)
+            docsUpdate.push(src);
+          } else {
+            docsAdd.push(src);
+          }
+        } else {
+          const changed =
+            existing.content_hash !== src.content_hash ||
+            existing.title !== src.title ||
+            existing.kind !== src.kind ||
+            existing.ownership !== src.ownership ||
+            (existing.source_path ?? null) !== (src.source_path ?? null) ||
+            (existing.source_refs_json ?? null) !== (src.source_refs_json ?? null) ||
+            (existing.template_origin ?? null) !== (src.template_origin ?? null);
+          if (changed) docsUpdate.push(src);
+        }
+      }
+      const docsRemove = dbDocs.filter((d) => !srcDocSet.has(d.doc_id)).map((d) => d.doc_id);
+
+      // -- Diff edges --
+      const dbEdgeMap = new Map(dbEdges.map((e) => [e.edge_id, e]));
+      const srcEdgeSet = new Set<string>();
+      const edgesAdd: typeof source.edges = [];
+      const edgesUpdate: typeof source.edges = [];
+      for (const src of source.edges) {
+        srcEdgeSet.add(src.edge_id);
+        const existing = dbEdgeMap.get(src.edge_id);
+        if (!existing) {
+          edgesAdd.push(src);
+        } else {
+          const changed =
+            existing.source_type !== src.source_type ||
+            existing.source_value !== src.source_value ||
+            existing.target_doc_id !== src.target_doc_id ||
+            existing.edge_type !== src.edge_type ||
+            existing.priority !== src.priority ||
+            existing.specificity !== src.specificity;
+          if (changed) edgesUpdate.push(src);
+        }
+      }
+      const edgesRemove = dbEdges.filter((e) => !srcEdgeSet.has(e.edge_id)).map((e) => e.edge_id);
+
+      // -- Diff layer rules (including deprecated for re-activation) --
+      const dbRuleMap = new Map(dbRules.map((r) => [r.rule_id, r]));
+      const srcRuleSet = new Set<string>();
+      const rulesAdd: typeof source.layer_rules = [];
+      const rulesUpdate: typeof source.layer_rules = [];
+      for (const src of source.layer_rules) {
+        srcRuleSet.add(src.rule_id);
+        const existing = dbRuleMap.get(src.rule_id);
+        if (!existing) {
+          // Check for deprecated row (re-activation)
+          const anyRow = this.db.prepare('SELECT rule_id FROM layer_rules WHERE rule_id = ?').get(src.rule_id);
+          if (anyRow) {
+            rulesUpdate.push(src); // will delete + re-insert
+          } else {
+            rulesAdd.push(src);
+          }
+        } else {
+          const changed =
+            existing.path_pattern !== src.path_pattern ||
+            existing.layer_name !== src.layer_name ||
+            existing.priority !== src.priority ||
+            existing.specificity !== src.specificity;
+          if (changed) rulesUpdate.push(src);
+        }
+      }
+      const rulesRemove = dbRules.filter((r) => !srcRuleSet.has(r.rule_id)).map((r) => r.rule_id);
+
+      // -- Diff tag mappings --
+      const tmKey = (tag: string, docId: string) => `${tag}\0${docId}`;
+      const dbTmSet = new Set(dbTagMappings.map((tm) => tmKey(tm.tag, tm.doc_id)));
+      const srcTmSet = new Set<string>();
+      const tmAdd: typeof source.tag_mappings = [];
+      for (const src of source.tag_mappings) {
+        const k = tmKey(src.tag, src.doc_id);
+        srcTmSet.add(k);
+        if (!dbTmSet.has(k)) {
+          tmAdd.push(src);
+        } else {
+          const existing = dbTagMappings.find((tm) => tm.tag === src.tag && tm.doc_id === src.doc_id);
+          if (existing && (existing.confidence !== src.confidence || existing.source !== src.source)) {
+            tmAdd.push(src);
+          }
+        }
+      }
+      const tmRemove = dbTagMappings
+        .filter((tm) => !srcTmSet.has(tmKey(tm.tag, tm.doc_id)))
+        .map((tm) => ({ tag: tm.tag, doc_id: tm.doc_id }));
+
+      // -- Build change counts --
+      const changes: MaterializeChangeCounts = {
+        documents: { added: docsAdd.length, updated: docsUpdate.length, removed: docsRemove.length },
+        edges: { added: edgesAdd.length, updated: edgesUpdate.length, removed: edgesRemove.length },
+        layer_rules: { added: rulesAdd.length, updated: rulesUpdate.length, removed: rulesRemove.length },
+        tag_mappings: { added: tmAdd.length, removed: tmRemove.length },
+      };
+
+      const totalChanges =
+        changes.documents.added +
+        changes.documents.updated +
+        changes.documents.removed +
+        changes.edges.added +
+        changes.edges.updated +
+        changes.edges.removed +
+        changes.layer_rules.added +
+        changes.layer_rules.updated +
+        changes.layer_rules.removed +
+        changes.tag_mappings.added +
+        changes.tag_mappings.removed;
+
+      // -- No changes or dry run --
+      if (totalChanges === 0 || dryRun) {
+        const meta = this.getKnowledgeMeta();
+        const snap = this.getCurrentSnapshot();
+        return {
+          knowledge_version: meta.current_version,
+          snapshot_id: snap?.snapshot_id ?? null,
+          changes,
+          no_changes: totalChanges === 0,
+        };
+      }
+
+      // -- Record materialize proposal for audit trail --
+      const proposalId = randomUUID();
+      const changeSet = {
+        documents: { add: docsAdd, update: docsUpdate, remove: docsRemove },
+        edges: { add: edgesAdd, update: edgesUpdate, remove: edgesRemove },
+        layer_rules: { add: rulesAdd, update: rulesUpdate, remove: rulesRemove },
+        tag_mappings: { add: tmAdd, remove: tmRemove },
+      };
+      this.insertProposal({
+        proposal_id: proposalId,
+        proposal_type: 'materialize',
+        payload: JSON.stringify(changeSet),
+        status: 'pending',
+        review_comment: 'source-native materialize',
+        bundle_id: null,
+      });
+      const approved = this._approveProposalInTransaction(proposalId, undefined, projectRoot);
+      return {
+        knowledge_version: approved.knowledge_version,
+        snapshot_id: approved.snapshot_id,
+        changes,
+        no_changes: false,
+      };
+    })();
   }
 
   // ============================================================
@@ -262,6 +507,18 @@ export class Repository {
       VALUES (?, ?, ?, ?, ?, ?)
     `)
       .run(rule.rule_id, rule.path_pattern, rule.layer_name, rule.priority, rule.specificity, rule.status);
+  }
+
+  deleteLayerRuleById(ruleId: string): void {
+    this.db.prepare('DELETE FROM layer_rules WHERE rule_id = ?').run(ruleId);
+  }
+
+  updateLayerRule(rule: Pick<LayerRule, 'rule_id' | 'path_pattern' | 'layer_name' | 'priority' | 'specificity'>): void {
+    this.db
+      .prepare(
+        'UPDATE layer_rules SET path_pattern = ?, layer_name = ?, priority = ?, specificity = ? WHERE rule_id = ?',
+      )
+      .run(rule.path_pattern, rule.layer_name, rule.priority, rule.specificity, rule.rule_id);
   }
 
   // ============================================================
@@ -993,6 +1250,10 @@ export class Repository {
       this._applyBootstrap(payload as Parameters<Repository['_applyBootstrap']>[0]);
       return;
     }
+    if (proposalType === 'materialize') {
+      this._applyMaterializeProposal(proposalId, payload, projectRoot);
+      return;
+    }
     if (proposalType === 'add_edge') {
       this._applyAddEdge(payload as Omit<Edge, 'created_at' | 'status'>);
       return;
@@ -1036,53 +1297,53 @@ export class Repository {
     throw new Error(`Unsupported proposal_type for approval: ${proposalType}`);
   }
 
-  approveProposal(proposalId: string, modifications?: Record<string, unknown>, projectRoot?: string): CanonicalVersion {
-    return this.db.transaction(() => {
-      const proposal = this.getProposal(proposalId);
-      if (!proposal) throw new Error(`Proposal ${proposalId} not found`);
-      if (proposal.status !== 'pending')
-        throw new Error(`Proposal ${proposalId} is not pending (status: ${proposal.status})`);
-      if (proposal.bundle_id != null && String(proposal.bundle_id).trim() !== '') {
-        throw new Error(
-          `Proposal ${proposalId} belongs to bundle '${proposal.bundle_id}'. ` +
-            'Use approveProposalBundle(bundle_id) for all-or-nothing approval.',
-        );
-      }
+  private _approveProposalInTransaction(
+    proposalId: string,
+    modifications?: Record<string, unknown>,
+    projectRoot?: string,
+  ): CanonicalVersion {
+    const proposal = this.getProposal(proposalId);
+    if (!proposal) throw new Error(`Proposal ${proposalId} not found`);
+    if (proposal.status !== 'pending') {
+      throw new Error(`Proposal ${proposalId} is not pending (status: ${proposal.status})`);
+    }
+    if (proposal.bundle_id != null && String(proposal.bundle_id).trim() !== '') {
+      throw new Error(
+        `Proposal ${proposalId} belongs to bundle '${proposal.bundle_id}'. ` +
+          'Use approveProposalBundle(bundle_id) for all-or-nothing approval.',
+      );
+    }
 
-      const payload = JSON.parse(proposal.payload) as Record<string, unknown>;
+    const payload = JSON.parse(proposal.payload) as Record<string, unknown>;
 
-      // Apply admin modifications to payload before mutation
-      if (modifications && Object.keys(modifications).length > 0) {
-        this._applyModifications(payload, proposal.proposal_type as ProposalType, modifications);
-        // Persist modified payload so get_proposal returns the actually-approved content
-        this.db
-          .prepare('UPDATE proposals SET payload = ? WHERE proposal_id = ?')
-          .run(JSON.stringify(payload), proposalId);
-      }
-
-      if (projectRoot) {
-        this._normalizeStoredSourcePathsForApprove(payload, proposal.proposal_type as ProposalType, projectRoot);
-        this.db
-          .prepare('UPDATE proposals SET payload = ? WHERE proposal_id = ?')
-          .run(JSON.stringify(payload), proposalId);
-      }
-
-      this._applyCanonicalMutationFromPayload(proposalId, proposal.proposal_type as ProposalType, payload, projectRoot);
-
-      // Update proposal status
-      const now = new Date().toISOString();
+    if (modifications && Object.keys(modifications).length > 0) {
+      this._applyModifications(payload, proposal.proposal_type as ProposalType, modifications);
       this.db
-        .prepare('UPDATE proposals SET status = ?, resolved_at = ? WHERE proposal_id = ?')
-        .run('approved', now, proposalId);
+        .prepare('UPDATE proposals SET payload = ? WHERE proposal_id = ?')
+        .run(JSON.stringify(payload), proposalId);
+    }
 
-      // INV-4: increment version
-      const newVersion = this.incrementVersion();
+    if (projectRoot) {
+      this._normalizeStoredSourcePathsForApprove(payload, proposal.proposal_type as ProposalType, projectRoot);
+      this.db
+        .prepare('UPDATE proposals SET payload = ? WHERE proposal_id = ?')
+        .run(JSON.stringify(payload), proposalId);
+    }
 
-      // Create snapshot
-      const snapshot = this.createSnapshot();
+    this._applyCanonicalMutationFromPayload(proposalId, proposal.proposal_type as ProposalType, payload, projectRoot);
 
-      return { knowledge_version: newVersion, snapshot_id: snapshot.snapshot_id };
-    })();
+    const now = new Date().toISOString();
+    this.db
+      .prepare('UPDATE proposals SET status = ?, resolved_at = ? WHERE proposal_id = ?')
+      .run('approved', now, proposalId);
+
+    const newVersion = this.incrementVersion();
+    const snapshot = this.createSnapshot();
+    return { knowledge_version: newVersion, snapshot_id: snapshot.snapshot_id };
+  }
+
+  approveProposal(proposalId: string, modifications?: Record<string, unknown>, projectRoot?: string): CanonicalVersion {
+    return this.db.transaction(() => this._approveProposalInTransaction(proposalId, modifications, projectRoot))();
   }
 
   /**
@@ -1344,6 +1605,7 @@ export class Repository {
       remove_edge: [],
       deprecate: ['replaced_by_doc_id'],
       bootstrap: [],
+      materialize: [],
     };
     const allowed = allowedFields[proposalType] ?? [];
     for (const key of Object.keys(modifications)) {
@@ -1370,15 +1632,18 @@ export class Repository {
     projectRoot: string,
   ): void {
     const norm = (sp: string) => normalizeSourcePath(sp, projectRoot);
+    const normalizeDocLikePayload = (raw: Record<string, unknown>): void => {
+      const sp = raw.source_path;
+      if (typeof sp === 'string' && sp.length > 0) {
+        raw.source_path = norm(sp);
+      }
+      if ('source_refs_json' in raw && raw.source_refs_json !== undefined) {
+        raw.source_refs_json = normalizeStoredSourceRefsPayloadStrict(raw.source_refs_json, projectRoot);
+      }
+    };
 
     if (proposalType === 'new_doc' || proposalType === 'update_doc') {
-      const sp = payload.source_path;
-      if (typeof sp === 'string' && sp.length > 0) {
-        payload.source_path = norm(sp);
-      }
-      if ('source_refs_json' in payload && payload.source_refs_json !== undefined) {
-        payload.source_refs_json = normalizeStoredSourceRefsPayloadStrict(payload.source_refs_json, projectRoot);
-      }
+      normalizeDocLikePayload(payload);
       return;
     }
 
@@ -1387,10 +1652,20 @@ export class Repository {
       if (!Array.isArray(docs)) return;
       for (const raw of docs) {
         if (!raw || typeof raw !== 'object') continue;
-        const d = raw as Record<string, unknown>;
-        const sp = d.source_path;
-        if (typeof sp === 'string' && sp.length > 0) {
-          d.source_path = norm(sp);
+        normalizeDocLikePayload(raw as Record<string, unknown>);
+      }
+      return;
+    }
+
+    if (proposalType === 'materialize') {
+      const groups = payload.documents;
+      if (!groups || typeof groups !== 'object' || Array.isArray(groups)) return;
+      for (const key of ['add', 'update'] as const) {
+        const docs = (groups as Record<string, unknown>)[key];
+        if (!Array.isArray(docs)) continue;
+        for (const raw of docs) {
+          if (!raw || typeof raw !== 'object') continue;
+          normalizeDocLikePayload(raw as Record<string, unknown>);
         }
       }
     }
@@ -1415,6 +1690,82 @@ export class Repository {
     }
     for (const rule of payload.layer_rules) {
       this.insertLayerRule({ ...rule, status: 'approved' });
+    }
+  }
+
+  private _applyMaterializeProposal(proposalId: string, payload: Record<string, unknown>, projectRoot?: string): void {
+    const expectObject = (value: unknown, label: string): Record<string, unknown> => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error(`materialize ${proposalId}: '${label}' must be an object`);
+      }
+      return value as Record<string, unknown>;
+    };
+    const expectArray = (value: unknown, label: string): unknown[] => {
+      if (!Array.isArray(value)) {
+        throw new Error(`materialize ${proposalId}: '${label}' must be an array`);
+      }
+      return value;
+    };
+
+    const documents = expectObject(payload.documents, 'documents');
+    const edges = expectObject(payload.edges, 'edges');
+    const layerRules = expectObject(payload.layer_rules, 'layer_rules');
+    const tagMappings = expectObject(payload.tag_mappings, 'tag_mappings');
+
+    for (const raw of expectArray(documents.add, 'documents.add')) {
+      this._applyNewDoc(raw as Omit<Document, 'created_at' | 'updated_at' | 'status'>, projectRoot);
+    }
+    for (const raw of expectArray(documents.update, 'documents.update')) {
+      this._applyUpdateDoc(raw as Parameters<Repository['_applyUpdateDoc']>[0], projectRoot);
+    }
+    for (const raw of expectArray(documents.remove, 'documents.remove')) {
+      if (typeof raw !== 'string' || raw.length === 0) {
+        throw new Error(`materialize ${proposalId}: 'documents.remove' entries must be non-empty strings`);
+      }
+      this._applyDeprecate({ entity_type: 'document', entity_id: raw });
+    }
+
+    for (const raw of expectArray(edges.remove, 'edges.remove')) {
+      if (typeof (raw as Record<string, unknown>)?.edge_id === 'string') {
+        this._applyRemoveEdge(raw as Record<string, unknown>);
+        continue;
+      }
+      if (typeof raw !== 'string' || raw.length === 0) {
+        throw new Error(`materialize ${proposalId}: 'edges.remove' entries must be edge ids or payload objects`);
+      }
+      this._applyRemoveEdge({ edge_id: raw });
+    }
+    for (const raw of expectArray(edges.update, 'edges.update')) {
+      const edge = raw as Omit<Edge, 'created_at' | 'status'>;
+      this._applyRemoveEdge({ edge_id: edge.edge_id });
+      this._applyAddEdge(edge);
+    }
+    for (const raw of expectArray(edges.add, 'edges.add')) {
+      this._applyAddEdge(raw as Omit<Edge, 'created_at' | 'status'>);
+    }
+
+    for (const raw of expectArray(layerRules.remove, 'layer_rules.remove')) {
+      if (typeof raw !== 'string' || raw.length === 0) {
+        throw new Error(`materialize ${proposalId}: 'layer_rules.remove' entries must be non-empty strings`);
+      }
+      this._applyDeprecate({ entity_type: 'layer_rule', entity_id: raw });
+    }
+    for (const raw of expectArray(layerRules.update, 'layer_rules.update')) {
+      const rule = raw as Omit<LayerRule, 'created_at' | 'status'>;
+      this.deleteLayerRuleById(rule.rule_id);
+      this.insertLayerRule({ ...rule, status: 'approved' });
+    }
+    for (const raw of expectArray(layerRules.add, 'layer_rules.add')) {
+      const rule = raw as Omit<LayerRule, 'created_at' | 'status'>;
+      this.insertLayerRule({ ...rule, status: 'approved' });
+    }
+
+    for (const raw of expectArray(tagMappings.remove, 'tag_mappings.remove')) {
+      const mapping = raw as Pick<TagMapping, 'tag' | 'doc_id'>;
+      this.deleteTagMapping(mapping.tag, mapping.doc_id);
+    }
+    for (const raw of expectArray(tagMappings.add, 'tag_mappings.add')) {
+      this.upsertTagMapping(raw as Omit<TagMapping, 'created_at'>);
     }
   }
 
@@ -1640,9 +1991,11 @@ export class Repository {
       content: string;
       content_hash: string;
       title?: string;
+      kind?: string;
       source_path?: string | null;
       source_refs_json?: string | null;
       ownership?: string;
+      template_origin?: string | null;
     },
     projectRoot?: string,
   ): void {
@@ -1672,6 +2025,10 @@ export class Repository {
       sets.push('title = ?');
       params.push(payload.title);
     }
+    if (payload.kind !== undefined) {
+      sets.push('kind = ?');
+      params.push(payload.kind);
+    }
     if (payload.source_path !== undefined) {
       sets.push('source_path = ?');
       params.push(payload.source_path);
@@ -1683,6 +2040,10 @@ export class Repository {
     if (payload.ownership !== undefined) {
       sets.push('ownership = ?');
       params.push(mergedOwnership);
+    }
+    if (payload.template_origin !== undefined) {
+      sets.push('template_origin = ?');
+      params.push(payload.template_origin);
     }
     // source_synced_at (ADR-014 + 015-10): when projectRoot is provided, recompute from the same
     // primary path as whole-file hash sync; otherwise leave the column unchanged (offline approve).
