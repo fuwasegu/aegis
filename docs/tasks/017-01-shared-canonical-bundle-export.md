@@ -1,14 +1,14 @@
 ---
 id: "017-01"
 title: "shared canonical bundle schema + share-export CLI"
-status: "open"
+status: "done"
 adr: "ADR-017"
 phase: 8
 priority: "P0"
 depends_on: []
 created: "2026-05-14"
-closed: ""
-closed_reason: ""
+closed: "2026-05-21"
+closed_reason: "implemented"
 ---
 
 ## 概要

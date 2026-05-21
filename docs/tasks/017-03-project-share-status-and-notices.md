@@ -1,14 +1,14 @@
 ---
 id: "017-03"
 title: "project-shared status / doctor / notices を追加"
-status: "open"
+status: "done"
 adr: "ADR-017"
 phase: 8
 priority: "P1"
 depends_on: ["017-01", "017-02"]
 created: "2026-05-14"
-closed: ""
-closed_reason: ""
+closed: "2026-05-21"
+closed_reason: "implemented"
 ---
 
 ## 概要
