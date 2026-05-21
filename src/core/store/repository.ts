@@ -3,7 +3,7 @@
  * Enforces INV-1 through INV-6 from プロジェクト計画v2.md §6.1
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { normalizeSourcePath, resolveSourcePath } from '../paths.js';
 import {
@@ -324,7 +324,7 @@ export class Repository {
       }
 
       // -- Record materialize proposal for audit trail --
-      const proposalId = crypto.randomUUID();
+      const proposalId = randomUUID();
       const changeSet = {
         documents: { add: docsAdd, update: docsUpdate, remove: docsRemove },
         edges: { add: edgesAdd, update: edgesUpdate, remove: edgesRemove },
