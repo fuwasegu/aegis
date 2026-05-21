@@ -1595,6 +1595,143 @@ describe('Repository', () => {
       const doc = repo.getDocumentById('placeholder-doc2');
       expect(doc?.content).toBe('Real content here');
     });
+
+    it('approves materialize proposals through the standard approve path', () => {
+      const boot = repo.insertProposal({
+        proposal_id: 'p-boot-materialize',
+        proposal_type: 'bootstrap',
+        payload: JSON.stringify({
+          documents: [
+            { doc_id: 'doc-a', title: 'A', kind: 'guideline', content: 'old-a', content_hash: hash('old-a') },
+            { doc_id: 'doc-b', title: 'B', kind: 'guideline', content: 'old-b', content_hash: hash('old-b') },
+            { doc_id: 'doc-c', title: 'C', kind: 'guideline', content: 'old-c', content_hash: hash('old-c') },
+          ],
+          edges: [
+            {
+              edge_id: 'e-upd',
+              source_type: 'path',
+              source_value: 'src/**',
+              target_doc_id: 'doc-a',
+              edge_type: 'path_requires',
+              priority: 1,
+              specificity: 0,
+            },
+            {
+              edge_id: 'e-rm',
+              source_type: 'path',
+              source_value: 'test/**',
+              target_doc_id: 'doc-a',
+              edge_type: 'path_requires',
+              priority: 2,
+              specificity: 0,
+            },
+          ],
+          layer_rules: [
+            { rule_id: 'r-upd', path_pattern: 'src/**', layer_name: 'domain', priority: 1, specificity: 0 },
+            { rule_id: 'r-rm', path_pattern: 'test/**', layer_name: 'test', priority: 2, specificity: 0 },
+          ],
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+      const v1 = repo.approveProposal(boot).knowledge_version;
+      repo.upsertTagMapping({ tag: 'old-tag', doc_id: 'doc-a', confidence: 1, source: 'manual' });
+
+      repo.insertProposal({
+        proposal_id: 'p-materialize',
+        proposal_type: 'materialize',
+        payload: JSON.stringify({
+          documents: {
+            add: [
+              {
+                doc_id: 'doc-new',
+                title: 'New',
+                kind: 'pattern',
+                content: 'new-doc',
+                content_hash: hash('new-doc'),
+                ownership: 'standalone',
+                source_path: null,
+                source_refs_json: null,
+                template_origin: null,
+              },
+            ],
+            update: [
+              {
+                doc_id: 'doc-a',
+                title: 'A2',
+                kind: 'guideline',
+                content: 'new-a',
+                content_hash: hash('new-a'),
+                ownership: 'standalone',
+                source_path: null,
+                source_refs_json: null,
+                template_origin: 'tpl:v2',
+              },
+            ],
+            remove: ['doc-c'],
+          },
+          edges: {
+            add: [
+              {
+                edge_id: 'e-add',
+                source_type: 'path',
+                source_value: 'lib/**',
+                target_doc_id: 'doc-new',
+                edge_type: 'path_requires',
+                priority: 3,
+                specificity: 0,
+              },
+            ],
+            update: [
+              {
+                edge_id: 'e-upd',
+                source_type: 'path',
+                source_value: 'src/**',
+                target_doc_id: 'doc-b',
+                edge_type: 'path_requires',
+                priority: 5,
+                specificity: 0,
+              },
+            ],
+            remove: ['e-rm'],
+          },
+          layer_rules: {
+            add: [{ rule_id: 'r-add', path_pattern: 'lib/**', layer_name: 'infra', priority: 3, specificity: 0 }],
+            update: [
+              { rule_id: 'r-upd', path_pattern: 'src/**', layer_name: 'application', priority: 4, specificity: 0 },
+            ],
+            remove: ['r-rm'],
+          },
+          tag_mappings: {
+            add: [{ tag: 'new-tag', doc_id: 'doc-new', confidence: 1, source: 'manual' }],
+            remove: [{ tag: 'old-tag', doc_id: 'doc-a' }],
+          },
+        }),
+        status: 'pending',
+        review_comment: null,
+      });
+
+      const result = repo.approveProposal('p-materialize');
+
+      expect(result.knowledge_version).toBe(v1 + 1);
+      expect(repo.getProposal('p-materialize')?.status).toBe('approved');
+      expect(repo.getDocumentById('doc-a')?.content).toBe('new-a');
+      expect(repo.getDocumentById('doc-a')?.template_origin).toBe('tpl:v2');
+      expect(repo.getDocumentById('doc-c')?.status).toBe('deprecated');
+      expect(repo.getDocumentById('doc-new')?.status).toBe('approved');
+      expect(repo.getEdgeById('e-upd')?.target_doc_id).toBe('doc-b');
+      expect(repo.getEdgeById('e-add')?.status).toBe('approved');
+      expect(repo.getEdgeById('e-rm')).toBeUndefined();
+      expect(
+        repo
+          .getApprovedLayerRules()
+          .map((r) => r.rule_id)
+          .sort(),
+      ).toEqual(['r-add', 'r-upd']);
+      expect(repo.getApprovedLayerRules().find((r) => r.rule_id === 'r-upd')?.layer_name).toBe('application');
+      expect(repo.getTagsForDocument('doc-a')).toEqual([]);
+      expect(repo.getTagsForDocument('doc-new').map((t) => t.tag)).toEqual(['new-tag']);
+    });
   });
 
   describe('countActionableObservations', () => {

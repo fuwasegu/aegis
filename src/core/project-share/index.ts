@@ -5,6 +5,13 @@ export type { ShareHydrateOptions, ShareHydrateResult } from './hydrate.js';
 export { shareHydrate } from './hydrate.js';
 export type { ShareLintResult } from './lint.js';
 export { lintParseResult, shareLint } from './lint.js';
+export type {
+  MaterializeChangeCounts,
+  MaterializeSource,
+  ShareMaterializeOptions,
+  ShareMaterializeResult,
+} from './materialize.js';
+export { shareMaterialize } from './materialize.js';
 export { parseSharedSource } from './source-parser.js';
 export type {
   SharedSourceParseResult,

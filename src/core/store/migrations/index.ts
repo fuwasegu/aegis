@@ -16,6 +16,7 @@ export { migration012, upCoChangeCodeTotals } from './012_co_change_code_totals.
 export { migration013, upAddSourceRefsJson } from './013_add_source_refs_json.js';
 export { migration014, upCompileLogAgentId } from './014_compile_log_agent_id.js';
 export { migration015, upWorkspaceStatusIndexes } from './015_workspace_status_indexes.js';
+export { migration016, upAddMaterializeProposalType } from './016_add_materialize_proposal_type.js';
 export { ensureSchemaMigrationsTable, runMigrations } from './runner.js';
 export type { Migration } from './types.js';
 
@@ -34,6 +35,7 @@ import { migration012 } from './012_co_change_code_totals.js';
 import { migration013 } from './013_add_source_refs_json.js';
 import { migration014 } from './014_compile_log_agent_id.js';
 import { migration015 } from './015_workspace_status_indexes.js';
+import { migration016 } from './016_add_materialize_proposal_type.js';
 
 /** Registered migrations in version order (append new migrations here). */
 export const ALL_MIGRATIONS = [
@@ -52,4 +54,5 @@ export const ALL_MIGRATIONS = [
   migration013,
   migration014,
   migration015,
+  migration016,
 ];

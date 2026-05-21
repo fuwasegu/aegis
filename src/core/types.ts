@@ -160,7 +160,8 @@ export type ProposalType =
   | 'update_doc'
   | 'new_doc'
   | 'deprecate'
-  | 'bootstrap';
+  | 'bootstrap'
+  | 'materialize';
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn';
 
 export interface Proposal {
@@ -621,6 +622,14 @@ export interface TagMapping {
   confidence: number;
   source: 'slm' | 'manual';
   created_at: string;
+}
+
+/** ADR-018: Change counts returned by applyMaterialize. */
+export interface MaterializeChangeCounts {
+  documents: { added: number; updated: number; removed: number };
+  edges: { added: number; updated: number; removed: number };
+  layer_rules: { added: number; updated: number; removed: number };
+  tag_mappings: { added: number; removed: number };
 }
 
 /** Sentinel content for update_doc proposals where human must provide content via modifications. */

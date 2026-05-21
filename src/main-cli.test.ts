@@ -582,3 +582,106 @@ describe('CLI — share-format (dist/main.js)', () => {
     expect(r.stderr).toContain('share-format failed');
   });
 });
+
+describe('CLI — share-materialize (dist/main.js)', () => {
+  let projectDir: string;
+  let dbPath: string;
+
+  beforeEach(async () => {
+    projectDir = mkdtempSync(join(tmpdir(), 'aegis-cli-materialize-'));
+    mkdirSync(join(projectDir, '.aegis'), { recursive: true });
+    dbPath = join(projectDir, '.aegis', 'aegis.db');
+
+    // Bootstrap a minimal DB
+    const db = await createDatabase(dbPath);
+    const repo = new Repository(db);
+    repo.insertProposal({
+      proposal_id: 'boot',
+      proposal_type: 'bootstrap',
+      payload: JSON.stringify({
+        documents: [{ doc_id: 'seed', title: 'Seed', kind: 'guideline', content: 'seed', content_hash: hash('seed') }],
+        edges: [],
+        layer_rules: [],
+      }),
+      status: 'pending',
+      review_comment: null,
+    });
+    repo.approveProposal('boot');
+    db.close();
+  });
+
+  afterEach(() => {
+    rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  function writeSourceDoc(docId: string, frontmatter: Record<string, string | null>, body: string): void {
+    const docsDir = join(projectDir, 'aegis-share', 'source', 'documents');
+    mkdirSync(docsDir, { recursive: true });
+    const fm = Object.entries(frontmatter)
+      .map(([k, v]) => `${k}: ${v === null ? 'null' : v}`)
+      .join('\n');
+    writeFileSync(join(docsDir, `${docId}.md`), `---\n${fm}\n---\n${body}`);
+  }
+
+  it('exits 0 and reports changes for valid source', () => {
+    writeSourceDoc(
+      'seed',
+      { doc_id: 'seed', title: 'Seed', kind: 'guideline', ownership: 'standalone' },
+      'updated seed',
+    );
+    writeSourceDoc(
+      'new-doc',
+      { doc_id: 'new-doc', title: 'New', kind: 'pattern', ownership: 'standalone' },
+      'new body',
+    );
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-materialize', '--project-root', projectDir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toContain('share-materialize');
+    expect(r.stdout).toContain('knowledge_version:');
+    expect(r.stdout).toContain('Done.');
+  }, 15_000);
+
+  it('dry-run does not modify DB', () => {
+    writeSourceDoc('seed', { doc_id: 'seed', title: 'Seed', kind: 'guideline', ownership: 'standalone' }, 'changed');
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-materialize', '--project-root', projectDir, '--dry-run'], {
+      encoding: 'utf-8',
+    });
+    expect(r.status, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toContain('dry-run');
+    expect(r.stdout).toContain('documents:');
+  }, 15_000);
+
+  it('exits 1 when DB does not exist', () => {
+    const emptyDir = mkdtempSync(join(tmpdir(), 'aegis-cli-mat-empty-'));
+    const sourceSubDir = join(emptyDir, 'aegis-share', 'source', 'documents');
+    mkdirSync(sourceSubDir, { recursive: true });
+    writeFileSync(
+      join(sourceSubDir, 'doc.md'),
+      '---\ndoc_id: doc\ntitle: Doc\nkind: guideline\nownership: standalone\n---\nbody',
+    );
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-materialize', '--project-root', emptyDir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('Database not found');
+
+    rmSync(emptyDir, { recursive: true, force: true });
+  }, 15_000);
+
+  it('exits 1 for malformed source', () => {
+    const docsDir = join(projectDir, 'aegis-share', 'source', 'documents');
+    mkdirSync(docsDir, { recursive: true });
+    writeFileSync(join(docsDir, 'bad.md'), '---\ndoc_id: bad\n---\nno title or kind');
+
+    const r = spawnSync(execPath, [MAIN_JS, 'share-materialize', '--project-root', projectDir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('share-materialize failed');
+  }, 15_000);
+});
