@@ -1,14 +1,14 @@
 ---
 id: "016-04"
 title: "drift 可視化と direct import guardrail を追加"
-status: "open"
+status: "done"
 adr: "ADR-016"
 phase: 7
 priority: "P2"
 depends_on: ["016-03"]
 created: "2026-05-11"
-closed: ""
-closed_reason: ""
+closed: "2026-05-21"
+closed_reason: "implemented"
 ---
 
 ## 概要

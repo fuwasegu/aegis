@@ -265,6 +265,73 @@ The `not_configured` state (no `aegis-share/` directory) is silent — no noise 
 3. **Team** runs `git pull` then `share-hydrate --replace`
 4. `compile_context` on the replica now returns the same guidelines as the author
 
+## Collaborative Authoring (Source-Native)
+
+In addition to the DB-native workflow above (observe → propose → approve), Aegis supports a **source-native** collaborative authoring mode. Team members edit human-readable source files in `aegis-share/source/`, review changes via pull requests, and materialize them into the database.
+
+> **Key rule:** `compile_context` always reads from the database, not from source files directly. Source files are the authoring format; the DB is the runtime format.
+
+### Two approval lanes
+
+| Lane | Entry point | Approval mechanism | Best for |
+|------|------------|-------------------|----------|
+| **DB-native** | Agent observes gap → `aegis_observe` → `aegis_approve_proposal` | Human approves proposal in admin surface | Reactive knowledge improvement driven by agent observations |
+| **Source-native** | Human edits `aegis-share/source/` → PR → merge → `share-materialize` | PR merge = approval | Proactive collaborative editing with Git-based code review |
+
+Both lanes coexist. Use whichever fits the situation — or both.
+
+### Directory layout
+
+```
+aegis-share/
+├── manifest.json              # Distribution bundle manifest (ADR-017)
+├── canonical.json             # Distribution bundle data (ADR-017)
+└── source/                    # Collaborative authoring source (ADR-018)
+    ├── documents/
+    │   └── <doc_id>.md        # Frontmatter + Markdown body
+    ├── edges/
+    │   ├── path-requires.json
+    │   ├── layer-requires.json
+    │   ├── command-requires.json
+    │   └── doc-depends-on.json
+    ├── layer-rules.json
+    └── tag-mappings.json
+```
+
+### Source-native workflow
+
+```bash
+# 1. Bootstrap: export current DB to source format (one-time setup)
+npx @fuwasegu/aegis share-source-export
+
+# 2. Edit source files (documents, edges, rules, mappings)
+#    Create a branch, make changes, open a PR
+
+# 3. Validate before committing
+npx @fuwasegu/aegis share-format                 # Normalize formatting (deterministic, in-place)
+npx @fuwasegu/aegis share-lint                   # Check for errors (after formatting)
+
+# 4. After PR merge: apply source to DB
+npx @fuwasegu/aegis share-materialize            # Applies changes + auto-approves
+npx @fuwasegu/aegis share-materialize --dry-run  # Preview changes without applying
+
+# 5. Export updated bundle for replicas
+npx @fuwasegu/aegis share-export
+```
+
+### CI integration
+
+Add `share-lint` to your CI pipeline to catch errors before merge:
+
+```bash
+npx @fuwasegu/aegis share-lint  # exits 1 on errors — suitable for CI checks
+```
+
+### Phase 1 limitations
+
+- Local overlays are not supported — all changes go through the shared source
+- `share-materialize` is a full apply (not incremental patch)
+
 ## SLM for Expanded Context — Opt-in
 
 Aegis includes a built-in llama.cpp engine for optional SLM-based intent tagging. SLM is **disabled by default** — the deterministic DAG-based context works perfectly without it.
@@ -343,6 +410,10 @@ You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 | `doctor` | Human-readable health check (exits 1 if issues found) |
 | `share-export` | Export approved Canonical Knowledge to `aegis-share/` |
 | `share-hydrate` | Rebuild local DB from shared bundle (whole-DB replacement) |
+| `share-source-export` | Bootstrap: export DB to human-editable `aegis-share/source/` |
+| `share-lint` | Validate `aegis-share/source/` (parse errors, dangling references) |
+| `share-format` | Deterministic normalization of `aegis-share/source/` (in-place) |
+| `share-materialize` | Apply `aegis-share/source/` into DB (source-native approval) |
 
 ```bash
 npx @fuwasegu/aegis deploy-adapters                         # Deploy all adapters
@@ -355,6 +426,11 @@ npx @fuwasegu/aegis stats                                   # JSON health and us
 npx @fuwasegu/aegis doctor                                  # Health check summary
 npx @fuwasegu/aegis share-export                            # Export to aegis-share/
 npx @fuwasegu/aegis share-hydrate --replace                 # Rebuild DB from bundle
+npx @fuwasegu/aegis share-source-export                     # Export DB to aegis-share/source/
+npx @fuwasegu/aegis share-lint                              # Validate shared source
+npx @fuwasegu/aegis share-format                            # Normalize shared source
+npx @fuwasegu/aegis share-materialize                       # Apply source to DB
+npx @fuwasegu/aegis share-materialize --dry-run             # Preview changes
 npx @fuwasegu/aegis --list-models                           # List available SLM models
 ```
 
