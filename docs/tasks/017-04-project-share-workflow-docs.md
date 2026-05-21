@@ -1,14 +1,14 @@
 ---
 id: "017-04"
 title: "project-shared workflow の README / setup guidance"
-status: "open"
+status: "done"
 adr: "ADR-017"
 phase: 8
 priority: "P2"
 depends_on: ["017-01", "017-02", "017-03"]
 created: "2026-05-14"
-closed: ""
-closed_reason: ""
+closed: "2026-05-21"
+closed_reason: "implemented"
 ---
 
 ## 概要

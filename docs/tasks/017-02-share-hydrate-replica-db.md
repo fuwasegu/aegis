@@ -1,14 +1,14 @@
 ---
 id: "017-02"
 title: "share-hydrate による replica DB 再生成"
-status: "open"
+status: "done"
 adr: "ADR-017"
 phase: 8
 priority: "P0"
 depends_on: ["017-01"]
 created: "2026-05-14"
-closed: ""
-closed_reason: ""
+closed: "2026-05-21"
+closed_reason: "implemented"
 ---
 
 ## 概要
