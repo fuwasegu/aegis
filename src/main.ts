@@ -32,6 +32,8 @@
  *   npx aegis share-materialize                  # Materialize aegis-share/source/ into DB
  *   npx aegis share-materialize --dry-run        # Show diff summary without applying
  *   npx aegis share-materialize --source-dir /p  # Custom source directory
+ *   npx aegis share-source-export                # Export DB to aegis-share/source/
+ *   npx aegis share-source-export --out /path    # Custom output directory
  *   npx aegis --list-models                      # List available SLM models
  *
  * SLM is disabled by default (ADR-004). Enable with --slm for expanded context.
@@ -48,7 +50,13 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { shareHydrate } from './core/project-share/hydrate.js';
-import { shareExport, shareFormat, shareLint, shareMaterialize } from './core/project-share/index.js';
+import {
+  shareExport,
+  shareFormat,
+  shareLint,
+  shareMaterialize,
+  shareSourceExport,
+} from './core/project-share/index.js';
 import { createDatabase } from './core/store/database.js';
 import { runInitialBaselineSourcePathMigration } from './core/store/migrations/index.js';
 import { Repository } from './core/store/repository.js';
@@ -824,6 +832,39 @@ async function handleShareMaterialize(): Promise<void> {
   }
 }
 
+async function handleShareSourceExport(): Promise<void> {
+  const opts = parseShareExportCli(process.argv.slice(3));
+  const dbPath = opts.customDbPath ?? join(opts.projectRoot, DEFAULT_DB_PATH);
+  if (!existsSync(dbPath)) {
+    console.error(`[aegis] Database not found at ${dbPath}`);
+    console.error('[aegis] Run aegis init first, or specify --project-root / --db.');
+    process.exit(1);
+  }
+  const db = await createDatabase(dbPath);
+  const repo = new Repository(db);
+  const outDir = opts.outDir ?? join(opts.projectRoot, 'aegis-share', 'source');
+
+  try {
+    const result = shareSourceExport(repo, outDir);
+    console.log('\nAegis share-source-export\n');
+    console.log(`  output:       ${outDir}`);
+    console.log(`  documents:    ${result.counts.documents}`);
+    console.log(`  edges:        ${result.counts.edges}`);
+    console.log(`  layer_rules:  ${result.counts.layer_rules}`);
+    console.log(`  tag_mappings: ${result.counts.tag_mappings}`);
+    if (result.warnings.length) {
+      console.log('\nWarnings:');
+      for (const w of result.warnings) {
+        console.log(`  ⚠ ${w}`);
+      }
+    }
+    console.log('\nDone.');
+  } catch (err) {
+    console.error(`[aegis] share-source-export failed: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 async function main() {
   const subcommand = process.argv[2];
 
@@ -869,6 +910,11 @@ async function main() {
 
   if (subcommand === 'share-materialize') {
     await handleShareMaterialize();
+    return;
+  }
+
+  if (subcommand === 'share-source-export') {
+    await handleShareSourceExport();
     return;
   }
 

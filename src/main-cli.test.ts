@@ -685,3 +685,70 @@ describe('CLI — share-materialize (dist/main.js)', () => {
     expect(r.stderr).toContain('share-materialize failed');
   }, 15_000);
 });
+
+describe('CLI — share-source-export (dist/main.js)', () => {
+  let projectDir: string;
+  let dbPath: string;
+
+  beforeEach(async () => {
+    projectDir = mkdtempSync(join(tmpdir(), 'aegis-cli-source-export-'));
+    mkdirSync(join(projectDir, '.aegis'), { recursive: true });
+    dbPath = join(projectDir, '.aegis', 'aegis.db');
+
+    const db = await createDatabase(dbPath);
+    const repo = new Repository(db);
+    repo.insertProposal({
+      proposal_id: 'boot',
+      proposal_type: 'bootstrap',
+      payload: JSON.stringify({
+        documents: [
+          { doc_id: 'guide', title: 'Guide', kind: 'guideline', content: 'Body.', content_hash: hash('Body.') },
+        ],
+        edges: [
+          {
+            edge_id: 'e1',
+            source_type: 'path',
+            source_value: 'src/**',
+            target_doc_id: 'guide',
+            edge_type: 'path_requires',
+            priority: 1,
+            specificity: 0,
+          },
+        ],
+        layer_rules: [],
+      }),
+      status: 'pending',
+      review_comment: null,
+    });
+    repo.approveProposal('boot');
+    db.close();
+  });
+
+  afterEach(() => {
+    rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  it('exits 0 and creates source files', () => {
+    const r = spawnSync(execPath, [MAIN_JS, 'share-source-export', '--project-root', projectDir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toContain('share-source-export');
+    expect(r.stdout).toContain('documents:');
+    expect(r.stdout).toContain('Done.');
+
+    // Verify files were created
+    expect(existsSync(join(projectDir, 'aegis-share', 'source', 'documents', 'guide.md'))).toBe(true);
+    expect(existsSync(join(projectDir, 'aegis-share', 'source', 'edges', 'path-requires.json'))).toBe(true);
+  }, 15_000);
+
+  it('exits 1 when DB does not exist', () => {
+    const emptyDir = mkdtempSync(join(tmpdir(), 'aegis-cli-srcexp-empty-'));
+    const r = spawnSync(execPath, [MAIN_JS, 'share-source-export', '--project-root', emptyDir], {
+      encoding: 'utf-8',
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('Database not found');
+    rmSync(emptyDir, { recursive: true, force: true });
+  }, 15_000);
+});

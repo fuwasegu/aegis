@@ -12,6 +12,8 @@ export type {
   ShareMaterializeResult,
 } from './materialize.js';
 export { shareMaterialize } from './materialize.js';
+export type { SourceExportResult } from './source-export.js';
+export { shareSourceExport } from './source-export.js';
 export { parseSharedSource } from './source-parser.js';
 export type {
   SharedSourceParseResult,
