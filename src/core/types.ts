@@ -310,7 +310,8 @@ export interface CompileRequest {
    * Minimum relevance score (0–1) for entries returned in `base.documents`, `base.templates`, and
    * `expanded.documents`. Entries whose `relevance` is defined and below the threshold are omitted
    * from the response; entries without a relevance score (no `plan` given) are always kept.
-   * The unfiltered doc_id sets are still recorded in `compile_log` for audit. Default: 0 (no filtering).
+   * The unfiltered sets remain recoverable for audit: document/expanded doc_ids in `compile_log`
+   * columns, template doc_ids in `audit_meta.template_doc_ids`. Default: 0 (no filtering).
    */
   min_relevance?: number;
   /**
@@ -427,6 +428,12 @@ export interface CompileAuditMeta {
   layer_classification: Record<string, string | null>;
   /** doc_ids omitted by policy (e.g. non-scaffold templates) */
   policy_omitted_doc_ids: string[];
+  /**
+   * Unfiltered template doc_ids routed by this compile. `compile_log.base_doc_ids` only covers
+   * regular documents, so this is the INV-5 audit record for templates (e.g. ones omitted from
+   * the live response by `min_relevance`). Absent on logs persisted before this field existed.
+   */
+  template_doc_ids?: string[];
   /** observed overhead of the near-miss collection pass */
   performance: CompilePerformanceMeta;
   /** ADR-011 intent tagging summary; set by ContextCompiler before persisting compile_log. */
