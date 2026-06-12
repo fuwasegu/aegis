@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -314,5 +314,81 @@ describe('AegisDatabase file-backed multi-instance', () => {
     const row = stmt.get('doc-a');
     expect(row).toBeDefined();
     expect(row.title).toBe('New Title');
+  });
+});
+
+describe('AegisDatabase safe persistence (clobber regression)', () => {
+  let tmpDir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'aegis-db-safe-'));
+    dbPath = join(tmpDir, 'aegis.db');
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('createDatabase refuses an existing-but-empty DB file instead of re-initializing', async () => {
+    writeFileSync(dbPath, Buffer.alloc(0));
+    await expect(createDatabase(dbPath)).rejects.toThrow(/exists but is empty/);
+    // The empty file must be left untouched (no fresh schema persisted over it)
+    expect(statSync(dbPath).size).toBe(0);
+  });
+
+  it('opening an up-to-date DB does not rewrite the file', async () => {
+    const dbA = await createDatabase(dbPath);
+    const repoA = new Repository(dbA);
+    insertApprovedDoc(repoA, 'doc-a', 'Doc A');
+    dbA.close();
+
+    const before = readFileSync(dbPath);
+    const mtimeBefore = statSync(dbPath).mtimeMs;
+
+    const dbB = await createDatabase(dbPath); // schema and migrations already applied
+    expect(readFileSync(dbPath).equals(before)).toBe(true);
+    expect(statSync(dbPath).mtimeMs).toBe(mtimeBefore);
+
+    // Data still readable
+    const repoB = new Repository(dbB);
+    expect(repoB.getApprovedDocuments()).toHaveLength(1);
+  });
+
+  it('persist is atomic: no temp files remain and the file is always a complete DB', async () => {
+    const db = await createDatabase(dbPath);
+    const repo = new Repository(db);
+    insertApprovedDoc(repo, 'doc-a', 'Doc A');
+
+    const leftovers = readdirSync(tmpDir).filter((f) => f.includes('.tmp-'));
+    expect(leftovers).toEqual([]);
+
+    // Reopen from disk to prove the persisted image is complete
+    const db2 = await createDatabase(dbPath);
+    expect(new Repository(db2).getApprovedDocuments()).toHaveLength(1);
+  });
+
+  it('a truncated (empty) file under a live instance does not wipe in-memory state', async () => {
+    const db = await createDatabase(dbPath);
+    const repo = new Repository(db);
+    insertApprovedDoc(repo, 'doc-a', 'Doc A');
+
+    // Simulate a legacy writer truncating the file mid-persist
+    writeFileSync(dbPath, Buffer.alloc(0));
+
+    // Read path: stale check sees a newer mtime, but the empty file must be ignored
+    expect(repo.getApprovedDocuments()).toHaveLength(1);
+
+    // Next write persists the intact in-memory state back to disk
+    insertApprovedDoc(repo, 'doc-b', 'Doc B');
+    const reopened = await createDatabase(dbPath);
+    expect(new Repository(reopened).getApprovedDocuments()).toHaveLength(2);
+  });
+
+  it('fresh DB file is persisted by createDatabase itself', async () => {
+    expect(existsSync(dbPath)).toBe(false);
+    await createDatabase(dbPath);
+    expect(existsSync(dbPath)).toBe(true);
+    expect(statSync(dbPath).size).toBeGreaterThan(0);
   });
 });
