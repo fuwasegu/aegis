@@ -11,6 +11,7 @@ import {
   closeSync,
   constants,
   existsSync,
+  fstatSync,
   openSync,
   readdirSync,
   readFileSync,
@@ -28,6 +29,63 @@ const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_SPIN_MS = 5;
 const LOCK_STALE_MS = 30_000;
 const WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+
+/**
+ * Blocking advisory-lock acquisition on an O_EXCL lockfile.
+ * Module-level so `createDatabase` can take the lock before the
+ * `AegisDatabase` wrapper exists (the initial DB read must happen under it).
+ */
+function acquireLockfileBlocking(lockPath: string): void {
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  while (true) {
+    try {
+      const fd = openSync(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
+      closeSync(fd);
+      return;
+    } catch (e: unknown) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      try {
+        const lockAge = Date.now() - statSync(lockPath).mtimeMs;
+        if (lockAge > LOCK_STALE_MS) {
+          unlinkSync(lockPath);
+          continue;
+        }
+      } catch {
+        /* lock file disappeared between checks — retry */
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`Aegis DB lock acquisition timed out: ${lockPath}`);
+      }
+      Atomics.wait(WAIT_BUFFER, 0, 0, LOCK_SPIN_MS);
+    }
+  }
+}
+
+function releaseLockfile(lockPath: string): void {
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    /* already removed */
+  }
+}
+
+/**
+ * Read a file together with the mtime of the very inode the bytes came from
+ * (fstat on the open fd, then read from that same fd). A readFileSync(path)
+ * followed by statSync(path) can pair a stale buffer with a newer mtime when
+ * another process replaces the file in between — the caller would then treat
+ * its stale image as current and clobber the other write on persist.
+ */
+function readFileWithMtime(path: string): { buffer: Buffer; mtimeMs: number } {
+  const fd = openSync(path, 'r');
+  try {
+    const mtimeMs = fstatSync(fd).mtimeMs;
+    const buffer = readFileSync(fd);
+    return { buffer, mtimeMs };
+  } finally {
+    closeSync(fd);
+  }
+}
 
 export interface RunResult {
   changes: number;
@@ -135,11 +193,23 @@ export class AegisDatabase {
   private generation = 0;
   private sqlJsStatic: Awaited<ReturnType<typeof initSqlJs>>;
 
-  constructor(sqlDb: SqlJsDatabase, dbPath: string | null, sqlJsStatic: Awaited<ReturnType<typeof initSqlJs>>) {
+  /**
+   * @param initialPersistMs mtime of the DB image `sqlDb` was loaded from, taken from the same
+   * inode as the bytes (see `readFileWithMtime`). When omitted (fresh/in-memory DB) the current
+   * file mtime is used as a best-effort baseline.
+   */
+  constructor(
+    sqlDb: SqlJsDatabase,
+    dbPath: string | null,
+    sqlJsStatic: Awaited<ReturnType<typeof initSqlJs>>,
+    initialPersistMs?: number,
+  ) {
     this.sqlDb = sqlDb;
     this.dbPath = dbPath;
     this.sqlJsStatic = sqlJsStatic;
-    if (dbPath && dbPath !== ':memory:' && existsSync(dbPath)) {
+    if (initialPersistMs !== undefined) {
+      this.lastPersistMs = initialPersistMs;
+    } else if (dbPath && dbPath !== ':memory:' && existsSync(dbPath)) {
       this.lastPersistMs = statSync(dbPath).mtimeMs;
     }
   }
@@ -151,42 +221,27 @@ export class AegisDatabase {
   /** @internal */
   _acquireFileLock(): void {
     if (!this.dbPath || this.lockHeld) return;
-    const lockPath = `${this.dbPath}.lock`;
-    const deadline = Date.now() + LOCK_TIMEOUT_MS;
-    while (true) {
-      try {
-        const fd = openSync(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
-        closeSync(fd);
-        this.lockHeld = true;
-        return;
-      } catch (e: unknown) {
-        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
-        try {
-          const lockAge = Date.now() - statSync(lockPath).mtimeMs;
-          if (lockAge > LOCK_STALE_MS) {
-            unlinkSync(lockPath);
-            continue;
-          }
-        } catch {
-          /* lock file disappeared between checks — retry */
-        }
-        if (Date.now() > deadline) {
-          throw new Error(`Aegis DB lock acquisition timed out: ${lockPath}`);
-        }
-        Atomics.wait(WAIT_BUFFER, 0, 0, LOCK_SPIN_MS);
-      }
-    }
+    acquireLockfileBlocking(`${this.dbPath}.lock`);
+    this.lockHeld = true;
+  }
+
+  /**
+   * Take ownership of a lockfile already acquired by the caller (createDatabase
+   * acquires it before this wrapper exists so the initial DB read happens under
+   * the lock). Subsequent _acquireFileLock calls become no-ops and
+   * _releaseFileLock / _endBootstrap will release it.
+   * @internal
+   */
+  _adoptFileLock(): void {
+    if (!this.dbPath) return;
+    this.lockHeld = true;
   }
 
   /** @internal */
   _releaseFileLock(): void {
     if (!this.dbPath || !this.lockHeld) return;
     this.lockHeld = false;
-    try {
-      unlinkSync(`${this.dbPath}.lock`);
-    } catch {
-      /* already removed */
-    }
+    releaseLockfile(`${this.dbPath}.lock`);
   }
 
   // ────────────────────────────────────────────────
@@ -222,7 +277,9 @@ export class AegisDatabase {
 
   private reloadFromDisk(): void {
     if (!this.dbPath) return;
-    const buffer = readFileSync(this.dbPath);
+    // fstat+read on one fd: lastPersistMs must describe the image we actually
+    // loaded, never a newer file that raced in after the read.
+    const { buffer, mtimeMs } = readFileWithMtime(this.dbPath);
     if (buffer.length === 0) {
       // Torn read against a writer that is not using atomic rename (e.g. an older
       // Aegis version mid-persist). Loading an empty buffer would silently replace
@@ -233,7 +290,7 @@ export class AegisDatabase {
     this.sqlDb.close();
     this.sqlDb = fresh;
     this.sqlDb.run('PRAGMA foreign_keys = ON');
-    this.lastPersistMs = statSync(this.dbPath).mtimeMs;
+    this.lastPersistMs = mtimeMs;
     this.dirty = false;
     this.generation++;
   }
@@ -359,8 +416,10 @@ export class AegisDatabase {
 
   /**
    * Enter bootstrap mode: hold the file lock across initial schema/migration
-   * setup, defer persistence until _endBootstrap. Reloads first if another
-   * process wrote between our (unlocked) initial load and lock acquisition.
+   * setup, defer persistence until _endBootstrap. createDatabase already loads
+   * the DB image under this same lock (via _adoptFileLock), so the stale check
+   * here only fires against writers that bypass the lock protocol entirely
+   * (e.g. older Aegis versions) — defense in depth, not the primary guard.
    * @internal — used by createDatabase only
    */
   _beginBootstrap(): void {
@@ -459,8 +518,13 @@ export class AegisDatabase {
     if (!this.dbPath || this.dbPath === ':memory:') return;
     const data = this.sqlDb.export();
     const tmpPath = `${this.dbPath}.tmp-${process.pid}`;
+    let persistedMtimeMs: number;
     try {
       writeFileSync(tmpPath, Buffer.from(data));
+      // Capture the mtime from the temp file (pid-unique, nobody else touches it);
+      // rename preserves it. stat(dbPath) after the rename could pick up a foreign
+      // writer's newer file and silently mask its change as our own.
+      persistedMtimeMs = statSync(tmpPath).mtimeMs;
       renameSync(tmpPath, this.dbPath);
     } catch (e) {
       try {
@@ -470,7 +534,7 @@ export class AegisDatabase {
       }
       throw e;
     }
-    this.lastPersistMs = statSync(this.dbPath).mtimeMs;
+    this.lastPersistMs = persistedMtimeMs;
     this.dirty = false;
   }
 }
@@ -502,37 +566,56 @@ export async function createDatabase(dbPath: string): Promise<AegisDatabase> {
   const SQL = await getSqlJs();
 
   const isMemory = dbPath === ':memory:';
-  const fileExisted = !isMemory && existsSync(dbPath);
-  let db: SqlJsDatabase;
 
-  if (fileExisted) {
-    let buffer = readFileSync(dbPath);
-    if (buffer.length === 0) {
-      // An empty-but-existing file is either a torn read against a writer that
-      // does not use atomic rename (older Aegis mid-persist) or debris from a
-      // crashed process. Retry once; if still empty, refuse to proceed —
-      // silently initializing a fresh DB here would clobber the real data on
-      // the first persist.
-      Atomics.wait(WAIT_BUFFER, 0, 0, 100);
-      buffer = readFileSync(dbPath);
-      if (buffer.length === 0) {
-        throw new Error(
-          `Aegis DB file exists but is empty: ${dbPath}. ` +
-            'Refusing to re-initialize over it — restore the file from a backup, ' +
-            'or delete it to start a fresh database.',
-        );
-      }
-    }
-    db = new SQL.Database(new Uint8Array(buffer));
-  } else {
-    db = new SQL.Database();
+  // Take the advisory lock BEFORE reading the existing DB image. Reading outside
+  // the lock left a window where another process could persist between our read
+  // and the mtime snapshot — this instance would then hold a stale image it
+  // believes is current, and its first persist would erase the other write.
+  if (!isMemory) {
+    acquireLockfileBlocking(`${dbPath}.lock`);
   }
 
-  const wrapper = new AegisDatabase(db, isMemory ? null : dbPath, SQL);
+  let db: SqlJsDatabase;
+  let initialPersistMs: number | undefined;
+  let fileExisted = false;
+  try {
+    fileExisted = !isMemory && existsSync(dbPath);
+    if (fileExisted) {
+      let { buffer, mtimeMs } = readFileWithMtime(dbPath);
+      if (buffer.length === 0) {
+        // An empty-but-existing file is either a torn read against a writer that
+        // does not use atomic rename (older Aegis mid-persist, outside the lock
+        // protocol) or debris from a crashed process. Retry once; if still empty,
+        // refuse to proceed — silently initializing a fresh DB here would clobber
+        // the real data on the first persist.
+        Atomics.wait(WAIT_BUFFER, 0, 0, 100);
+        ({ buffer, mtimeMs } = readFileWithMtime(dbPath));
+        if (buffer.length === 0) {
+          throw new Error(
+            `Aegis DB file exists but is empty: ${dbPath}. ` +
+              'Refusing to re-initialize over it — restore the file from a backup, ' +
+              'or delete it to start a fresh database.',
+          );
+        }
+      }
+      db = new SQL.Database(new Uint8Array(buffer));
+      initialPersistMs = mtimeMs;
+    } else {
+      db = new SQL.Database();
+    }
+  } catch (e) {
+    if (!isMemory) releaseLockfile(`${dbPath}.lock`);
+    throw e;
+  }
 
-  // Bootstrap under a single file lock with deferred persistence: opening an
-  // up-to-date DB writes nothing to disk, and concurrent processes cannot
-  // interleave with schema setup / migrations.
+  const wrapper = new AegisDatabase(db, isMemory ? null : dbPath, SQL, initialPersistMs);
+  if (!isMemory) {
+    wrapper._adoptFileLock();
+  }
+
+  // Bootstrap continues under the same file lock with deferred persistence:
+  // opening an up-to-date DB writes nothing to disk, and concurrent processes
+  // cannot interleave with the initial read, schema setup, or migrations.
   wrapper._beginBootstrap();
   let persistNeeded = !fileExisted && !isMemory;
   try {
