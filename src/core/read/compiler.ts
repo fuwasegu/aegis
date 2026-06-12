@@ -215,6 +215,7 @@ export class ContextCompiler {
     tagNames: string[],
     baseCandidates: DocCandidate[],
     templateDocIds: string[],
+    planTerms: string[],
   ): { candidates: DocCandidate[]; docIds: string[]; confidence: number; reasoning: string } {
     const candidates = this.repo.getDocumentsByTags(tagNames);
     const baseDocIdSet = new Set([...baseCandidates.map((d) => d.doc_id), ...templateDocIds]);
@@ -226,7 +227,10 @@ export class ContextCompiler {
     for (const id of expandedIds) {
       const doc = fetchedMap.get(id);
       if (doc) {
-        expandedCandidates.push(toCandidate(doc, 'expanded', 100, undefined));
+        // Same scoring as base/template candidates so min_relevance applies uniformly;
+        // without a plan there are no terms and expanded docs stay unscored (always kept).
+        const relevance = planTerms.length > 0 ? computeRelevance(planTerms, doc) : undefined;
+        expandedCandidates.push(toCandidate(doc, 'expanded', 100, relevance));
       }
     }
     const confidence =
@@ -491,7 +495,7 @@ export class ContextCompiler {
               : 'No known intent_tags after filtering unknown values';
           expandedHasResult = true;
         } else {
-          const filled = this.fillExpandedFromTagNames(knownOnly, baseCandidates, templateDocIds);
+          const filled = this.fillExpandedFromTagNames(knownOnly, baseCandidates, templateDocIds, planTerms);
           expandedCandidates.push(...filled.candidates);
           expandedDocIds = filled.docIds;
           expandedConfidence = filled.confidence;
@@ -524,7 +528,7 @@ export class ContextCompiler {
         };
 
         if (knownOnly.length > 0) {
-          const filled = this.fillExpandedFromTagNames(knownOnly, baseCandidates, templateDocIds);
+          const filled = this.fillExpandedFromTagNames(knownOnly, baseCandidates, templateDocIds, planTerms);
           expandedCandidates.push(...filled.candidates);
           expandedDocIds = filled.docIds;
           expandedConfidence = filled.confidence;
@@ -587,6 +591,7 @@ export class ContextCompiler {
         ...result.audit_meta,
         near_miss_edges: nearMissEdges,
         layer_classification: layerClassification,
+        template_doc_ids: templateDocIds,
         performance: compilePerformance,
         expanded_tagging: expandedTaggingAudit,
       };
@@ -610,6 +615,7 @@ export class ContextCompiler {
           near_miss_edges: nearMissEdges,
           layer_classification: layerClassification,
           policy_omitted_doc_ids: [],
+          template_doc_ids: templateDocIds,
           performance: compilePerformance,
           expanded_tagging: expandedTaggingAudit,
         };
@@ -650,6 +656,26 @@ export class ContextCompiler {
       if (d) expandedResolved.push(toResolvedDoc(d));
     }
 
+    // ── Apply min_relevance response filter ──
+    // Filters the live response only; the unfiltered sets stay recoverable for audit (INV-5):
+    // base/expanded doc_ids in compile_log columns, template doc_ids in audit_meta.template_doc_ids.
+    // Docs without a relevance score (no plan given) are always kept.
+    const minRelevance = request.min_relevance ?? 0;
+    const keepByRelevance = (d: ResolvedDoc): boolean => d.relevance === undefined || d.relevance >= minRelevance;
+    const baseReturned = minRelevance > 0 ? baseResolved.filter(keepByRelevance) : baseResolved;
+    const templateReturned = minRelevance > 0 ? templateResolved.filter(keepByRelevance) : templateResolved;
+    const expandedReturned = minRelevance > 0 ? expandedResolved.filter(keepByRelevance) : expandedResolved;
+    const relevanceFilteredCount =
+      baseResolved.length -
+      baseReturned.length +
+      (templateResolved.length - templateReturned.length) +
+      (expandedResolved.length - expandedReturned.length);
+    if (relevanceFilteredCount > 0) {
+      notices.push(
+        `${relevanceFilteredCount} document(s) below min_relevance=${minRelevance} omitted from the response (full set recorded in compile_log).`,
+      );
+    }
+
     // ── Build final result ──
     const result: CompiledContext = {
       schema_version: 2,
@@ -657,22 +683,27 @@ export class ContextCompiler {
       snapshot_id: snapshot.snapshot_id,
       knowledge_version: snapshot.knowledge_version,
       base: {
-        documents: baseResolved,
+        documents: baseReturned,
         resolution_path: resolutionPath,
-        templates: templateResolved,
+        templates: templateReturned,
       },
       warnings,
       notices,
-      debug_info: {
+    };
+
+    // debug_info is opt-in: near_miss_edges grows linearly with edge count and can dominate
+    // response size. The full diagnostics stay available via aegis_get_compile_audit.
+    if (request.include_debug === true) {
+      result.debug_info = {
         near_miss_edges: auditMeta.near_miss_edges,
         layer_classification: auditMeta.layer_classification,
         budget_dropped: auditMeta.budget_dropped,
-      },
-    };
+      };
+    }
 
     if (expandedHasResult) {
       result.expanded = {
-        documents: expandedResolved,
+        documents: expandedReturned,
         confidence: expandedConfidence,
         reasoning: expandedReasoning,
         resolution_path: [],
@@ -706,6 +737,7 @@ export class ContextCompiler {
         request: object;
         base_doc_ids: string[];
         expanded_doc_ids: string[] | null;
+        template_doc_ids: string[] | null;
         delivery_stats: CompileAuditMeta['delivery_stats'] | null;
         budget_utilization: number | null;
         budget_exceeded: boolean | null;
@@ -731,6 +763,7 @@ export class ContextCompiler {
       request: JSON.parse(log.request),
       base_doc_ids: JSON.parse(log.base_doc_ids),
       expanded_doc_ids: log.expanded_doc_ids ? JSON.parse(log.expanded_doc_ids) : null,
+      template_doc_ids: meta?.template_doc_ids ?? null,
       delivery_stats: meta?.delivery_stats ?? null,
       budget_utilization: meta?.budget_utilization ?? null,
       budget_exceeded: meta?.budget_exceeded ?? null,

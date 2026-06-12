@@ -2066,7 +2066,7 @@ describe('ContextCompiler — v2 delivery', () => {
       ],
     });
 
-    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+    const result = await compiler.compile({ target_files: ['src/a.ts'], include_debug: true });
     const audit = compiler.getCompileAudit(result.compile_id);
     expect(audit).toBeDefined();
     expect(audit!.delivery_stats).toBeDefined();
@@ -2176,7 +2176,7 @@ describe('ContextCompiler — v2 delivery', () => {
       ],
     });
 
-    const result = await compiler.compile({ target_files: ['src/core/compiler.ts'] });
+    const result = await compiler.compile({ target_files: ['src/core/compiler.ts'], include_debug: true });
     const audit = compiler.getCompileAudit(result.compile_id);
 
     expect(audit?.layer_classification).toEqual({
@@ -2251,6 +2251,7 @@ describe('ContextCompiler — v2 delivery', () => {
       target_files: ['src/a.ts'],
       content_mode: 'always',
       max_inline_bytes: 110,
+      include_debug: true,
     });
     const audit = compiler.getCompileAudit(result.compile_id);
 
@@ -2369,5 +2370,221 @@ describe('ContextCompiler — v2 delivery', () => {
   it('empty result also has schema_version 2', async () => {
     const result = await compiler.compile({ target_files: ['src/a.ts'] });
     expect(result.schema_version).toBe(2);
+  });
+});
+
+describe('ContextCompiler — response size controls (include_debug / min_relevance)', () => {
+  let db: AegisDatabase;
+  let repo: Repository;
+  let compiler: ContextCompiler;
+
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
+    repo = new Repository(db);
+    compiler = new ContextCompiler(repo);
+  });
+
+  function bootstrapPaymentDocs() {
+    bootstrap(repo, {
+      documents: [
+        {
+          doc_id: 'payment-guide',
+          title: 'Payment Guidelines',
+          kind: 'guideline',
+          content: 'PaymentService and RefundPolicy rules',
+        },
+        {
+          doc_id: 'logging-guide',
+          title: 'Logging Guidelines',
+          kind: 'guideline',
+          content: 'How to configure logging output',
+        },
+        {
+          doc_id: 'payment-template',
+          title: 'Payment Template',
+          kind: 'template',
+          content: 'PaymentService RefundPolicy scaffold',
+        },
+        {
+          doc_id: 'generic-template',
+          title: 'Generic Template',
+          kind: 'template',
+          content: 'generic scaffold body',
+        },
+      ],
+      edges: ['payment-guide', 'logging-guide', 'payment-template', 'generic-template'].map((docId, i) => ({
+        edge_id: `e${i}`,
+        source_type: 'path',
+        source_value: 'src/**',
+        target_doc_id: docId,
+        edge_type: 'path_requires',
+        priority: 100,
+      })),
+    });
+  }
+
+  /**
+   * One base doc plus two tag-only docs (no edges → never in base) reachable via the
+   * 'payments' intent tag. Self-contained: `bootstrap` can only run once per repo.
+   */
+  function bootstrapExpandedPaymentDocs() {
+    bootstrap(repo, {
+      documents: [
+        {
+          doc_id: 'payment-guide',
+          title: 'Payment Guidelines',
+          kind: 'guideline',
+          content: 'PaymentService and RefundPolicy rules',
+        },
+        {
+          doc_id: 'payment-faq',
+          title: 'Payment FAQ',
+          kind: 'reference',
+          content: 'Update PaymentService RefundPolicy handling FAQ',
+        },
+        {
+          doc_id: 'unrelated-faq',
+          title: 'Unrelated FAQ',
+          kind: 'reference',
+          content: 'How to configure logging output',
+        },
+      ],
+      edges: [
+        {
+          edge_id: 'e0',
+          source_type: 'path',
+          source_value: 'src/**',
+          target_doc_id: 'payment-guide',
+          edge_type: 'path_requires',
+          priority: 100,
+        },
+      ],
+    });
+    repo.upsertTagMapping({ tag: 'payments', doc_id: 'payment-faq', confidence: 0.9, source: 'manual' });
+    repo.upsertTagMapping({ tag: 'payments', doc_id: 'unrelated-faq', confidence: 0.9, source: 'manual' });
+  }
+
+  it('omits debug_info by default; diagnostics stay available via getCompileAudit', async () => {
+    bootstrapPaymentDocs();
+
+    const result = await compiler.compile({ target_files: ['src/a.ts'] });
+    expect(result.debug_info).toBeUndefined();
+
+    const audit = compiler.getCompileAudit(result.compile_id);
+    expect(audit?.near_miss_edges).toEqual([]);
+    expect(audit?.layer_classification).toEqual({ 'src/a.ts': null });
+  });
+
+  it('includes debug_info when include_debug: true', async () => {
+    bootstrapPaymentDocs();
+
+    const result = await compiler.compile({ target_files: ['src/a.ts'], include_debug: true });
+    const audit = compiler.getCompileAudit(result.compile_id);
+    expect(result.debug_info).toEqual({
+      near_miss_edges: audit!.near_miss_edges,
+      layer_classification: audit!.layer_classification,
+      budget_dropped: audit!.budget_dropped,
+    });
+  });
+
+  it('min_relevance omits low-relevance documents and templates from the response', async () => {
+    bootstrapPaymentDocs();
+
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      plan: 'Update PaymentService RefundPolicy handling',
+      intent_tags: [],
+      min_relevance: 0.5,
+    });
+
+    expect(result.base.documents.map((d) => d.doc_id)).toEqual(['payment-guide']);
+    expect(result.base.templates.map((d) => d.doc_id)).toEqual(['payment-template']);
+    expect(result.notices.some((n) => n.includes('min_relevance=0.5'))).toBe(true);
+
+    // Audit trail keeps the unfiltered set (INV-5)
+    const log = repo.getCompileLog(result.compile_id);
+    const loggedBaseIds = JSON.parse(log!.base_doc_ids) as string[];
+    expect(loggedBaseIds).toContain('payment-guide');
+    expect(loggedBaseIds).toContain('logging-guide');
+  });
+
+  it('min_relevance keeps documents without a relevance score (no plan)', async () => {
+    bootstrapPaymentDocs();
+
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      min_relevance: 0.5,
+    });
+
+    expect(result.base.documents.map((d) => d.doc_id).sort()).toEqual(['logging-guide', 'payment-guide']);
+    expect(result.base.templates.map((d) => d.doc_id).sort()).toEqual(['generic-template', 'payment-template']);
+    expect(result.notices.some((n) => n.includes('min_relevance'))).toBe(false);
+  });
+
+  it('min_relevance: 0 returns everything (default behaviour preserved)', async () => {
+    bootstrapPaymentDocs();
+
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      plan: 'Update PaymentService RefundPolicy handling',
+      intent_tags: [],
+      min_relevance: 0,
+    });
+
+    expect(result.base.documents).toHaveLength(2);
+    expect(result.base.templates).toHaveLength(2);
+  });
+
+  it('template ids omitted by min_relevance remain recoverable via audit template_doc_ids', async () => {
+    bootstrapPaymentDocs();
+
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      plan: 'Update PaymentService RefundPolicy handling',
+      intent_tags: [],
+      min_relevance: 0.5,
+    });
+
+    // generic-template falls below the threshold and is omitted from the live response…
+    expect(result.base.templates.map((d) => d.doc_id)).toEqual(['payment-template']);
+
+    // …but the full routed template set is persisted in audit_meta (INV-5)
+    const audit = compiler.getCompileAudit(result.compile_id);
+    expect(audit?.template_doc_ids?.slice().sort()).toEqual(['generic-template', 'payment-template']);
+  });
+
+  it('expanded documents are scored against the plan and filtered by min_relevance', async () => {
+    bootstrapExpandedPaymentDocs();
+
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      plan: 'Update PaymentService RefundPolicy handling',
+      intent_tags: ['payments'],
+      min_relevance: 0.5,
+    });
+
+    expect(result.expanded).toBeDefined();
+    expect(result.expanded!.documents.map((d) => d.doc_id)).toEqual(['payment-faq']);
+    expect(result.expanded!.documents[0].relevance).toBeGreaterThanOrEqual(0.5);
+
+    // Audit trail keeps the unfiltered expanded set (INV-5)
+    const log = repo.getCompileLog(result.compile_id);
+    const loggedExpandedIds = JSON.parse(log!.expanded_doc_ids!) as string[];
+    expect(loggedExpandedIds.slice().sort()).toEqual(['payment-faq', 'unrelated-faq']);
+  });
+
+  it('expanded documents stay unscored and kept when intent_tags are given without a plan', async () => {
+    bootstrapExpandedPaymentDocs();
+
+    const result = await compiler.compile({
+      target_files: ['src/a.ts'],
+      intent_tags: ['payments'],
+      min_relevance: 0.5,
+    });
+
+    expect(result.expanded!.documents.map((d) => d.doc_id).sort()).toEqual(['payment-faq', 'unrelated-faq']);
+    for (const doc of result.expanded!.documents) {
+      expect(doc.relevance).toBeUndefined();
+    }
   });
 });

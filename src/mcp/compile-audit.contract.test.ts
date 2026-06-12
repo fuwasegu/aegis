@@ -121,7 +121,7 @@ describe('compile_audit contract — AegisService (012-04)', () => {
 
   it('getCompileAudit: v2 audit_meta after compileContext matches on agent and admin', async () => {
     bootstrapMinimalDoc(repo);
-    const compiled = await service.compileContext({ target_files: ['src/a.ts'] }, 'agent');
+    const compiled = await service.compileContext({ target_files: ['src/a.ts'], include_debug: true }, 'agent');
     const fromAgent = service.getCompileAudit(compiled.compile_id, 'agent');
     const fromAdmin = service.getCompileAudit(compiled.compile_id, 'admin');
     expect(fromAgent).toEqual(fromAdmin);

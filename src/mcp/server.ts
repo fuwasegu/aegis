@@ -123,6 +123,22 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
         .optional()
         .describe('Inline content budget in UTF-8 bytes (default: 131072 = 128KB)'),
       content_mode: z.enum(['auto', 'always', 'metadata']).optional().describe('Content delivery mode (default: auto)'),
+      include_debug: z
+        .boolean()
+        .optional()
+        .describe(
+          'Include debug_info (near_miss_edges, layer_classification, budget_dropped) in the response. ' +
+            'Default: false — the same diagnostics are always recorded and retrievable via aegis_get_compile_audit.',
+        ),
+      min_relevance: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe(
+          'Omit documents/templates whose relevance score is below this threshold (0-1). ' +
+            'Documents without a relevance score (no plan given) are always kept. Default: 0 (no filtering).',
+        ),
     },
     async (params) => {
       try {
@@ -136,6 +152,8 @@ export function createAegisServer(service: AegisService, surface: Surface): McpS
             intent_tags: params.intent_tags,
             max_inline_bytes: params.max_inline_bytes,
             content_mode: params.content_mode,
+            include_debug: params.include_debug,
+            min_relevance: params.min_relevance,
           },
           surface,
         );

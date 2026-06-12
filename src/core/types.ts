@@ -299,6 +299,22 @@ export interface CompileRequest {
   /** Content delivery mode. Default: 'auto' (source_path docs deferred, small docs inline). */
   content_mode?: ContentMode;
   /**
+   * Include `debug_info` (near_miss_edges, layer_classification, budget_dropped) in the response.
+   * Default: false. The same diagnostics are always persisted to `compile_log.audit_meta` and remain
+   * retrievable via `aegis_get_compile_audit`, so omitting them from the live response loses nothing.
+   * `near_miss_edges` lists every approved edge that did NOT match and therefore grows linearly with
+   * edge count — on knowledge bases with hundreds of edges it can dominate the response size.
+   */
+  include_debug?: boolean;
+  /**
+   * Minimum relevance score (0–1) for entries returned in `base.documents`, `base.templates`, and
+   * `expanded.documents`. Entries whose `relevance` is defined and below the threshold are omitted
+   * from the response; entries without a relevance score (no `plan` given) are always kept.
+   * The unfiltered sets remain recoverable for audit: document/expanded doc_ids in `compile_log`
+   * columns, template doc_ids in `audit_meta.template_doc_ids`. Default: 0 (no filtering).
+   */
+  min_relevance?: number;
+  /**
    * Optional client self-id for multi-agent workspace visibility (logged in `compile_log.agent_id`;
    * omitted from deterministic compile output; does not affect P-1).
    */
@@ -412,6 +428,12 @@ export interface CompileAuditMeta {
   layer_classification: Record<string, string | null>;
   /** doc_ids omitted by policy (e.g. non-scaffold templates) */
   policy_omitted_doc_ids: string[];
+  /**
+   * Unfiltered template doc_ids routed by this compile. `compile_log.base_doc_ids` only covers
+   * regular documents, so this is the INV-5 audit record for templates (e.g. ones omitted from
+   * the live response by `min_relevance`). Absent on logs persisted before this field existed.
+   */
+  template_doc_ids?: string[];
   /** observed overhead of the near-miss collection pass */
   performance: CompilePerformanceMeta;
   /** ADR-011 intent tagging summary; set by ContextCompiler before persisting compile_log. */
@@ -471,7 +493,11 @@ export interface CompiledContext {
   warnings: string[];
   /** Operational notices (P-1 excluded): may vary by server runtime state, not recorded in compile_log */
   notices: string[];
-  /** Mirrors audit_meta diagnostics; omitted when compile aborts before audit (e.g. empty snapshot). */
+  /**
+   * Mirrors audit_meta diagnostics. Present only when the request sets `include_debug: true`
+   * (and the compile reaches the audit stage). The same data is always persisted to
+   * `compile_log.audit_meta` and retrievable via `aegis_get_compile_audit`.
+   */
   debug_info?: CompileDebugInfo;
 }
 
