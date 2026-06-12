@@ -125,6 +125,7 @@ describe('ContextCompiler — large DAG routing', () => {
     const result = await compiler.compile({
       target_files: ['src/target/module/foo.ts'],
       intent_tags: [],
+      include_debug: true,
     });
     const wallMs = performance.now() - wallStart;
 

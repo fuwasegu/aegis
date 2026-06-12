@@ -650,6 +650,25 @@ export class ContextCompiler {
       if (d) expandedResolved.push(toResolvedDoc(d));
     }
 
+    // ── Apply min_relevance response filter ──
+    // Filters the live response only; compile_log below records the unfiltered doc_id sets (INV-5).
+    // Docs without a relevance score (no plan given) are always kept.
+    const minRelevance = request.min_relevance ?? 0;
+    const keepByRelevance = (d: ResolvedDoc): boolean => d.relevance === undefined || d.relevance >= minRelevance;
+    const baseReturned = minRelevance > 0 ? baseResolved.filter(keepByRelevance) : baseResolved;
+    const templateReturned = minRelevance > 0 ? templateResolved.filter(keepByRelevance) : templateResolved;
+    const expandedReturned = minRelevance > 0 ? expandedResolved.filter(keepByRelevance) : expandedResolved;
+    const relevanceFilteredCount =
+      baseResolved.length -
+      baseReturned.length +
+      (templateResolved.length - templateReturned.length) +
+      (expandedResolved.length - expandedReturned.length);
+    if (relevanceFilteredCount > 0) {
+      notices.push(
+        `${relevanceFilteredCount} document(s) below min_relevance=${minRelevance} omitted from the response (full set recorded in compile_log).`,
+      );
+    }
+
     // ── Build final result ──
     const result: CompiledContext = {
       schema_version: 2,
@@ -657,22 +676,27 @@ export class ContextCompiler {
       snapshot_id: snapshot.snapshot_id,
       knowledge_version: snapshot.knowledge_version,
       base: {
-        documents: baseResolved,
+        documents: baseReturned,
         resolution_path: resolutionPath,
-        templates: templateResolved,
+        templates: templateReturned,
       },
       warnings,
       notices,
-      debug_info: {
+    };
+
+    // debug_info is opt-in: near_miss_edges grows linearly with edge count and can dominate
+    // response size. The full diagnostics stay available via aegis_get_compile_audit.
+    if (request.include_debug === true) {
+      result.debug_info = {
         near_miss_edges: auditMeta.near_miss_edges,
         layer_classification: auditMeta.layer_classification,
         budget_dropped: auditMeta.budget_dropped,
-      },
-    };
+      };
+    }
 
     if (expandedHasResult) {
       result.expanded = {
-        documents: expandedResolved,
+        documents: expandedReturned,
         confidence: expandedConfidence,
         reasoning: expandedReasoning,
         resolution_path: [],

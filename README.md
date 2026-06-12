@@ -370,7 +370,7 @@ You can also pass a HuggingFace URI directly: `--model hf:user/repo:file.gguf`
 
 | Tool | Description |
 |------|-------------|
-| `aegis_compile_context` | Compile deterministic context for target files. Supports `content_mode` (auto/always/metadata) and `max_inline_bytes` for output size control |
+| `aegis_compile_context` | Compile deterministic context for target files. Supports `content_mode` (auto/always/metadata), `max_inline_bytes`, `min_relevance` (omit low-relevance docs), and `include_debug` (opt-in `debug_info`; default off) for output size control |
 | `aegis_observe` | Record observations (compile_miss, review_correction, pr_merged, manual_note, document_import, doc_gap_detected) |
 | `aegis_get_compile_audit` | Retrieve audit log of a past compile |
 | `aegis_get_known_tags` | Distinct intent tags from tag_mappings (approved-linked) with `knowledge_version` and SHA-256 `tag_catalog_hash` for caching |

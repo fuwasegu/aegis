@@ -370,7 +370,7 @@ HuggingFace URI を直接指定することも可能: `--model hf:user/repo:file
 
 | ツール | 説明 |
 |--------|------|
-| `aegis_compile_context` | 対象ファイルの決定的コンテキストをコンパイル。`content_mode`（auto/always/metadata）と `max_inline_bytes` による出力サイズ制御に対応 |
+| `aegis_compile_context` | 対象ファイルの決定的コンテキストをコンパイル。`content_mode`（auto/always/metadata）・`max_inline_bytes`・`min_relevance`（低relevance docの省略）・`include_debug`（`debug_info`のオプトイン返却、デフォルトoff）による出力サイズ制御に対応 |
 | `aegis_observe` | オブザベーション記録（compile_miss, review_correction, pr_merged, manual_note, document_import, doc_gap_detected） |
 | `aegis_get_compile_audit` | 過去のコンパイルの監査ログを取得 |
 | `aegis_get_known_tags` | tag_mappings の意図タグ一覧（承認ドキュメントに紐づくもの）と `knowledge_version`、キャッシュ用 SHA-256 `tag_catalog_hash` |
