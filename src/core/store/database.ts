@@ -7,7 +7,19 @@
  * acquires the lock, reloads from disk, applies the change, persists, and releases.
  */
 
-import { closeSync, constants, existsSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  existsSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
 import { ALL_MIGRATIONS, runMigrations } from './migrations/index.js';
 import { SCHEMA_SQL } from './schema.js';
@@ -49,7 +61,7 @@ export class AegisStatement {
   }
 
   run(...params: unknown[]): RunResult {
-    if (this.wrapper._isInTransaction()) {
+    if (this.wrapper._isInTransaction() || this.wrapper._isBootstrapping()) {
       this.ensureValid();
       return this.executeRun(params);
     }
@@ -116,6 +128,7 @@ export class AegisDatabase {
   private sqlDb: SqlJsDatabase;
   private dbPath: string | null;
   private inTransaction = false;
+  private bootstrapping = false;
   private lastPersistMs = 0;
   private dirty = false;
   private lockHeld = false;
@@ -186,7 +199,7 @@ export class AegisDatabase {
    * @internal — also used by AegisStatement for read freshness
    */
   _reloadIfStale(): void {
-    if (!this.dbPath || this.inTransaction) return;
+    if (!this.dbPath || this.inTransaction || this.bootstrapping) return;
     try {
       const currentMtime = statSync(this.dbPath).mtimeMs;
       if (currentMtime > this.lastPersistMs) {
@@ -210,6 +223,12 @@ export class AegisDatabase {
   private reloadFromDisk(): void {
     if (!this.dbPath) return;
     const buffer = readFileSync(this.dbPath);
+    if (buffer.length === 0) {
+      // Torn read against a writer that is not using atomic rename (e.g. an older
+      // Aegis version mid-persist). Loading an empty buffer would silently replace
+      // our state with a fresh DB — keep the current in-memory state instead.
+      return;
+    }
     const fresh = new this.sqlJsStatic.Database(new Uint8Array(buffer));
     this.sqlDb.close();
     this.sqlDb = fresh;
@@ -229,7 +248,7 @@ export class AegisDatabase {
   }
 
   exec(sql: string): void {
-    if (this.inTransaction) {
+    if (this.inTransaction || this.bootstrapping) {
       this.sqlDb.run(sql);
       this.dirty = true;
       return;
@@ -265,6 +284,22 @@ export class AegisDatabase {
     return (...args: unknown[]) => {
       if (this.inTransaction) {
         return fn(...args);
+      }
+      if (this.bootstrapping) {
+        // Already under the bootstrap file lock; reload and persist are deferred
+        // to _endBootstrap. Run with BEGIN/COMMIT for in-memory atomicity only.
+        this.inTransaction = true;
+        this.sqlDb.run('BEGIN');
+        try {
+          const result = fn(...args);
+          this.sqlDb.run('COMMIT');
+          this.inTransaction = false;
+          return result;
+        } catch (e) {
+          this.sqlDb.run('ROLLBACK');
+          this.inTransaction = false;
+          throw e;
+        }
       }
       this._acquireFileLock();
       try {
@@ -317,6 +352,75 @@ export class AegisDatabase {
     return this.inTransaction;
   }
 
+  /** @internal */
+  _isBootstrapping(): boolean {
+    return this.bootstrapping;
+  }
+
+  /**
+   * Enter bootstrap mode: hold the file lock across initial schema/migration
+   * setup, defer persistence until _endBootstrap. Reloads first if another
+   * process wrote between our (unlocked) initial load and lock acquisition.
+   * @internal — used by createDatabase only
+   */
+  _beginBootstrap(): void {
+    if (!this.dbPath) {
+      this.bootstrapping = true;
+      return;
+    }
+    this._acquireFileLock();
+    if (this._isFileStale()) {
+      this._forceReload();
+    }
+    this.cleanupOrphanTmpFiles();
+    this.bootstrapping = true;
+  }
+
+  /**
+   * Leave bootstrap mode. Persists once if the bootstrap actually changed
+   * anything (fresh DB, new schema objects, applied migrations); otherwise
+   * discards the no-op dirt from PRAGMA / CREATE IF NOT EXISTS so that
+   * opening an up-to-date DB never rewrites the file.
+   * @internal — used by createDatabase only
+   */
+  _endBootstrap(persistNeeded: boolean): void {
+    this.bootstrapping = false;
+    try {
+      if (persistNeeded && this.dirty) {
+        this.persist();
+      } else {
+        this.dirty = false;
+      }
+    } finally {
+      this._releaseFileLock();
+    }
+  }
+
+  /** Remove orphaned atomic-write temp files left by crashed processes. Called under lock. */
+  private cleanupOrphanTmpFiles(): void {
+    if (!this.dbPath) return;
+    const dir = dirname(this.dbPath);
+    const prefix = `${basename(this.dbPath)}.tmp-`;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.startsWith(prefix)) continue;
+      const tmpPath = join(dir, entry);
+      try {
+        // Only reap temp files that are clearly abandoned (not an in-flight persist).
+        if (Date.now() - statSync(tmpPath).mtimeMs > LOCK_STALE_MS) {
+          unlinkSync(tmpPath);
+        }
+      } catch {
+        /* already gone — ignore */
+      }
+    }
+  }
+
   /** @internal — true if the DB file has been modified by another process since our last persist/reload */
   _isFileStale(): boolean {
     if (!this.dbPath) return false;
@@ -337,17 +441,35 @@ export class AegisDatabase {
     return this.sqlDb.prepare(sql);
   }
 
-  /** @internal — persist if not inside a transaction */
+  /** @internal — persist if not inside a transaction or bootstrap */
   _maybePersist(): void {
-    if (!this.inTransaction) {
+    if (!this.inTransaction && !this.bootstrapping) {
       this.persist();
     }
   }
 
+  /**
+   * Atomically persist the in-memory DB: write to a temp file in the same
+   * directory, then rename over the target. Concurrent readers therefore never
+   * observe a truncated or empty DB file (the failure mode where another
+   * process loads the half-written file as a fresh DB and later clobbers
+   * real data with an empty schema).
+   */
   private persist(): void {
     if (!this.dbPath || this.dbPath === ':memory:') return;
     const data = this.sqlDb.export();
-    writeFileSync(this.dbPath, Buffer.from(data));
+    const tmpPath = `${this.dbPath}.tmp-${process.pid}`;
+    try {
+      writeFileSync(tmpPath, Buffer.from(data));
+      renameSync(tmpPath, this.dbPath);
+    } catch (e) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        /* nothing to clean up */
+      }
+      throw e;
+    }
     this.lastPersistMs = statSync(this.dbPath).mtimeMs;
     this.dirty = false;
   }
@@ -362,14 +484,45 @@ async function getSqlJs() {
   return sqlJsInstance;
 }
 
+function countSchemaObjects(db: AegisDatabase): number {
+  const row = db.prepare('SELECT COUNT(*) AS n FROM sqlite_master').get() as { n: number } | undefined;
+  return row?.n ?? 0;
+}
+
+function countAppliedMigrations(db: AegisDatabase): number {
+  try {
+    const row = db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number } | undefined;
+    return row?.n ?? 0;
+  } catch {
+    return 0; // table does not exist yet (pre-schema DB)
+  }
+}
+
 export async function createDatabase(dbPath: string): Promise<AegisDatabase> {
   const SQL = await getSqlJs();
 
   const isMemory = dbPath === ':memory:';
+  const fileExisted = !isMemory && existsSync(dbPath);
   let db: SqlJsDatabase;
 
-  if (!isMemory && existsSync(dbPath)) {
-    const buffer = readFileSync(dbPath);
+  if (fileExisted) {
+    let buffer = readFileSync(dbPath);
+    if (buffer.length === 0) {
+      // An empty-but-existing file is either a torn read against a writer that
+      // does not use atomic rename (older Aegis mid-persist) or debris from a
+      // crashed process. Retry once; if still empty, refuse to proceed —
+      // silently initializing a fresh DB here would clobber the real data on
+      // the first persist.
+      Atomics.wait(WAIT_BUFFER, 0, 0, 100);
+      buffer = readFileSync(dbPath);
+      if (buffer.length === 0) {
+        throw new Error(
+          `Aegis DB file exists but is empty: ${dbPath}. ` +
+            'Refusing to re-initialize over it — restore the file from a backup, ' +
+            'or delete it to start a fresh database.',
+        );
+      }
+    }
     db = new SQL.Database(new Uint8Array(buffer));
   } else {
     db = new SQL.Database();
@@ -377,16 +530,35 @@ export async function createDatabase(dbPath: string): Promise<AegisDatabase> {
 
   const wrapper = new AegisDatabase(db, isMemory ? null : dbPath, SQL);
 
-  wrapper.exec('PRAGMA foreign_keys = ON');
+  // Bootstrap under a single file lock with deferred persistence: opening an
+  // up-to-date DB writes nothing to disk, and concurrent processes cannot
+  // interleave with schema setup / migrations.
+  wrapper._beginBootstrap();
+  let persistNeeded = !fileExisted && !isMemory;
+  try {
+    wrapper.exec('PRAGMA foreign_keys = ON');
 
-  wrapper.exec(SCHEMA_SQL);
+    const objectsBefore = countSchemaObjects(wrapper);
+    const migrationsBefore = countAppliedMigrations(wrapper);
 
-  runMigrations(wrapper, ALL_MIGRATIONS);
+    wrapper.exec(SCHEMA_SQL);
 
-  const meta = wrapper.prepare('SELECT id FROM knowledge_meta WHERE id = 1').get();
-  if (!meta) {
-    wrapper.prepare('INSERT INTO knowledge_meta (id, current_version) VALUES (1, 0)').run();
+    runMigrations(wrapper, ALL_MIGRATIONS);
+
+    const meta = wrapper.prepare('SELECT id FROM knowledge_meta WHERE id = 1').get();
+    if (!meta) {
+      wrapper.prepare('INSERT INTO knowledge_meta (id, current_version) VALUES (1, 0)').run();
+      persistNeeded = true;
+    }
+
+    if (countSchemaObjects(wrapper) !== objectsBefore || countAppliedMigrations(wrapper) !== migrationsBefore) {
+      persistNeeded = true;
+    }
+  } catch (e) {
+    wrapper._endBootstrap(false);
+    throw e;
   }
+  wrapper._endBootstrap(persistNeeded);
 
   return wrapper;
 }
